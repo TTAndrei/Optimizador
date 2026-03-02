@@ -1,0 +1,547 @@
+================================================================================
+        SIMULADOR 2D DE FLUIDOS INCOMPRESIBLES EN GPU (CuPy/CUDA)
+                    RESUMEN FÍSICO Y COMPUTACIONAL
+================================================================================
+
+ÍNDICE
+------
+  1. Ecuaciones gobernantes y método de resolución
+  2. Discretización espacial y temporal
+  3. Advección (Semi-Lagrangiana)
+  4. Difusión viscosa (Forward Euler + WALE)
+  5. Proyección de presión (Multigrid + Defect-Correction)
+  6. Condiciones de contorno
+  7. Tratamiento de sólidos (Immersed Boundary)
+  8. Cálculo de fuerzas aerodinámicas (Drag, Lift, Cp)
+  9. Estructura del bucle principal
+ 10. Mapa de funciones principales
+
+
+================================================================================
+1. ECUACIONES GOBERNANTES Y MÉTODO DE RESOLUCIÓN
+================================================================================
+
+Se resuelven las ecuaciones de Navier-Stokes para flujo incompresible 2D:
+
+  Ecuación de momento:
+    ∂u/∂t + (u·∇)u = -(1/ρ)∇p + ν∇²u
+
+  Restricción de incompresibilidad:
+    ∇·u = 0
+
+donde:
+  u = (u,v): campo de velocidad (horizontal, vertical)
+  p: presión
+  ρ: densidad del fluido
+  ν: viscosidad cinemática
+
+MÉTODO DE SPLITTING (Chorin, 1968):
+Se descompone cada paso temporal en tres etapas secuenciales:
+
+  Paso 1 - ADVECCIÓN:
+    u* = advect(uⁿ, dt)
+    Transporta las velocidades por el campo de flujo.
+
+  Paso 2 - DIFUSIÓN:
+    u** = u* + dt · ∇·(ν_eff ∇u*)
+    Aplica los efectos viscosos (disipación de energía cinética).
+
+  Paso 3 - PROYECCIÓN (corrección de presión):
+    Resolver:  ∇²p = (ρ/dt) ∇·u**
+    Corregir:  uⁿ⁺¹ = u** - (dt/ρ) ∇p
+    Garantiza que el campo final cumpla ∇·u = 0.
+
+Esta descomposición permite tratar cada fenómeno con el método numérico
+más adecuado para cada uno.
+
+
+================================================================================
+2. DISCRETIZACIÓN ESPACIAL Y TEMPORAL
+================================================================================
+
+MALLA:
+  - Malla estructurada cartesiana uniforme (dx ≈ dy).
+  - Variables colocadas (u, v, p en el mismo nodo).
+  - Indexación: p[i,j] donde i = fila (eje y), j = columna (eje x).
+  - Todos los arrays almacenados como float32 en GPU (CuPy).
+
+PASO TEMPORAL ADAPTATIVO (CFL):
+  Se calcula dt en cada iteración como el mínimo entre:
+
+    dt_adv = CFL · min(dx,dy) / U_max         (restricción advectiva)
+    dt_visc = 0.25 · min(dx,dy)² / ν_eff_max  (restricción difusiva)
+    dt_use = min(dt_adv, dt_visc, 2·dt_nominal)
+
+  Esto garantiza estabilidad en ambos regímenes (convectivo y difusivo).
+
+  Función: calculado en el bucle principal de main().
+
+
+================================================================================
+3. ADVECCIÓN (SEMI-LAGRANGIANA)
+================================================================================
+
+FÍSICA:
+  La advección describe cómo el fluido transporta sus propias propiedades
+  (velocidad, temperatura, etc.) a lo largo de las líneas de corriente.
+  La ecuación es:
+    ∂u/∂t + (u·∇)u = 0
+
+  El método Semi-Lagrangiano la resuelve por características: para conocer
+  la velocidad en un punto x en el tiempo n+1, se "retrocede" por la
+  trayectoria de la partícula hasta su posición en el tiempo n.
+
+ALGORITMO:
+  1. BACKTRACE: Para cada celda (j,i) de la malla, calcular la posición
+     de origen de la partícula que llega allí:
+       x_prev = j - (u/dx)·dt
+       y_prev = i - (v/dy)·dt
+     Esto se hace en unidades de índice (no metros) para simplificar
+     la interpolación.
+
+  2. INTERPOLACIÓN BILINEAL: Evaluar u y v en (x_prev, y_prev) usando
+     los valores de la malla en el tiempo n. La fórmula es:
+       f(x,y) = (1-wx)(1-wy)·f₀₀ + wx(1-wy)·f₁₀ + (1-wx)wy·f₀₁ + wx·wy·f₁₁
+     donde wx,wy son los pesos fraccionales y f₀₀,f₁₀,f₀₁,f₁₁ son los
+     valores en las 4 celdas circundantes.
+
+  3. ENMASCARAR SÓLIDOS: u = v = 0 dentro de celdas sólidas.
+
+  4. REFORZAR IMPERMEABILIDAD: Anular la componente normal de velocidad
+     en la primera capa de fluido adyacente al sólido.
+
+FUNCIONES:
+  advect_backtrace(dt)        → Calcula posiciones de retroceso (x_prev, y_prev)
+  _bilinear_interpolate(...)  → Interpolación bilineal en GPU
+  advect_velocities(dt)       → Ejecuta los pasos 1-4 completos
+
+VENTAJAS:
+  - Incondicionalmente estable para la advección (sin restricción CFL propia).
+  - Naturalmente paralelizable en GPU (cada celda es independiente).
+
+LIMITACIONES:
+  - Difusión numérica inherente (suaviza gradientes agudos).
+  - Precisión de primer orden (podría mejorarse con MacCormack).
+
+
+================================================================================
+4. DIFUSIÓN VISCOSA (FORWARD EULER + WALE)
+================================================================================
+
+FÍSICA:
+  La difusión modela los efectos de la viscosidad: las diferencias de
+  velocidad entre capas de fluido adyacentes generan esfuerzos cortantes
+  que tienden a igualar las velocidades. La ecuación es:
+
+    ∂u/∂t = ∇·(ν_eff ∇u)
+
+  Para flujos turbulentos, la viscosidad molecular ν es insuficiente para
+  representar la disipación a escalas menores que la malla. Se usa un
+  modelo LES (Large Eddy Simulation) que añade una viscosidad turbulenta:
+    ν_eff = ν + ν_t(x,y)
+
+MODELO WALE (Wall-Adapting Local Eddy-viscosity):
+  Calcula ν_t en cada celda a partir del tensor de gradientes de velocidad:
+    gᵢⱼ = ∂uᵢ/∂xⱼ
+
+  Pasos del cálculo:
+  1. Calcular gradientes gᵢⱼ con diferencias centrales.
+  2. Parte simétrica (tasa de deformación): Sᵢⱼ = (gᵢⱼ + gⱼᵢ)/2
+  3. Invariante: Qs = Sᵢⱼ·Sᵢⱼ
+  4. Tensor G² = (g·gᵀ + gᵀ·g)/2, luego parte sin traza Sᵈᵢⱼ
+  5. Invariante: Qsd = Sᵈᵢⱼ·Sᵈᵢⱼ
+  6. Viscosidad turbulenta:
+       ν_t = (Cw·Δ)² · (Qsd)^{3/2} / [(Qs)^{5/2} + (Qsd)^{5/4}]
+     donde Cw ≈ 0.325 y Δ = √(dx·dy) es la escala de filtro.
+
+  Ventaja de WALE sobre Smagorinsky: se anula automáticamente en flujos
+  laminares y cerca de paredes (no necesita funciones de amortiguamiento).
+
+DISCRETIZACIÓN DE LA DIFUSIÓN:
+  Con viscosidad variable, la forma correcta NO es ν·∇²u sino:
+    ∇·(ν_eff ∇u) = ν_eff·∇²u + ∇ν_eff · ∇u
+
+  Se usa Forward Euler explícito con sub-stepping:
+    uⁿ⁺¹ = uⁿ + dt_sub · ∇·(ν_eff ∇uⁿ)
+
+  El número de sub-pasos se calcula para respetar la estabilidad difusiva:
+    dt_sub ≤ 0.25 · min(dx,dy)² / ν_max
+
+  Si ν_eff_max es grande (mucha turbulencia), se necesitan más sub-pasos.
+
+FUNCIONES:
+  compute_wale_viscosity(Cw=0.325) → Campo ν_t(x,y) en GPU
+  diffuse_velocity(nu, dt, usar_wale=True) → Difusión completa con sub-stepping
+
+LIMITACIÓN:
+  El esquema explícito requiere sub-stepping cuando ν_eff es grande,
+  lo cual puede ser costoso. Una alternativa sería un esquema implícito
+  (Crank-Nicolson), pero es más complejo de implementar en GPU.
+
+
+================================================================================
+5. PROYECCIÓN DE PRESIÓN (MULTIGRID + DEFECT-CORRECTION)
+================================================================================
+
+FÍSICA:
+  Tras advección y difusión, el campo de velocidad u** generalmente NO
+  cumple ∇·u = 0. La proyección encuentra un campo de presión p tal que:
+
+    ∇²p = (ρ/dt) · ∇·u**    (ecuación de Poisson)
+
+  Y luego corrige la velocidad:
+    uⁿ⁺¹ = u** - (dt/ρ) · ∇p
+
+  Físicamente, la presión actúa como un multiplicador de Lagrange que
+  "fuerza" la incompresibilidad: allí donde el fluido tiende a comprimirse
+  (∇·u < 0), la presión aumenta y lo empuja hacia fuera; donde tiende a
+  expandirse (∇·u > 0), la presión disminuye y lo comprime.
+
+OPERADORES DISCRETOS:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ Divergencia (diferencias centrales):                           │
+  │   ∇·u ≈ [u(j+1)-u(j-1)]/(2dx) + [v(i+1)-v(i-1)]/(2dy)      │
+  │                                                                 │
+  │ Gradiente (diferencias centrales):                             │
+  │   ∂p/∂x ≈ [p(j+1)-p(j-1)]/(2dx)                              │
+  │   ∂p/∂y ≈ [p(i+1)-p(i-1)]/(2dy)                              │
+  │                                                                 │
+  │ Laplaciano compacto (5 puntos):                                │
+  │   ∇²p ≈ [p(j+1)+p(j-1)+p(i+1)+p(i-1)-4p(i,j)] / h²         │
+  └─────────────────────────────────────────────────────────────────┘
+
+  PROBLEMA DE INCONSISTENCIA:
+  La composición div(grad(p)) con operadores centrales produce un
+  "Laplaciano ancho" que usa celdas a distancia 2:
+    div_central(grad_central(p)) = [p(j+2)-2p(j)+p(j-2)] / (4h²)
+
+  Pero el solver Poisson resuelve con el Laplaciano compacto (distancia 1).
+  Son operadores DIFERENTES. Resultado: aunque el Poisson converge
+  perfectamente, la divergencia del campo corregido apenas se reduce
+  (~3% por proyección).
+
+SOLUCIÓN: DEFECT-CORRECTION ITERATIVO
+  En lugar de una sola resolución de Poisson, se hacen múltiples
+  iteraciones "externas":
+
+    para cada outer = 1..N_outer:
+      1. Calcular divergencia actual: div = ∇·u
+      2. Formar RHS: rhs = (ρ/dt)·div
+      3. Resolver Poisson: ∇²p_corr = rhs  (con multigrid V-cycles)
+      4. Corregir velocidad: u -= (dt/ρ)·∇p_corr
+      5. Acumular presión: p_total += p_corr
+
+  Cada outer re-computa la divergencia REAL del campo ya corregido,
+  generando un nuevo RHS que captura el error residual de la
+  inconsistencia. Tras 5 outers × 5 V-cycles cada uno = 25 V-cycles
+  totales, se logra ~25-30% de reducción de divergencia (vs ~3% con
+  una sola proyección de 40 V-cycles).
+
+MULTIGRID GEOMÉTRICO:
+  El solver de Poisson usa multigrid, que es el método más eficiente
+  conocido (complejidad O(N) para N incógnitas).
+
+  Jerarquía de mallas:
+    Nivel 0: malla original (fina)
+    Nivel 1: malla 2× más gruesa (cada 2×2 celdas → 1 celda)
+    Nivel 2: malla 4× más gruesa
+    ...hasta nivel_max (típicamente 4)
+
+  V-Cycle (un ciclo de multigrid):
+    DESCENSO (de fino a grueso):
+      Para cada nivel:
+        a) Suavizar: aplicar iteraciones de GS-SOR para eliminar
+           frecuencias altas del error.
+        b) Calcular residuo: r = rhs - L(p)
+        c) Restringir: pasar r al nivel más grueso (promedio 2×2).
+
+    NIVEL MÁS GRUESO:
+      Suavizar muchas veces (el problema es pequeño, barato resolver).
+
+    ASCENSO (de grueso a fino):
+      Para cada nivel:
+        a) Prolongar: llevar la corrección al nivel más fino
+           (interpolación bilineal).
+        b) Sumar corrección: p += e_prolongado
+        c) Suavizar: limpiar errores de alta frecuencia introducidos
+           por la prolongación.
+
+SMOOTHER: RED-BLACK GAUSS-SEIDEL SOR
+  El smoother es el componente que elimina frecuencias altas del error.
+  Se usa Red-Black Gauss-Seidel con Sobre-Relajación Sucesiva (SOR):
+
+  Patrón Red-Black (checkerboard):
+    - Se dividen las celdas en "rojas" (i+j par) y "negras" (i+j impar).
+    - Primero se actualizan TODAS las rojas (sus vecinas son negras, no
+      cambian → sin dependencias de datos → perfecto para GPU).
+    - Luego se actualizan TODAS las negras.
+    - A diferencia de Jacobi, usa valores YA ACTUALIZADOS → converge ~2×
+      más rápido.
+
+  Sobre-relajación (SOR):
+    p_new = (1-ω)·p_old + ω·p_GS
+    Con ω ≈ 1.15, se extrapola la corrección → convergencia aún más rápida.
+    (ω = 1 es Gauss-Seidel puro, ω > 1 es sobre-relajación)
+
+  Implementación: kernel CUDA (RawKernel) con actualizaciones in-place.
+  Cada hilo procesa una celda, verifica su "color" y si no es sólido/borde.
+
+MANEJO DE SÓLIDOS EN MULTIGRID:
+  - Celdas sólidas NO se actualizan (p = 0 en sólido).
+  - Vecinos sólidos se excluyen del stencil → Neumann implícito (∂p/∂n = 0).
+  - El número de vecinos activos (n_nb) es variable (1-4) cerca de sólidos.
+  - La jerarquía de sólidos se construye con OR-coarsening: una celda gruesa
+    es sólida si CUALQUIERA de sus 4 sub-celdas es sólida.
+
+FUNCIONES:
+  _init_mg_hierarchy(niveles_max)   → Pre-computa jerarquía (máscaras, h², buffers)
+  _rb_gs_sor_kernel                 → Kernel CUDA Red-Black GS-SOR
+  _laplacian_kernel_masked          → Kernel Laplaciano con enmascarado de sólidos
+  _compute_divergence_field()       → Divergencia con diferencias centrales
+  project_multigrid(...)            → Proyección completa (defect-correction + multigrid)
+
+PARÁMETROS PRINCIPALES:
+  max_outer = 5          → Iteraciones externas de defect-correction
+  cycles_per_outer = 5   → V-cycles por iteración externa
+  niveles_max = 4        → Niveles de coarsening
+  pre_suavizado = 2      → Iteraciones GS-SOR en descenso
+  post_suavizado = 2     → Iteraciones GS-SOR en ascenso
+  omega = 1.15           → Factor de sobre-relajación
+
+
+================================================================================
+6. CONDICIONES DE CONTORNO
+================================================================================
+
+Se soportan 4 tipos de condición de frontera en cada borde del dominio:
+
+  INFLOW (entrada):
+    u = u_in, v = v_in (valores fijos, Dirichlet de velocidad).
+    Se aplica SIEMPRE, incluso después de la proyección.
+    Típico: borde izquierdo con flujo uniforme (v0x, 0).
+
+  OUTFLOW (salida):
+    Presión fija: p = p₀ (Dirichlet de presión, típicamente p₀ = 0).
+    Velocidad: condición de Neumann (∂u/∂n = 0) → se copia del interior.
+    Después de la proyección NO se sobrescribe la velocidad (el gradiente
+    de presión ya la corrigió correctamente).
+    Típico: borde derecho.
+
+  NOSLIP (pared sin deslizamiento):
+    u = 0, v = 0. El fluido "se pega" a la pared.
+    Es la condición física para superficies sólidas reales.
+
+  SLIP (pared con deslizamiento libre):
+    Componente normal = 0 (no penetración).
+    Componente tangencial: Neumann (∂u_t/∂n = 0) → se copia del interior.
+    Simula una pared sin fricción (ideal para bordes lejanos del dominio).
+
+PRESIÓN EN FRONTERAS (Neumann):
+  En los bordes sin condición Dirichlet de presión, se aplica:
+    ∂p/∂n = 0 → p_borde = p_interior_adyacente
+  Esto es necesario para que el stencil del gradiente de presión funcione
+  correctamente en los bordes.
+
+FUNCIONES:
+  set_boundary(side, bc_type, value)  → Configura BC para un borde
+  apply_boundaries(after_projection)  → Aplica todas las BCs
+  _aplicar_bc_presion_neumann()       → Neumann de presión en bordes
+
+
+================================================================================
+7. TRATAMIENTO DE SÓLIDOS (IMMERSED BOUNDARY)
+================================================================================
+
+Los sólidos se representan como una MÁSCARA BOOLEANA sobre la malla
+euleriana (método de frontera inmersa basado en penalización):
+
+  self.solid[i,j] = True si la celda (i,j) está dentro del sólido.
+
+IMPERMEABILIDAD:
+  La condición física fundamental es que el fluido no atraviese el sólido:
+    u·n = 0 en la superficie
+
+  Se implementa en dos niveles:
+  1. DIRECTO: u = v = 0 dentro de todas las celdas sólidas.
+  2. REFUERZO DE IMPERMEABILIDAD: En la primera capa de celdas de FLUIDO
+     adyacentes al sólido, se anula la componente normal de velocidad:
+       u_corregido = u - (u·n̂)·n̂
+     Esto proyecta la velocidad sobre el plano tangente a la superficie,
+     eliminando "jets" numéricos que atraviesan la interfaz.
+
+  Las normales n̂ se calculan a partir del campo de distancia firmado (SDF):
+    - SDF > 0 fuera del sólido, SDF < 0 dentro.
+    - ∇(SDF)/|∇(SDF)| da la normal unitaria apuntando hacia el fluido.
+
+FUNCIONES:
+  add_solid_circle(cx, cy, radius)     → Sólido circular
+  load_solids_from_file(filepath, ...) → Perfil aerodinámico desde archivo
+  reforzar_impermeabilidad()           → Proyección tangencial en interfaz
+  _calcular_mask_interfaz()            → Celdas fluido vecinas a sólido
+  _precomputar_normales_impermeabilidad() → Normales desde SDF
+
+
+================================================================================
+8. CÁLCULO DE FUERZAS AERODINÁMICAS (DRAG, LIFT, Cp)
+================================================================================
+
+FÍSICA:
+  La fuerza sobre un sólido inmerso en fluido es la integral del tensor
+  de esfuerzos sobre su superficie:
+
+    F = ∮ T · n̂ dS
+
+  donde el tensor de tracción tiene dos componentes:
+
+  PRESIÓN (normal):
+    T_presión = -p · n̂
+    La presión empuja perpendicularmente a la superficie.
+
+  VISCOSA (cortante):
+    T_viscosa = μ · (∇u + ∇uᵀ) · n̂
+    Los esfuerzos cortantes actúan tangencialmente.
+
+  Las fuerzas se descomponen en:
+    Fx = F·x̂  (fuerza horizontal, en dirección del flujo)
+    Fy = F·ŷ  (fuerza vertical, perpendicular al flujo)
+
+TRANSFORMACIÓN A DRAG Y LIFT:
+  Para un perfil con ángulo de ataque α:
+    Drag = Fx·cos(α) + Fy·sin(α)   (paralelo al flujo libre)
+    Lift = -Fx·sin(α) + Fy·cos(α)  (perpendicular al flujo libre)
+
+  Coeficientes adimensionales:
+    Cd = 2·Drag / (ρ·U²·c)
+    Cl = 2·Lift / (ρ·U²·c)
+  donde c es la cuerda del perfil y U la velocidad de entrada.
+
+IMPLEMENTACIÓN - VERSIÓN DEFINITIVA (compute_surface_forces_definitive):
+  1. Identificar FRONTERA DEL SÓLIDO: celdas de fluido que tienen al menos
+     un vecino sólido (incluye diagonales).
+  2. Calcular NORMALES desde el campo de distancia firmado (SDF).
+  3. EXTRAPOLACIÓN DE PRESIÓN: La presión exactamente en la pared (pos=0)
+     no está disponible directamente. Se muestrea p en múltiples capas
+     paralelas a la superficie (posiciones 0.5, 1.5, 2.5, ... celdas desde
+     la frontera a lo largo de la normal), y se extrapola linealmente a
+     la pared usando el gradiente de las capas.
+  4. GRADIENTES DE VELOCIDAD: Se calculan con diferencias centrales en la
+     malla y se interpolan a los centros de cara usando interpolación bilineal.
+  5. TENSOR DE ESFUERZOS: Se calcula la tracción de presión y viscosa en
+     cada celda de frontera.
+  6. INTEGRACIÓN: Se suman las contribuciones sobre todas las celdas de
+     frontera, multiplicadas por el elemento de arco (ds = dx para caras
+     ortogonales, ds = dx·√2 para diagonales).
+
+COEFICIENTE DE PRESIÓN (Cp):
+  Cp = (p_local - p_ref) / (0.5·ρ·U²_ref)
+  Se calcula en las caras de la frontera del sólido y se separa en
+  extradós (ny > 0) e intradós (ny ≤ 0) para poder graficar la
+  distribución clásica de Cp vs x/c.
+
+FUNCIONES:
+  compute_surface_forces(mu)              → Integral directa, 1 capa
+  compute_surface_forces2(mu)             → 2 capas con extrapolación
+  compute_surface_forces_layers(mu, n)    → N capas generalizadas
+  compute_surface_forces_definitive(mu, rho) → Versión final con extrapolación
+  compute_drag_lift(mu, rho)              → Drag/Lift con transformación α
+  _solid_boundary_mask(use_diagonals)     → Máscara de celdas frontera
+  _signed_distance_and_normals()          → SDF y normales unitarias
+
+
+================================================================================
+9. ESTRUCTURA DEL BUCLE PRINCIPAL
+================================================================================
+
+  main() recibe todos los parámetros de la simulación (geometría, física,
+  numéricos, visualización) y ejecuta:
+
+  1. CREACIÓN DE MALLAS:
+     - Malla gruesa: cubre todo el dominio (Lx × Ly) con resolución dx_grueso.
+     - Malla fina: cubre una zona refinada alrededor del perfil con dx_fino.
+     - Geometría multi-resolución (mesh_multires) maneja la transición.
+
+  2. CONFIGURACIÓN:
+     - Insertar sólidos (perfil aerodinámico o cilindro).
+     - Configurar condiciones de frontera (inflow, outflow, slip).
+     - Inicializar campos (velocidad uniforme, presión constante).
+
+  3. BUCLE TEMPORAL:
+     para cada iteración:
+       a) Recalcular dt (CFL adaptativo + restricción viscosa)
+       b) ADVECCIÓN: advect_velocities(dt) + apply_boundaries
+       c) DIFUSIÓN:  diffuse_velocity(nu, dt) + apply_boundaries
+       d) PROYECCIÓN: project_multigrid(rho, dt) + apply_boundaries
+       e) Acumular tiempo físico
+       f) Cada N iteraciones: calcular fuerzas → Cd, Cl, divergencia
+       g) Chequear convergencia a estado estacionario
+       h) Opcional: guardar checkpoint, frames
+
+  4. POST-PROCESO:
+     - Generar gráficos de convergencia (Cd, Cl, Cl/Cd vs iteraciones).
+     - Distribución de Cp sobre el perfil.
+     - Campos de velocidad, presión, vorticidad.
+
+CONTROL INTERACTIVO (durante la ejecución):
+  - Ctrl+C: finaliza limpiamente generando todos los outputs.
+  - Archivo "PLOT_NOW.trigger": genera gráficos sin detener.
+  - Archivo "STOP_SIMULATION.trigger": detiene limpiamente.
+
+
+================================================================================
+10. MAPA DE FUNCIONES PRINCIPALES
+================================================================================
+
+CLASE Mesh:
+
+  __init__(Lx, Ly, p0, v0x, v0y, dx, dy, usar_wale)
+    → Constructor: crea campos, kernels CUDA, máscaras.
+
+  --- ADVECCIÓN ---
+  advect_backtrace(dt)                → Calcula posiciones retrocedidas (x_prev, y_prev)
+  _bilinear_interpolate(field, x, y)  → Interpolación bilineal en GPU
+  advect_velocities(dt)               → Paso completo de advección
+
+  --- DIFUSIÓN ---
+  compute_wale_viscosity(Cw)          → Campo ν_t(x,y) por modelo WALE
+  diffuse_velocity(nu, dt, usar_wale) → Difusión explícita con sub-stepping
+
+  --- PROYECCIÓN ---
+  _compute_divergence_field()         → div(u) con diferencias centrales
+  _init_mg_hierarchy(niveles_max)     → Pre-computa jerarquía multigrid
+  project_multigrid(rho, dt, ...)     → Proyección completa (defect-correction)
+  project_cg(rho, dt, ...)            → Alternativa: Gradiente Conjugado
+  _anchor_pressure()                  → Fija referencia de presión (elimina constante)
+
+  --- CONDICIONES DE CONTORNO ---
+  set_boundary(side, bc_type, value)  → Configura BC para un borde
+  apply_boundaries(after_projection)  → Aplica todas las BCs a velocidad
+  _aplicar_bc_presion_neumann()       → dp/dn=0 en bordes sin Dirichlet
+
+  --- SÓLIDOS ---
+  add_solid_circle(cx, cy, radius)    → Inserta cilindro circular
+  load_solids_from_file(filepath, ..) → Carga perfil aerodinámico
+  reforzar_impermeabilidad()          → u·n̂=0 en interfaz sólido-fluido
+  _solid_boundary_mask()              → Identifica celdas frontera
+  _signed_distance_and_normals()      → SDF + normales unitarias
+
+  --- FUERZAS ---
+  compute_surface_forces_definitive(mu, rho) → Integral de esfuerzos (Fx, Fy)
+  compute_drag_lift(mu, rho)                 → Drag/Lift con rotación por α
+  compute_surface_forces_layers(mu, n)       → Versión multi-capa
+
+  --- KERNELS CUDA (gpu) ---
+  _rb_gs_sor_kernel       → Red-Black Gauss-Seidel SOR (RawKernel, in-place)
+  _laplacian_kernel_masked → Laplaciano 5-pt con enmascarado de sólidos
+  _spread_kernel           → Spreading de fuerzas Lagrangianas (IBM)
+  _jacobi_update_masked    → Jacobi con enmascarado (respaldo)
+
+FUNCIÓN main():
+  → Configura mallas, geometría, BCs, ejecuta bucle temporal, post-proceso.
+
+MÓDULO mesh_multires (mmr):
+  → Gestiona la malla multi-resolución (gruesa + fina superpuesta).
+  → Interpolación y transferencia de datos entre niveles de resolución.
+
+================================================================================
+FIN DEL RESUMEN
+================================================================================
