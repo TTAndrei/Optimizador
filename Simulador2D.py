@@ -2370,7 +2370,8 @@ class Mesh:
                               y_offset=0.0,
                               alpha_deg=0.0,
                               fill=True,
-                              plot=True):
+                              plot=True,
+                              min_te_height=None):
         """
         Carga un airfoil desde archivo de texto y lo rasteriza como sólido.
         Formato esperado (ejemplo NACA):
@@ -2419,6 +2420,75 @@ class Mesh:
         # Normalizar suponiendo x ya en [0,1]; escalado por cuerda
         x_raw = pts[:, 0] * chord
         y_raw = pts[:, 1] * chord  # mantiene proporciones (espesor relativo)
+
+        # --- Recorte del trailing edge para garantizar espesor mínimo ---
+        # Se asegura que el borde de escape tenga al menos min_te_height
+        # de espesor (por defecto 2*dx) para que ocupe al menos 2 celdas.
+        if min_te_height is None:
+            min_te_height = 2.0 * float(self.dx)
+
+        # Encontrar el leading edge (mínimo x)
+        le_idx = int(np.argmin(x_raw))
+
+        # Superficie superior: índices [0, le_idx], x decrece de ~chord a ~0
+        upper_x = x_raw[:le_idx + 1]
+        upper_y = y_raw[:le_idx + 1]
+        # Superficie inferior: índices [le_idx, end], x crece de ~0 a ~chord
+        lower_x = x_raw[le_idx:]
+        lower_y = y_raw[le_idx:]
+
+        # Espesor actual del trailing edge
+        te_thickness = abs(float(upper_y[0]) - float(lower_y[-1]))
+
+        if te_thickness < min_te_height and len(upper_x) > 2 and len(lower_x) > 2:
+            # Para interpolar, necesitamos x monótonamente creciente
+            upper_x_inc = upper_x[::-1].copy()
+            upper_y_inc = upper_y[::-1].copy()
+
+            # Muestrear x desde el TE hacia el LE para encontrar dónde el
+            # espesor alcanza min_te_height
+            x_te = min(float(upper_x_inc[-1]), float(lower_x[-1]))
+            x_le = max(float(upper_x_inc[0]),  float(lower_x[0]))
+            x_sample = np.linspace(x_te, x_le, 2000)
+
+            y_up_s = np.interp(x_sample, upper_x_inc, upper_y_inc)
+            y_lo_s = np.interp(x_sample, lower_x, lower_y)
+            thickness = y_up_s - y_lo_s
+
+            # Primer x (desde TE hacia LE) donde espesor >= min_te_height
+            valid = np.where(thickness >= min_te_height)[0]
+
+            if len(valid) > 0:
+                x_cut = float(x_sample[valid[0]])
+                y_cut_upper = float(np.interp(x_cut, upper_x_inc, upper_y_inc))
+                y_cut_lower = float(np.interp(x_cut, lower_x, lower_y))
+
+                # Descartar puntos más allá de x_cut (zona delgada del TE)
+                eps = 1e-8
+                mask_up = upper_x < (x_cut - eps)   # upper va de alto a bajo x
+                mask_lo = lower_x < (x_cut - eps)   # lower va de bajo a alto x
+
+                trimmed_upper_x = upper_x[mask_up]
+                trimmed_upper_y = upper_y[mask_up]
+                trimmed_lower_x = lower_x[mask_lo]
+                trimmed_lower_y = lower_y[mask_lo]
+
+                # Reconstruir perfil: TE_upper → interior superior → LE →
+                #                     interior inferior → TE_lower
+                x_raw = np.concatenate([[x_cut], trimmed_upper_x,
+                                        trimmed_lower_x, [x_cut]])
+                y_raw = np.concatenate([[y_cut_upper], trimmed_upper_y,
+                                        trimmed_lower_y, [y_cut_lower]])
+
+                new_chord_eff = x_cut
+                print(f"  [TE trim] Trailing edge recortado: x_cut={x_cut:.6f}, "
+                      f"espesor TE={y_cut_upper - y_cut_lower:.6f} "
+                      f"(mín requerido: {min_te_height:.6f}, "
+                      f"cuerda efectiva: {new_chord_eff:.6f})")
+            else:
+                print(f"  [TE trim] AVISO: El perfil es demasiado delgado para "
+                      f"alcanzar espesor TE={min_te_height:.6f}. "
+                      f"Se mantiene el perfil original.")
 
         # Centro para rotación: usar cuarto de cuerda (convención aero)
         cx_rot = 0.25 * chord
@@ -4375,7 +4445,7 @@ def main(
     
     # Resolución de mallas
     dx_grueso=0.01,   
-    dx_fino=1,
+    dx_fino=0.002,
     dy_grueso=None,  # Si None, se usa dx_grueso
     dy_fino=None,    # Si None, se usa dx_fino
     usar_wale=False,  # Si True, activa modelo de turbulencia WALE
@@ -5219,225 +5289,6 @@ def main(
         mesh_gruesa.mg_cycles_vector = mesh_gruesa.mg_cycles_vector[:it+1]
         iteraciones = it  # Actualizar para reportes
     
-    '''
-    # ============================================================
-    # BUCLE ALTERNATIVO: NESTED MESH (GRUESA + FINA)
-    # ============================================================
-    for it in tqdm(range(iteracion_inicial, iteraciones)):
-        t_paso_inicio = time.time()
-        
-        # Recalcular dt cada iteración: usar el mínimo entre advectivo y difusivo
-        t0 = time.time()
-        try:
-            # Velocidad máxima (fina y gruesa)
-            speed_f = cp.sqrt(mesh_fina.u * mesh_fina.u + mesh_fina.v * mesh_fina.v)
-            speed_g = cp.sqrt(mesh_gruesa.u * mesh_gruesa.u + mesh_gruesa.v * mesh_gruesa.v)
-            Umax_cp = cp.maximum(cp.max(speed_f), cp.max(speed_g))
-            Umax = float(Umax_cp) if float(Umax_cp) > 1e-12 else float(U_inf)
-
-            # dt advectivo
-            dt_adv = float(CFL * min(dx_fino, dy_fino) / max(Umax, 1e-12))
-
-            # dt difusivo: calcular nu_t en malla fina (con WALE si está activo) y usar nu_eff max
-            if mesh_fina.usar_wale:
-                nu_t_f = mesh_fina.compute_wale_viscosity()
-                nu_cp = cp.float32(nu)
-                nu_eff_max_cp = cp.max(nu_cp + nu_t_f)
-                nu_eff_max = float(nu_eff_max_cp) if float(nu_eff_max_cp) > 0 else 0.0
-            else:
-                nu_eff_max = float(nu)
-
-            C_visc = 0.25
-            if nu_eff_max > 0:
-                dt_visc = float(C_visc * (min(dx_fino, dy_fino)**2) / nu_eff_max)
-            else:
-                dt_visc = float('inf')
-
-            dt_use = min(dt_adv, dt_visc)
-        except Exception:
-            # En caso de fallo, conservar dt previamente calculado
-            dt_use = dt
-        timing_stats['recalculo_dt'] += time.time() - t0
-
-        # ============================================================
-        # PASO A: Resolver COMPLETAMENTE malla gruesa (3 pasos)
-        # ============================================================
-        # A.1) Advección gruesa
-        t0 = time.time()
-        u_prev = mesh_gruesa.u.copy()
-        v_prev = mesh_gruesa.v.copy()
-        
-        mesh_gruesa.advect_velocities(dt_use)
-        
-        # Restaurar zona refinada (no evolucionada en malla gruesa directamente)
-        mesh_gruesa.u = cp.where(geometria.mascara_gruesa_activa, 
-                                 mesh_gruesa.u, u_prev)
-        mesh_gruesa.v = cp.where(geometria.mascara_gruesa_activa,
-                                 mesh_gruesa.v, v_prev)
-        timing_stats['adveccion_gruesa'] += time.time() - t0
-        
-        # A.2) Difusión gruesa
-        t0 = time.time()
-        mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=mesh_gruesa.usar_wale)
-        timing_stats['difusion_gruesa'] += time.time() - t0
-
-        # ============================================================
-        # PASO B: Transferir BC actualizadas (gruesa → fina)
-        # ============================================================
-        t0 = time.time()
-        j_g, i_g = geometria.coordenadas_finas_a_indices_gruesos()
-        
-        # Interpolar TODOS los campos (u,v,p) para mantener coherencia física
-        u_interp = mesh_gruesa._bilinear_interpolate(mesh_gruesa.u, j_g, i_g)
-        v_interp = mesh_gruesa._bilinear_interpolate(mesh_gruesa.v, j_g, i_g)
-        p_interp = mesh_gruesa._bilinear_interpolate(mesh_gruesa.p, j_g, i_g)
-
-        # Aplicar en el borde de malla fina
-        # NOTA: Esto viola incompresibilidad pero es necesario para BC físicas
-        mesh_fina.u = cp.where(geometria.mascara_fina_borde, u_interp, mesh_fina.u)
-        mesh_fina.v = cp.where(geometria.mascara_fina_borde, v_interp, mesh_fina.v)
-        mesh_fina.p = cp.where(geometria.mascara_fina_borde, p_interp, mesh_fina.p)
-        timing_stats['transferencia_borde'] += time.time() - t0
-
-        # ============================================================
-        # PASO C: Resolver COMPLETAMENTE malla fina (3 pasos)
-        # ============================================================
-        # C.1) Advección fina
-        t0 = time.time()
-        mesh_fina.advect_velocities(dt_use)
-        timing_stats['adveccion_fina'] += time.time() - t0
-        
-        # C.2) Difusión fina
-        t0 = time.time()
-        mesh_fina.diffuse_velocity(nu, dt_use, usar_wale=mesh_fina.usar_wale)
-        timing_stats['difusion_fina'] += time.time() - t0
-        
-        # C.3) Proyección final (con tolerancia relajada, aceptando BC inconsistentes)
-        t0 = time.time()
-        mesh_fina.project_cg(rho, dt_use, tol_div=divergencia, max_iter=100, verbose=False)
-        timing_stats['proyeccion_fina'] += time.time() - t0
-        
-
-
-        # ============================================================
-        # PASO D: Retroalimentar fina → gruesa (en zona de solapamiento)
-        # ============================================================
-        t0 = time.time()
-        # Coordenadas de centros de celdas gruesas en sistema fino
-        x_g = (cp.arange(mesh_gruesa.nx) + 0.5) * dx_grueso
-        y_g = (cp.arange(mesh_gruesa.ny) + 0.5) * dy_grueso
-        XX_g, YY_g = cp.meshgrid(x_g, y_g, indexing='xy')
-        
-        # Convertir a índices en malla fina
-        j_f = (XX_g - geometria.x_min_fino) / dx_fino - 0.5
-        i_f = (YY_g - geometria.y_min_fino) / dy_fino - 0.5
-        
-        # Interpolar campos finos a posiciones gruesas
-        u_fina_a_gruesa = mesh_fina._bilinear_interpolate(mesh_fina.u, j_f, i_f)
-        v_fina_a_gruesa = mesh_fina._bilinear_interpolate(mesh_fina.v, j_f, i_f)
-        p_fina_a_gruesa = mesh_fina._bilinear_interpolate(mesh_fina.p, j_f, i_f)
-        
-        # Blend en zona de solapamiento
-        mesh_gruesa.u = cp.where(geometria.peso_fino > 0,
-                                 geometria.peso_grueso * mesh_gruesa.u + geometria.peso_fino * u_fina_a_gruesa,
-                                 mesh_gruesa.u)
-        mesh_gruesa.v = cp.where(geometria.peso_fino > 0,
-                                 geometria.peso_grueso * mesh_gruesa.v + geometria.peso_fino * v_fina_a_gruesa,
-                                 mesh_gruesa.v)
-        mesh_gruesa.p = cp.where(geometria.peso_fino > 0,
-                                 geometria.peso_grueso * mesh_gruesa.p + geometria.peso_fino * p_fina_a_gruesa,
-                                 mesh_gruesa.p)
-        timing_stats['retroalimentacion'] += time.time() - t0
-
-
-        # A.3) Proyección gruesa
-        t0 = time.time()
-        mesh_gruesa.project2_adaptive(rho, dt_use, tol_div=divergencia, max_iter=500, verbose=False)
-        timing_stats['proyeccion_gruesa'] += time.time() - t0
-
-
-        # Guardar fuerzas (calculadas en malla fina)
-        t0 = time.time()
-        if it % guardado == 0:
-            forces = mesh_fina.compute_drag_lift(mu, rho=rho, n_extrap_layers=5)     
-            cd_val = 2 * forces['Drag'] / (rho * U_inf**2 * chord)
-            cl_val = 2 * forces['Lift'] / (rho * U_inf**2 * chord)
-            mesh_fina.cdvector[it // guardado] = cd_val
-            mesh_fina.clvector[it // guardado] = cl_val
-            # Guardar ratio Cl/Cd de forma segura
-            try:
-                if abs(cd_val) < 1e-12:
-                    ratio = np.nan
-                else:
-                    ratio = cl_val / cd_val
-            except Exception:
-                ratio = np.nan
-            mesh_fina.clcdvector[it // guardado] = ratio
-            mesh_fina.divvector[it // guardado] = mesh_fina.compute_divergence_mean()
-            mesh_fina.update_cp_profile(mu, rho)
-
-            # Guardar frames si se solicita
-            if save_frames:
-                if frames_dir_fino:
-                    mesh_fina.save_frame(frames_dir_fino, it, kind="velocity")
-                if frames_dir_grueso:
-                    mesh_gruesa.save_frame(frames_dir_grueso, it, kind="velocity")
-                # Liberar memoria de figuras matplotlib cada cierto número de frames
-                if it % (guardado * 10) == 0:
-                    plt.close('all')
-        
-        # Guardar checkpoint periódicamente
-        if save_checkpoint_every and (it % save_checkpoint_every == 0) and (it > iteracion_inicial):
-            checkpoint_name = f"checkpoint_iter_{it:06d}.npz"
-            checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
-            
-            # Metadata para reanudación consistente
-            metadata = {
-                'iteracion': it,
-                'tiempo_simulado': tiempo_simulado_previo + (it - iteracion_inicial) * dt,
-                'CFL': CFL,
-                'alpha_deg': alpha_actual,
-                'chord': chord,
-                'Reynolds': (U_inf * chord) / nu,
-                'dt': dt,
-                'guardado': guardado,
-                'dx_fino': float(dx_fino),
-                'dy_fino': float(dy_fino),
-                'dx_grueso': float(dx_grueso),
-                'dy_grueso': float(dy_grueso),
-                'Lx': float(Lx),
-                'Ly': float(Ly),
-                'v0x': float(v0x),
-                'v0y': float(v0y),
-                'p0': float(p0),
-                'rho': float(rho),
-                'nu': float(nu),
-                'tol_poisson': float(tol_poisson),
-                'max_iter_poisson': int(max_iter_poisson),
-                'ancho_ref_factor': float(ancho_ref_factor),
-                'alto_ref_factor': float(alto_ref_factor),
-                'offset_refinado': float(offset_refinado),
-                'cx': float(cx),
-                'cy': float(cy),
-                'filepath': str(filepath),
-                'boundary_left': boundary_left,
-                'boundary_top': boundary_top,
-                'boundary_bottom': boundary_bottom,
-                'boundary_right': boundary_right,
-                'n_layers': int(n_layers),
-                'step_base': float(step_base),
-                'step_inc': float(step_inc)
-            }            
-            # Guardar checkpoint completo (un solo archivo)
-            save_complete_checkpoint(checkpoint_path, mesh_fina, mesh_gruesa, metadata)
-        
-        # Registrar tiempo total del paso y tiempo de guardado
-        if it % guardado == 0:
-            timing_stats['guardado'] += time.time() - t0
-        
-        t_paso_total = time.time() - t_paso_inicio
-        timing_stats['total_por_paso'].append(t_paso_total)
-   '''
 
     # ============================================================
     # REPORTE DE CONVERGENCIA A ESTADO ESTACIONARIO
@@ -5578,7 +5429,7 @@ if __name__ == "__main__":
     T=0.5,
     cx=2,
     CFL=0.8,
-    alpha_deg=6,
+    alpha_deg=2,
     polar_descarte=0.3,
     iteraciones=4000,
     divergencia=1e-1,
