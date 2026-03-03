@@ -2039,7 +2039,7 @@ class Mesh:
 
     def project_multigrid(self, rho_sim, dt, tol_div=1e-2,
                           max_outer=20, cycles_per_outer=5,
-                          niveles_max=4, pre_suavizado=2, post_suavizado=2,
+                          niveles_max=8, pre_suavizado=2, post_suavizado=2,
                           omega=1.15, verbose=False,
                           modo_adaptativo=True):
         """
@@ -2213,9 +2213,11 @@ class Mesh:
                 e_c[:] = 0.0
                 p_by_level[lvl + 1] = e_c
 
-            # --- Nivel más grueso: suavizado extra ---
+            # --- Nivel más grueso: suavizado extra (escalar con tamaño) ---
+            _ny_c, _nx_c = p_by_level[nivel_max].shape
+            _coarse_sweeps = max(pre_suavizado + 10, 2 * max(_ny_c, _nx_c))
             _suavizar(p_by_level[nivel_max], rhs_by_level[nivel_max],
-                      nivel_max, pre_suavizado + 10)
+                      nivel_max, _coarse_sweeps)
             _aplicar_bc(p_by_level[nivel_max], nivel_max)
 
             # --- Ascenso con prolongación fusionada (add directo, 1 vs ~15 launches) ---
@@ -4576,12 +4578,16 @@ def main(
     # Si no hay plan_polar, cargar al alpha_deg solicitado (flujo horizontal)
     alpha_geom = 0.0 if (plan_polar is not None and len(plan_polar) > 0) else alpha_deg
     
+    # Espesor mínimo del TE: usar dx_grueso como referencia para ambas mallas
+    min_te = 2.0 * dx_grueso
+    
     # Añadir sólido a malla gruesa
     mesh_gruesa.load_solids_from_file(
         filepath=filepath,
         chord=chord,
         x_offset=cx, y_offset=cy,
-        alpha_deg=alpha_geom, fill=True, plot=False
+        alpha_deg=alpha_geom, fill=True, plot=False,
+        min_te_height=min_te
     )
     
     #mesh_gruesa.add_solid_circle(cx,cy,0.5*chord)  # Para probar sólido circular (descomentar)
@@ -4592,7 +4598,8 @@ def main(
         filepath=filepath,
         chord=chord,
         x_offset=cx_fino, y_offset=cy_fino,
-        alpha_deg=alpha_geom, fill=True, plot=False
+        alpha_deg=alpha_geom, fill=True, plot=False,
+        min_te_height=min_te
     )
 
     # Aplicar condiciones de frontera a malla gruesa
@@ -4943,16 +4950,53 @@ def main(
         timing_stats['recalculo_dt'] += time.time() - t0
         
         #dt_use = dt  # Usar dt fijo en este bucle simple
+        
+        # --- DIAGNÓSTICO NaN: trazar cada paso en las primeras iteraciones ---
+        _DIAG_NAN = (it < 20 or it % 10 == 0)
+        def _chk(label):
+            """Chequeo rápido de NaN/Inf después de cada operación."""
+            if not _DIAG_NAN:
+                return
+            u_nan = bool(cp.isnan(mesh_gruesa.u).any())
+            v_nan = bool(cp.isnan(mesh_gruesa.v).any())
+            p_nan = bool(cp.isnan(mesh_gruesa.p).any())
+            u_inf = bool(cp.isinf(mesh_gruesa.u).any())
+            v_inf = bool(cp.isinf(mesh_gruesa.v).any())
+            umax = float(cp.max(cp.abs(mesh_gruesa.u)))
+            vmax = float(cp.max(cp.abs(mesh_gruesa.v)))
+            pmax = float(cp.max(cp.abs(mesh_gruesa.p)))
+            status = "NaN!" if (u_nan or v_nan or p_nan) else ("Inf!" if (u_inf or v_inf) else "ok")
+            if status != "ok" or it < 20:
+                print(f"  [iter {it:>4d}] {label:<20s} |u|={umax:.4f} |v|={vmax:.4f} |p|={pmax:.4f} dt={dt_use:.2e} {status}")
+            if u_nan or v_nan or p_nan:
+                # Localizar DONDE está el NaN
+                if u_nan:
+                    nan_locs = cp.where(cp.isnan(mesh_gruesa.u))
+                    n = min(5, len(nan_locs[0]))
+                    print(f"    u NaN en: {[(int(nan_locs[0][k]), int(nan_locs[1][k])) for k in range(n)]}")
+                if v_nan:
+                    nan_locs = cp.where(cp.isnan(mesh_gruesa.v))
+                    n = min(5, len(nan_locs[0]))
+                    print(f"    v NaN en: {[(int(nan_locs[0][k]), int(nan_locs[1][k])) for k in range(n)]}")
+                if p_nan:
+                    nan_locs = cp.where(cp.isnan(mesh_gruesa.p))
+                    n = min(5, len(nan_locs[0]))
+                    print(f"    p NaN en: {[(int(nan_locs[0][k]), int(nan_locs[1][k])) for k in range(n)]}")
+        
         # Advección
         t0 = time.time()
         mesh_gruesa.advect_velocities(dt_use)
+        _chk("after advect")
         mesh_gruesa.apply_boundaries(after_projection=False)
+        _chk("after bound(adv)")
         timing_stats['adveccion'] += time.time() - t0
         
         # Difusión
         t0 = time.time()
         mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=mesh_gruesa.usar_wale)
+        _chk("after diffuse")
         mesh_gruesa.apply_boundaries(after_projection=False)
+        _chk("after bound(dif)")
         timing_stats['difusion'] += time.time() - t0
         
         # Proyección
@@ -4971,17 +5015,22 @@ def main(
         )
         '''
         mg_info = mesh_gruesa.project_multigrid(rho,dt_use,tol_div=divergencia, verbose=False)
+        _chk("after project")
         # Almacenar ciclos usados
         mesh_gruesa.mg_cycles_vector[it] = mg_info['cycles']
         # ⭐ DESPUÉS de proyección: NO sobrescribir outflow
         mesh_gruesa.apply_boundaries(after_projection=True)
+        _chk("after bound(prj)")
         timing_stats['proyeccion'] += time.time() - t0
         
         # ============================================================
-        # CLAMP DE VELOCIDADES (red de seguridad contra blowup)
+        # CLAMP DE VELOCIDADES Y PRESIÓN (red de seguridad contra blowup)
         # ============================================================
         mesh_gruesa.u = cp.clip(mesh_gruesa.u, -vel_clamp_max, vel_clamp_max)
         mesh_gruesa.v = cp.clip(mesh_gruesa.v, -vel_clamp_max, vel_clamp_max)
+        # Presión: limitar a un rango razonable basado en presión dinámica
+        p_clamp_max = cp.float32(100.0 * rho * U_ref * U_ref + 1000.0)
+        mesh_gruesa.p = cp.clip(mesh_gruesa.p, -p_clamp_max, p_clamp_max)
         
         # ============================================================
         # DETECCIÓN DE INESTABILIDAD (NaN o blowup de velocidad)
@@ -5424,12 +5473,12 @@ def main(
 
 if __name__ == "__main__":
     mesh_finat,mesh_gruesat,geo=main(    
-    Lx=6,
+    Lx=7,
     Ly=6 ,  
     T=0.5,
-    cx=2,
-    CFL=0.8,
-    alpha_deg=2,
+    cx=1,
+    CFL=0.5,
+    alpha_deg=5,
     polar_descarte=0.3,
     iteraciones=4000,
     divergencia=1e-1,
@@ -5437,7 +5486,7 @@ if __name__ == "__main__":
     v0y=0,
     filepath="AG24",
     chord=1.0,
-    dx_grueso=0.002,    
+    dx_grueso=0.003,    
     graficos=True,
     save_frames=False, 
     frames_dir_grueso="",
