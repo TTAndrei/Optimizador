@@ -74,8 +74,7 @@ CONFIG = {
     'v0x': 5.0,                         # Velocidad del flujo libre (m/s)
     'alpha_deg': 5.0,                   # Ángulo de ataque base (grados)
     'chord': 1.0,                       # Longitud de cuerda (m)
-    'dx_fino': 0.001,                   # Resolución malla fina (m)
-    'dx_grueso': 0.004,                  # Resolución malla gruesa (m)
+    'dx_min': 0.004,                    # Espaciado mínimo malla variable (m)
     'CFL': 0.8,                         # Número de Courant
     'rho': 1.225,                       # Densidad del aire (kg/m³)
     'nu': 1.5e-5,                       # Viscosidad cinemática (m²/s)
@@ -527,7 +526,6 @@ def simular_perfil(filepath_temp, alpha_deg, config):
     Returns:
         dict {"cl": float, "cd": float, "ld": float} o None si falla
     """
-    mesh_fina = None
     mesh_gruesa = None
 
     try:
@@ -537,8 +535,7 @@ def simular_perfil(filepath_temp, alpha_deg, config):
             'iteraciones': config['simulacion_iteraciones'],
             'v0x': config['v0x'],
             'CFL': config['CFL'],
-            'dx_fino': config['dx_fino'],
-            'dx_grueso': config['dx_grueso'],
+            'dx_min': config['dx_min'],
             'alpha_deg': alpha_deg,
             'chord': config['chord'],
             'graficos': False,
@@ -547,7 +544,7 @@ def simular_perfil(filepath_temp, alpha_deg, config):
         # Parámetros extra opcionales del usuario
         sim_params.update(config.get('sim_extra_params', {}))
 
-        mesh_fina, mesh_gruesa, _ = Simulador2D.main(**sim_params)
+        mesh_gruesa = Simulador2D.main(**sim_params)
 
         # Cl/Cd se almacenan solo en mesh_gruesa (bucle principal)
         if mesh_gruesa.cdvector is None or len(mesh_gruesa.cdvector) == 0:
@@ -576,7 +573,7 @@ def simular_perfil(filepath_temp, alpha_deg, config):
 
     finally:
         # Liberar memoria GPU agresivamente
-        del mesh_fina, mesh_gruesa
+        del mesh_gruesa
         gc.collect()
         cp.get_default_memory_pool().free_all_blocks()
 
@@ -966,8 +963,7 @@ def main():
         'Re': round(Re, 1),
         'rho': CONFIG['rho'],
         'nu': CONFIG['nu'],
-        'dx_fino': CONFIG['dx_fino'],
-        'dx_grueso': CONFIG['dx_grueso'],
+        'dx_min': CONFIG['dx_min'],
         'iteraciones_cfd': CONFIG['simulacion_iteraciones'],
         'fitness_modo': CONFIG['fitness_modo'],
     }

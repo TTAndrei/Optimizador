@@ -7,218 +7,30 @@ from cupyx.scipy.ndimage import distance_transform_edt
 import os
 import json
 from tqdm import tqdm
+import mesh_multires as mmr
 import signal
 import sys
 from datetime import datetime
 from multiprocessing import shared_memory
 import struct
 
-
-# ============================================================
-# GENERACIÓN DE MALLA CON DENSIDAD VARIABLE (stretching 1D)
-# ============================================================
-
-def generar_malla_estirada(L, x_centro, dx_min, factor_expansion=1.05,
-                           ancho_zona_fina=None, dx_max=None):
-    """
-    Genera un vector 1D de posiciones de nodo de 0 a L con
-    espaciado variable:  fino (dx_min) alrededor de x_centro,
-    expandiéndose geométricamente hacia los extremos del dominio.
-
-    Parámetros
-    ----------
-    L              : float  – longitud total del dominio.
-    x_centro       : float  – centro de la zona de refinamiento.
-    dx_min         : float  – espaciado mínimo (en la zona fina).
-    factor_expansion : float  – factor geométrico de crecimiento (>1).
-    ancho_zona_fina  : float | None – ancho de la banda con dx_min uniforme.
-                       Si None se usa 0.1*L.
-    dx_max         : float | None – espaciado máximo (caps la expansión).
-                       Si None se usa 20*dx_min.
-
-    Retorna
-    -------
-    X_1d : np.ndarray (float64) – posiciones ordenadas, X_1d[0]=0, X_1d[-1]=L.
-    """
-    if ancho_zona_fina is None:
-        ancho_zona_fina = 0.1 * L
-    if dx_max is None:
-        dx_max = 20.0 * dx_min
-
-    # Límites de la zona fina (clamp al dominio)
-    x_fino_min = max(0.0, x_centro - ancho_zona_fina / 2.0)
-    x_fino_max = min(L,   x_centro + ancho_zona_fina / 2.0)
-
-    # --- Zona fina: nodos uniformes con dx_min ---
-    n_fino = max(1, int(round((x_fino_max - x_fino_min) / dx_min)))
-    x_fino = np.linspace(x_fino_min, x_fino_max, n_fino + 1)
-
-    # --- Expansión izquierda (de x_fino_min hacia 0) ---
-    x_left = []
-    x = x_fino_min
-    dx = dx_min
-    while x > 0.0:
-        dx = min(dx * factor_expansion, dx_max)
-        x = x - dx
-        if x <= 0.0:
-            x = 0.0
-        x_left.append(x)
-    x_left = np.array(x_left[::-1])  # ascendente
-
-    # --- Expansión derecha (de x_fino_max hacia L) ---
-    x_right = []
-    x = x_fino_max
-    dx = dx_min
-    while x < L:
-        dx = min(dx * factor_expansion, dx_max)
-        x = x + dx
-        if x >= L:
-            x = L
-        x_right.append(x)
-    x_right = np.array(x_right)
-
-    # --- Combinar y eliminar duplicados ---
-    X_1d = np.concatenate([x_left, x_fino, x_right])
-    X_1d = np.unique(X_1d)          # ordena + elimina duplicados
-
-    # Asegurar extremos exactos
-    if X_1d[0] != 0.0:
-        X_1d = np.concatenate([[0.0], X_1d])
-    if X_1d[-1] != L:
-        X_1d = np.concatenate([X_1d, [L]])
-
-    return X_1d.astype(np.float64)
-
-
-def calcular_metricas_1d(pos_1d_gpu):
-    """
-    Dada una secuencia monótona de posiciones (CuPy float32, longitud N),
-    devuelve las distancias a vecinos y los coeficientes de diferencias
-    finitas (primera y segunda derivada) en stencil de 3 puntos para
-    malla no‑uniforme.
-
-    Retorna dict con arrays CuPy float32 de longitud N:
-        dx_e   – distancia al vecino Este  (padded en borde derecho)
-        dx_w   – distancia al vecino Oeste (padded en borde izquierdo)
-        d1_W, d1_C, d1_E  – coeficientes ∂/∂x
-        d2_W, d2_C, d2_E  – coeficientes ∂²/∂x²
-    """
-    N = len(pos_1d_gpu)
-    dx_e = cp.zeros(N, dtype=cp.float32)
-    dx_w = cp.zeros(N, dtype=cp.float32)
-
-    diffs = cp.diff(pos_1d_gpu)          # (N-1,)
-    dx_e[:-1] = diffs;  dx_e[-1] = diffs[-1]   # padding borde
-    dx_w[1:]  = diffs;  dx_w[0]  = diffs[0]
-
-    he = dx_e
-    hw = dx_w
-    hsum = he + hw
-    eps = cp.float32(1e-30)   # evitar /0 en bordes
-
-    # ---- Primera derivada centrada (no-uniforme) ----
-    # u'_j ≈ a_W u_{j-1} + a_C u_j + a_E u_{j+1}
-    d1_W = -he / (hw * hsum + eps)
-    d1_C = (he - hw) / (he * hw + eps)
-    d1_E =  hw / (he * hsum + eps)
-
-    # ---- Segunda derivada (no-uniforme) ----
-    # u''_j ≈ b_W u_{j-1} + b_C u_j + b_E u_{j+1}
-    d2_W =  cp.float32(2.0) / (hw * hsum + eps)
-    d2_C = -cp.float32(2.0) / (he * hw + eps)
-    d2_E =  cp.float32(2.0) / (he * hsum + eps)
-
-    return {
-        'dx_e': dx_e, 'dx_w': dx_w,
-        'd1_W': d1_W, 'd1_C': d1_C, 'd1_E': d1_E,
-        'd2_W': d2_W, 'd2_C': d2_C, 'd2_E': d2_E,
-    }
-
-
 class Mesh:
     '''Constructor y basicos'''
-    def __init__(self, Lx, Ly, p0, v0x, v0y, dx, dy,
-                 usar_wale=True,
-                 X_1d=None, Y_1d=None):
-        """
-        Parámetros
-        ----------
-        Lx, Ly       : dimensiones del dominio (m).
-        p0            : presión inicial.
-        v0x, v0y      : velocidad inicial.
-        dx, dy        : espaciado de referencia (uniforme si X_1d/Y_1d=None;
-                         usado para CFL/estabilidad si se pasan X_1d/Y_1d).
-        X_1d, Y_1d    : arrays numpy (float64) con posiciones de nodos en x/y.
-                         Si se proporcionan, la malla es de densidad variable.
-                         Si None, se genera malla uniforme desde dx/dy.
-        """
-        self.Lx = Lx
-        self.Ly = Ly
-        self.usar_wale = usar_wale
+    def __init__(self, Lx,Ly, p0, v0x, v0y, dx, dy, usar_wale=True, usar_viscosidad_estela=False, C_estela=0.05):
 
-        # ================================================================
-        # MALLA DE POSICIONES  (nueva infraestructura de malla variable)
-        # ================================================================
-        if X_1d is not None:
-            self.X_1d = cp.asarray(X_1d, dtype=cp.float32)
-            self.nx = len(self.X_1d)
-            self.malla_variable = True
-        else:
-            self.nx = int(Lx / dx)
-            self.X_1d = cp.arange(self.nx, dtype=cp.float32) * cp.float32(dx)
-            self.malla_variable = False
+        self.Lx=Lx
+        self.Ly=Ly
 
-        if Y_1d is not None:
-            self.Y_1d = cp.asarray(Y_1d, dtype=cp.float32)
-            self.ny = len(self.Y_1d)
-        else:
-            self.ny = int(Ly / dy)
-            self.Y_1d = cp.arange(self.ny, dtype=cp.float32) * cp.float32(dy)
+        self.dx = dx
+        self.dy = dy
+        self.usar_wale = usar_wale  # Flag para activar/desactivar modelo WALE
+        self.usar_viscosidad_estela = usar_viscosidad_estela  # Viscosidad extra en estela (surrogate 3D)
+        self.C_estela = C_estela  # Coeficiente de viscosidad de estela
+        self._wake_mask = None  # Se precomputa al llamar a compute_wake_viscosity
 
-        # dx, dy escalar = espaciado MÍNIMO (para CFL, estabilidad viscosa)
-        if self.malla_variable:
-            self.dx = float(cp.min(cp.diff(self.X_1d)))
-            self.dy = float(cp.min(cp.diff(self.Y_1d)))
-        else:
-            self.dx = dx
-            self.dy = dy
 
-        # ---- Métricas 1D pre‑computadas --------------------------------
-        met_x = calcular_metricas_1d(self.X_1d)
-        met_y = calcular_metricas_1d(self.Y_1d)
-
-        # Distancias a vecinos (1D, se broadcastean a 2D)
-        self.dx_e = met_x['dx_e']   # (nx,)
-        self.dx_w = met_x['dx_w']
-        self.dy_n = met_y['dx_e']   # "e" = dirección + (norte)
-        self.dy_s = met_y['dx_w']   # "w" = dirección - (sur)
-
-        # Coeficientes primera derivada ∂/∂x  (1D, broadcastean a 2D)
-        self.d1x_W = met_x['d1_W']
-        self.d1x_C = met_x['d1_C']
-        self.d1x_E = met_x['d1_E']
-        # ∂/∂y
-        self.d1y_S = met_y['d1_W']  # "S" ↔ -dirección
-        self.d1y_C = met_y['d1_C']
-        self.d1y_N = met_y['d1_E']  # "N" ↔ +dirección
-
-        # Coeficientes segunda derivada ∂²/∂x²
-        self.d2x_W = met_x['d2_W']
-        self.d2x_C = met_x['d2_C']
-        self.d2x_E = met_x['d2_E']
-        # ∂²/∂y²
-        self.d2y_S = met_y['d2_W']
-        self.d2y_C = met_y['d2_C']
-        self.d2y_N = met_y['d2_E']
-
-        # Volúmenes de celda:  vol_x[j] = (he+hw)/2 ,  vol_y[i] = (hn+hs)/2
-        # Sirven para simetrizar el Laplaciano (M = diag(V)·L es simétrico → CG)
-        self.vol_x = (met_x['dx_e'] + met_x['dx_w']) * cp.float32(0.5)   # (nx,)
-        self.vol_y = (met_y['dx_e'] + met_y['dx_w']) * cp.float32(0.5)   # (ny,)
-        self._vol_2d_flat = (self.vol_y[:, cp.newaxis] * self.vol_x[cp.newaxis, :]).ravel()  # (ny*nx,)
-
-        # Mallas 2D de posiciones físicas (para rasterización, visualización, IBM)
-        self.XX, self.YY = cp.meshgrid(self.X_1d, self.Y_1d, indexing='xy')
+        self.nx = int(self.Lx/self.dx)
+        self.ny = int(self.Ly/self.dy)
 
         # --- Campos principales en GPU ---
         self.u = cp.zeros((self.ny, self.nx), dtype=cp.float32)
@@ -230,8 +42,8 @@ class Mesh:
         self.cdvector = cp.zeros(1, dtype=cp.float32)
         self.clvector = cp.zeros(1, dtype=cp.float32)
         self.divvector = cp.zeros(1, dtype=cp.float32)
-        self.mg_cycles_vector = cp.zeros(1, dtype=cp.int32)
-        self.guardado = 1
+        self.mg_cycles_vector = cp.zeros(1, dtype=cp.int32)  # Ciclos multigrid por paso
+        self.guardado = 1  # Frecuencia de guardado (se actualiza en main)
 
         # Historial/estadística de Cp a lo largo de la simulación (promedio por punto de cuerda)
         self.cp_bins = 200
@@ -348,6 +160,71 @@ class Mesh:
         '''
         self._spread_kernel = cp.RawKernel(kernel_src, 'spread')
 
+        self._jacobi_update = cp.ElementwiseKernel(
+            in_params='float32 p_ref, raw float32 p, raw float32 rhs, float32 h2, int32 nx, int32 ny',
+            out_params='float32 out',
+            operation=r'''
+            int idx = i;
+            int j = idx % nx;
+            int ii = idx / nx;
+            // bordes: copiar valor actual
+            if (ii<=0 || ii>=ny-1 || j<=0 || j>=nx-1) {
+                out = p[idx];
+            } else {
+                int E = ii*nx + (j+1);
+                int W = ii*nx + (j-1);
+                int N = (ii+1)*nx + j;
+                int S = (ii-1)*nx + j;
+                // Jacobi: 0.25*(sum vecinos - h^2 * rhs)
+                out = 0.25f * (p[E] + p[W] + p[N] + p[S] - h2 * rhs[idx]);
+            }
+            ''',
+            name='jacobi_update'
+        )
+
+        # Kernel CG: Aplicar Laplaciano discreto (A*x)
+        # A*x = (x_E + x_W + x_N + x_S - 4*x_C) / h²
+        self._laplacian_kernel = cp.ElementwiseKernel(
+            in_params='raw float32 x, float32 h2, int32 nx, int32 ny',
+            out_params='float32 Ax',
+            operation=r'''
+            int idx = i;
+            int j = idx % nx;
+            int ii = idx / nx;
+            // Bordes: Neumann homogéneo (Ax = 0 en bordes)
+            if (ii <= 0 || ii >= ny-1 || j <= 0 || j >= nx-1) {
+                Ax = 0.0f;
+            } else {
+                int E = ii*nx + (j+1);
+                int W = ii*nx + (j-1);
+                int N = (ii+1)*nx + j;
+                int S = (ii-1)*nx + j;
+                Ax = (x[E] + x[W] + x[N] + x[S] - 4.0f * x[idx]) / h2;
+            }
+            ''',
+            name='laplacian_cg'
+        )
+        
+        # Kernel CG: Precondicionador Jacobi (M^-1 * r)
+        # Para Laplaciano: diag(A) = -4/h^2, entonces M^-1 = -h^2/4
+        self._precond_jacobi_kernel = cp.ElementwiseKernel(
+            in_params='raw float32 r, float32 h2, int32 nx, int32 ny',
+            out_params='float32 z',
+            operation=r'''
+            int idx = i;
+            int j = idx % nx;
+            int ii = idx / nx;
+            // Bordes: no precondicionar
+            if (ii <= 0 || ii >= ny-1 || j <= 0 || j >= nx-1) {
+                z = 0.0f;
+            } else {
+                // M^-1 = -h^2/4 (inverso de la diagonal del Laplaciano)
+                z = -0.25f * h2 * r[idx];
+            }
+            ''',
+            name='precond_jacobi'
+        )
+
         # ============================================================
         # Kernels ENMASCARADOS (sólidos) para Poisson/proyección
         # - Trata fronteras sólido-fluido con Neumann homogéneo (flujo normal cero)
@@ -355,12 +232,13 @@ class Mesh:
         #   realmente reduzca div(u) cerca del perfil)
         # ============================================================
         self._jacobi_update_masked = cp.ElementwiseKernel(
-            in_params='raw bool solid, raw float32 p, raw float32 rhs, raw float32 d2x_W, raw float32 d2x_C, raw float32 d2x_E, raw float32 d2y_S, raw float32 d2y_C, raw float32 d2y_N, int32 nx, int32 ny',
+            in_params='raw bool solid, raw float32 p, raw float32 rhs, float32 h2, int32 nx, int32 ny',
             out_params='float32 out',
             operation=r'''
             int idx = i;
             int j = idx % nx;
             int ii = idx / nx;
+            // Bordes o sólido: no actualizar
             if (ii<=0 || ii>=ny-1 || j<=0 || j>=nx-1 || solid[idx]) {
                 out = p[idx];
             } else {
@@ -368,17 +246,17 @@ class Mesh:
                 int W = ii*nx + (j-1);
                 int N = (ii+1)*nx + j;
                 int S = (ii-1)*nx + j;
-                float aW = d2x_W[j], aC_x = d2x_C[j], aE = d2x_E[j];
-                float aS = d2y_S[ii], aC_y = d2y_C[ii], aN = d2y_N[ii];
-                float sum_off = 0.0f;
-                float diag = aC_x + aC_y;
-                if (!solid[E]) { sum_off += aE * p[E]; } else { diag += aE; }
-                if (!solid[W]) { sum_off += aW * p[W]; } else { diag += aW; }
-                if (!solid[N]) { sum_off += aN * p[N]; } else { diag += aN; }
-                if (!solid[S]) { sum_off += aS * p[S]; } else { diag += aS; }
-                if (fabsf(diag) > 1e-30f) {
-                    out = (rhs[idx] - sum_off) / diag;
+                float sum_nb = 0.0f;
+                int n_nb = 0;
+                if (!solid[E]) { sum_nb += p[E]; n_nb++; }
+                if (!solid[W]) { sum_nb += p[W]; n_nb++; }
+                if (!solid[N]) { sum_nb += p[N]; n_nb++; }
+                if (!solid[S]) { sum_nb += p[S]; n_nb++; }
+                if (n_nb > 0) {
+                    // Jacobi con vecindario variable (Neumann en sólido)
+                    out = (sum_nb - h2 * rhs[idx]) / (float)n_nb;
                 } else {
+                    // Celda aislada (raro): mantener valor
                     out = p[idx];
                 }
             }
@@ -387,12 +265,13 @@ class Mesh:
         )
 
         self._laplacian_kernel_masked = cp.ElementwiseKernel(
-            in_params='raw bool solid, raw float32 x, raw float32 d2x_W, raw float32 d2x_C, raw float32 d2x_E, raw float32 d2y_S, raw float32 d2y_C, raw float32 d2y_N, int32 nx, int32 ny',
+            in_params='raw bool solid, raw float32 x, float32 h2, int32 nx, int32 ny',
             out_params='float32 Ax',
             operation=r'''
             int idx = i;
             int j = idx % nx;
             int ii = idx / nx;
+            // Bordes o sólido: Ax=0 (no se resuelve en sólido)
             if (ii<=0 || ii>=ny-1 || j<=0 || j>=nx-1 || solid[idx]) {
                 Ax = 0.0f;
             } else {
@@ -400,23 +279,22 @@ class Mesh:
                 int W = ii*nx + (j-1);
                 int N = (ii+1)*nx + j;
                 int S = (ii-1)*nx + j;
-                float aW = d2x_W[j], aC_x = d2x_C[j], aE = d2x_E[j];
-                float aS = d2y_S[ii], aC_y = d2y_C[ii], aN = d2y_N[ii];
                 float xc = x[idx];
-                float sum_off = 0.0f;
-                float diag = aC_x + aC_y;
-                if (!solid[E]) { sum_off += aE * x[E]; } else { diag += aE; }
-                if (!solid[W]) { sum_off += aW * x[W]; } else { diag += aW; }
-                if (!solid[N]) { sum_off += aN * x[N]; } else { diag += aN; }
-                if (!solid[S]) { sum_off += aS * x[S]; } else { diag += aS; }
-                Ax = sum_off + diag * xc;
+                float sum_nb = 0.0f;
+                int n_nb = 0;
+                if (!solid[E]) { sum_nb += x[E]; n_nb++; }
+                if (!solid[W]) { sum_nb += x[W]; n_nb++; }
+                if (!solid[N]) { sum_nb += x[N]; n_nb++; }
+                if (!solid[S]) { sum_nb += x[S]; n_nb++; }
+                // Laplaciano con Neumann en fronteras sólido: (sum_nb - n_nb*xc)/h^2
+                Ax = (sum_nb - (float)n_nb * xc) / h2;
             }
             ''',
             name='laplacian_masked'
         )
 
         self._precond_jacobi_kernel_masked = cp.ElementwiseKernel(
-            in_params='raw bool solid, raw float32 r, raw float32 d2x_W, raw float32 d2x_C, raw float32 d2x_E, raw float32 d2y_S, raw float32 d2y_C, raw float32 d2y_N, int32 nx, int32 ny',
+            in_params='raw bool solid, raw float32 r, float32 h2, int32 nx, int32 ny',
             out_params='float32 z',
             operation=r'''
             int idx = i;
@@ -429,16 +307,14 @@ class Mesh:
                 int W = ii*nx + (j-1);
                 int N = (ii+1)*nx + j;
                 int S = (ii-1)*nx + j;
-                float aW = d2x_W[j], aC_x = d2x_C[j], aE = d2x_E[j];
-                float aS = d2y_S[ii], aC_y = d2y_C[ii], aN = d2y_N[ii];
-                float diag = aC_x + aC_y;
-                if (solid[E]) diag += aE;
-                if (solid[W]) diag += aW;
-                if (solid[N]) diag += aN;
-                if (solid[S]) diag += aS;
-                if (fabsf(diag) > 1e-30f) {
-                    // M^{-1} r = r / diag(A)  (diag < 0 para Laplaciano)
-                    z = r[idx] / diag;
+                int n_nb = 0;
+                if (!solid[E]) n_nb++;
+                if (!solid[W]) n_nb++;
+                if (!solid[N]) n_nb++;
+                if (!solid[S]) n_nb++;
+                if (n_nb > 0) {
+                    // diag(A) = -n_nb/h^2  =>  M^-1 = -h^2/n_nb
+                    z = -(h2 / (float)n_nb) * r[idx];
                 } else {
                     z = 0.0f;
                 }
@@ -455,19 +331,14 @@ class Mesh:
             const bool* __restrict__ solid,
             float* __restrict__ p,
             const float* __restrict__ rhs,
-            const float* __restrict__ d2x_W,
-            const float* __restrict__ d2x_C,
-            const float* __restrict__ d2x_E,
-            const float* __restrict__ d2y_S,
-            const float* __restrict__ d2y_C,
-            const float* __restrict__ d2y_N,
-            float omega,
+            float h2, float omega,
             int nx, int ny, int phase
         ) {
             int idx = blockDim.x * blockIdx.x + threadIdx.x;
             if (idx >= nx * ny) return;
             int j = idx % nx;
             int ii = idx / nx;
+            // Solo actualizar celdas del color correcto (checkerboard)
             if (((ii + j) & 1) != phase) return;
             if (ii <= 0 || ii >= ny-1 || j <= 0 || j >= nx-1 || solid[idx]) return;
 
@@ -475,16 +346,14 @@ class Mesh:
             int W = ii*nx + (j-1);
             int N = (ii+1)*nx + j;
             int S = (ii-1)*nx + j;
-            float aW = d2x_W[j], aC_x = d2x_C[j], aE = d2x_E[j];
-            float aS = d2y_S[ii], aC_y = d2y_C[ii], aN = d2y_N[ii];
-            float sum_off = 0.0f;
-            float diag = aC_x + aC_y;
-            if (!solid[E]) { sum_off += aE * p[E]; } else { diag += aE; }
-            if (!solid[W]) { sum_off += aW * p[W]; } else { diag += aW; }
-            if (!solid[N]) { sum_off += aN * p[N]; } else { diag += aN; }
-            if (!solid[S]) { sum_off += aS * p[S]; } else { diag += aS; }
-            if (fabsf(diag) > 1e-30f) {
-                float p_gs = (rhs[idx] - sum_off) / diag;
+            float sum_nb = 0.0f;
+            int n_nb = 0;
+            if (!solid[E]) { sum_nb += p[E]; n_nb++; }
+            if (!solid[W]) { sum_nb += p[W]; n_nb++; }
+            if (!solid[N]) { sum_nb += p[N]; n_nb++; }
+            if (!solid[S]) { sum_nb += p[S]; n_nb++; }
+            if (n_nb > 0) {
+                float p_gs = (sum_nb - h2 * rhs[idx]) / (float)n_nb;
                 p[idx] = (1.0f - omega) * p[idx] + omega * p_gs;
             }
         }
@@ -561,13 +430,7 @@ class Mesh:
             const float* __restrict__ u, const float* __restrict__ v,
             const bool* __restrict__ solid,
             float* __restrict__ div,
-            const float* __restrict__ d1x_W,
-            const float* __restrict__ d1x_C,
-            const float* __restrict__ d1x_E,
-            const float* __restrict__ d1y_S,
-            const float* __restrict__ d1y_C,
-            const float* __restrict__ d1y_N,
-            int nx, int ny
+            float inv_2dx, float inv_2dy, int nx, int ny
         ) {
             int idx = blockDim.x * blockIdx.x + threadIdx.x;
             if (idx >= nx * ny) return;
@@ -581,10 +444,8 @@ class Mesh:
             int W = i*nx + (j-1);
             int N = (i+1)*nx + j;
             int S = (i-1)*nx + j;
-            float du_dx = (!solid[E] && !solid[W]) ?
-                d1x_W[j]*u[W] + d1x_C[j]*u[idx] + d1x_E[j]*u[E] : 0.0f;
-            float dv_dy = (!solid[N] && !solid[S]) ?
-                d1y_S[i]*v[S] + d1y_C[i]*v[idx] + d1y_N[i]*v[N] : 0.0f;
+            float du_dx = (!solid[E] && !solid[W]) ? (u[E] - u[W]) * inv_2dx : 0.0f;
+            float dv_dy = (!solid[N] && !solid[S]) ? (v[N] - v[S]) * inv_2dy : 0.0f;
             div[idx] = du_dx + dv_dy;
         }
         ''', 'divergence_masked')
@@ -649,13 +510,7 @@ class Mesh:
             float* __restrict__ u, float* __restrict__ v,
             const float* __restrict__ p,
             const bool* __restrict__ solid,
-            float coef,
-            const float* __restrict__ d1x_W,
-            const float* __restrict__ d1x_C,
-            const float* __restrict__ d1x_E,
-            const float* __restrict__ d1y_S,
-            const float* __restrict__ d1y_C,
-            const float* __restrict__ d1y_N,
+            float coef, float inv_2dx, float inv_2dy,
             int nx, int ny
         ) {
             int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -668,108 +523,11 @@ class Mesh:
             int N = (i+1)*nx + j;
             int S = (i-1)*nx + j;
             if (!solid[E] && !solid[W])
-                u[idx] -= coef * (d1x_W[j]*p[W] + d1x_C[j]*p[idx] + d1x_E[j]*p[E]);
+                u[idx] -= coef * (p[E] - p[W]) * inv_2dx;
             if (!solid[N] && !solid[S])
-                v[idx] -= coef * (d1y_S[i]*p[S] + d1y_C[i]*p[idx] + d1y_N[i]*p[N]);
+                v[idx] -= coef * (p[N] - p[S]) * inv_2dy;
         }
         ''', 'velocity_correction')
-
-        # ============================================================
-        # Kernel: Gradiente adjunto D^T·p  (transpuesto del operador divergencia)
-        # Garantiza que D(D^T p) = (DD^T)p sea simétrico → CG converge.
-        # (D^T p)_u[i,j] = d1x_W[j+1]*p[E] + d1x_C[j]*p[C] + d1x_E[j-1]*p[W]
-        # (D^T p)_v[i,j] = d1y_S[i+1]*p[N] + d1y_C[i]*p[C] + d1y_N[i-1]*p[S]
-        # ============================================================
-        self._adjoint_gradient_kernel = cp.RawKernel(r'''
-        extern "C" __global__ void adjoint_gradient(
-            const float* __restrict__ p,
-            const bool* __restrict__ solid,
-            float* __restrict__ grad_u,
-            float* __restrict__ grad_v,
-            const float* __restrict__ d1x_W,
-            const float* __restrict__ d1x_C,
-            const float* __restrict__ d1x_E,
-            const float* __restrict__ d1y_S,
-            const float* __restrict__ d1y_C,
-            const float* __restrict__ d1y_N,
-            int nx, int ny
-        ) {
-            /*  Calcula D^T · p  (transpuesta exacta del operador divergencia).
-             *
-             *  Para cada celda (i,j), suma contribuciones de las celdas de
-             *  divergencia INTERIORES (no-borde, no-sólido) que referencian
-             *  u[i,j] o v[i,j] en su estencil.
-             *
-             *  Esto garantiza que  <q, D*DT*p> = <DT*q, DT*p>  para todo q,p
-             *  (simetria exacta de DD^T).
-             */
-            int idx = blockDim.x * blockIdx.x + threadIdx.x;
-            if (idx >= nx * ny) return;
-            int j = idx % nx;
-            int i = idx / nx;
-
-            if (solid[idx]) {
-                grad_u[idx] = 0.0f;
-                grad_v[idx] = 0.0f;
-                return;
-            }
-
-            float gu = 0.0f, gv = 0.0f;
-
-            /* ---- u-component of D^T·p ----
-             * u[i,j] aparece en  du/dx  de  div[i, J]  cuando J = j+1, j, j-1.
-             * Condiciones por cada celda divergencia (i,J):
-             *   1) Interior:  1<=i<=ny-2  &&  1<=J<=nx-2
-             *   2) No sólida: !solid[i,J]
-             *   3) Ambos vecinos x no sólidos: !solid[i,J-1] && !solid[i,J+1]
-             */
-            if (i >= 1 && i <= ny-2) {
-                // div[i, j+1] usa u[i,j] con coef d1x_W[j+1]
-                if (j+1 >= 1 && j+1 <= nx-2) {
-                    int dv = i*nx + (j+1);
-                    if (!solid[dv] && !solid[dv-1] && !solid[dv+1])
-                        gu += d1x_W[j+1] * p[dv];
-                }
-                // div[i, j] usa u[i,j] con coef d1x_C[j]
-                if (j >= 1 && j <= nx-2) {
-                    if (!solid[idx] && !solid[idx-1] && !solid[idx+1])
-                        gu += d1x_C[j] * p[idx];
-                }
-                // div[i, j-1] usa u[i,j] con coef d1x_E[j-1]
-                if (j-1 >= 1 && j-1 <= nx-2) {
-                    int dv = i*nx + (j-1);
-                    if (!solid[dv] && !solid[dv-1] && !solid[dv+1])
-                        gu += d1x_E[j-1] * p[dv];
-                }
-            }
-
-            /* ---- v-component of D^T·p ----
-             * v[i,j] aparece en  dv/dy  de  div[I, j]  cuando I = i+1, i, i-1.
-             */
-            if (j >= 1 && j <= nx-2) {
-                // div[i+1, j] usa v[i,j] con coef d1y_S[i+1]
-                if (i+1 >= 1 && i+1 <= ny-2) {
-                    int dv = (i+1)*nx + j;
-                    if (!solid[dv] && !solid[dv-nx] && !solid[dv+nx])
-                        gv += d1y_S[i+1] * p[dv];
-                }
-                // div[i, j] usa v[i,j] con coef d1y_C[i]
-                if (i >= 1 && i <= ny-2) {
-                    if (!solid[idx] && !solid[idx-nx] && !solid[idx+nx])
-                        gv += d1y_C[i] * p[idx];
-                }
-                // div[i-1, j] usa v[i,j] con coef d1y_N[i-1]
-                if (i-1 >= 1 && i-1 <= ny-2) {
-                    int dv = (i-1)*nx + j;
-                    if (!solid[dv] && !solid[dv-nx] && !solid[dv+nx])
-                        gv += d1y_N[i-1] * p[dv];
-                }
-            }
-
-            grad_u[idx] = gu;
-            grad_v[idx] = gv;
-        }
-        ''', 'adjoint_gradient')
 
         # Flag de jerarquía multigrid (se inicializa en _init_mg_hierarchy)
         self._mg_initialized = False
@@ -777,7 +535,7 @@ class Mesh:
     def _init_mg_hierarchy(self, niveles_max=4):
         """Pre-computa jerarquía multigrid: máscaras, h2, buffers por nivel."""
         ny, nx = self.p.shape
-        self._mg_niveles = max(0, min(niveles_max, int(np.log2(min(ny, nx))) - 2))
+        self._mg_niveles = max(1, min(niveles_max, int(np.log2(min(ny, nx))) - 2))
 
         def _coarsen_mask(mask):
             ny_m, nx_m = mask.shape
@@ -803,30 +561,9 @@ class Mesh:
                 s = self._mg_solids[lvl + 1].shape
                 self._mg_dirichlet.append(cp.zeros(s, dtype=cp.bool_))
 
-        # Per-level stencil coefficients (d2) for non-uniform Laplacian
-        self._mg_d2x_W = []
-        self._mg_d2x_C = []
-        self._mg_d2x_E = []
-        self._mg_d2y_S = []
-        self._mg_d2y_C = []
-        self._mg_d2y_N = []
-        X_1d_lvl = self.X_1d
-        Y_1d_lvl = self.Y_1d
-        for lvl in range(self._mg_niveles + 1):
-            met_x = calcular_metricas_1d(X_1d_lvl)
-            met_y = calcular_metricas_1d(Y_1d_lvl)
-            self._mg_d2x_W.append(met_x['d2_W'])
-            self._mg_d2x_C.append(met_x['d2_C'])
-            self._mg_d2x_E.append(met_x['d2_E'])
-            self._mg_d2y_S.append(met_y['d2_W'])
-            self._mg_d2y_C.append(met_y['d2_C'])
-            self._mg_d2y_N.append(met_y['d2_E'])
-            if lvl < self._mg_niveles:
-                # Coarsen positions: take every-other node
-                nx_c = len(X_1d_lvl) // 2
-                ny_c = len(Y_1d_lvl) // 2
-                X_1d_lvl = X_1d_lvl[:nx_c*2:2]
-                Y_1d_lvl = Y_1d_lvl[:ny_c*2:2]
+        # h2 pre-computado por nivel
+        h2_base = cp.float32(self.dx * self.dx)
+        self._mg_h2 = [cp.float32(h2_base * (4.0 ** lvl)) for lvl in range(self._mg_niveles + 1)]
 
         # Buffers pre-alocados por nivel
         self._mg_bufs = []
@@ -1070,18 +807,13 @@ class Mesh:
         self.v[self._solid_interior] = 0.0
 
     def info(self):
-        print(f"Mesh: {self.nx} x {self.ny}  ({self.nx * self.ny:,} nodos)")
-        dx_min = float(cp.min(cp.diff(self.X_1d)))
-        dx_max = float(cp.max(cp.diff(self.X_1d)))
-        dy_min = float(cp.min(cp.diff(self.Y_1d)))
-        dy_max = float(cp.max(cp.diff(self.Y_1d)))
-        print(f"Malla variable: {self.malla_variable}")
-        print(f"dx: min={dx_min:.6f}  max={dx_max:.6f}  ratio={dx_max/dx_min:.2f}")
-        print(f"dy: min={dy_min:.6f}  max={dy_max:.6f}  ratio={dy_max/dy_min:.2f}")
-        print(f"dx (CFL)={self.dx:.6f}, dy (CFL)={self.dy:.6f}")
-        print(f"Dominio: [{float(self.X_1d[0]):.3f}, {float(self.X_1d[-1]):.3f}] x "
-              f"[{float(self.Y_1d[0]):.3f}, {float(self.Y_1d[-1]):.3f}]")
-        print(f"Campos GPU shape: ({self.ny}, {self.nx})")
+        print(f"Mesh: {self.nx} x {self.ny}")
+        print(f"Nodos: {self.nx * self.ny}")
+        print(f"dx={self.dx}, dy={self.dy}")
+        print("Campos en GPU: u, v, p")
+        print("u shape:", self.u.shape)
+        print("v shape:", self.v.shape)
+        print("p shape:", self.p.shape)
 
     def set_fixed_pressure_points(self, points, p_value=None):
         """
@@ -1141,6 +873,9 @@ class Mesh:
 
         # Actualizar alpha interno
         self.alpha_deg = nuevo_alpha_deg
+
+        # Invalidar máscara de estela (se recalculará en el siguiente paso)
+        self._wake_mask = None
 
         # Actualizar todas las fronteras inflow
         for side, bc in self.boundaries.items():
@@ -1334,46 +1069,20 @@ class Mesh:
         """
         Calcula la posición anterior de cada partícula en *índices* (j,i),
         listos para la interpolación bilineal.
-
-        Para malla variable, la conversión físico→índice usa searchsorted.
-        Para malla uniforme, usa la conversión directa u/dx (más rápida).
         """
-        if self.malla_variable:
-            # ---- Malla variable: backtrace en coordenadas físicas ----
-            dt_f = cp.float32(dt)
-            x_dep = self.XX - self.u * dt_f   # (ny, nx) posición física de partida
-            y_dep = self.YY - self.v * dt_f
+        # usar JJ/II precomputadas
+        JJ = self.JJ
+        II = self.II
 
-            # Clamp al dominio
-            x_dep = cp.clip(x_dep, self.X_1d[0], self.X_1d[-1])
-            y_dep = cp.clip(y_dep, self.Y_1d[0], self.Y_1d[-1])
+        # convertir velocidades a índices/tiempo
+        # Ecuación característica (backtrace): x_prev = x - u * dt
+        # En unidades de índice: u_idx = u / dx, v_idx = v / dy
+        u_idx = (self.u / self.dx).astype(cp.float32)
+        v_idx = (self.v / self.dy).astype(cp.float32)
 
-            # Convertir coordenada física → índice fraccionario
-            x_flat = x_dep.ravel()
-            y_flat = y_dep.ravel()
-
-            kx = cp.searchsorted(self.X_1d, x_flat, side='right') - 1
-            ky = cp.searchsorted(self.Y_1d, y_flat, side='right') - 1
-
-            kx = cp.clip(kx, 0, self.nx - 2)
-            ky = cp.clip(ky, 0, self.ny - 2)
-
-            # Fracción local dentro de la celda
-            dx_loc = self.X_1d[kx + 1] - self.X_1d[kx]
-            dy_loc = self.Y_1d[ky + 1] - self.Y_1d[ky]
-            dx_loc = cp.maximum(dx_loc, cp.float32(1e-30))
-            dy_loc = cp.maximum(dy_loc, cp.float32(1e-30))
-
-            self.x_prev_idx = (kx.astype(cp.float32) + (x_flat - self.X_1d[kx]) / dx_loc).reshape(x_dep.shape)
-            self.y_prev_idx = (ky.astype(cp.float32) + (y_flat - self.Y_1d[ky]) / dy_loc).reshape(y_dep.shape)
-        else:
-            # ---- Malla uniforme: conversión directa (rápida) ----
-            JJ = self.JJ
-            II = self.II
-            u_idx = (self.u / self.dx).astype(cp.float32)
-            v_idx = (self.v / self.dy).astype(cp.float32)
-            self.x_prev_idx = JJ - u_idx * dt
-            self.y_prev_idx = II - v_idx * dt
+        # backtrace en índices (elementwise)
+        self.x_prev_idx = JJ - u_idx * dt
+        self.y_prev_idx = II - v_idx * dt
 
     '''Velocidades y presiones'''
     
@@ -1417,10 +1126,10 @@ class Mesh:
         
         Ecuación resuelta:
             ∂u/∂t = ∇·(ν_eff ∇u)
-            donde ν_eff = ν + ν_t(x,y)
+            donde ν_eff = ν + ν_t(x,y) + ν_wake(x,y)
         """
         nu_f = float(nu)
-        if nu_f <= 0.0 and not usar_wale:
+        if nu_f <= 0.0 and not usar_wale and not self.usar_viscosidad_estela:
             return
 
         dx = float(self.dx)
@@ -1433,6 +1142,11 @@ class Mesh:
             nu_eff = cp.float32(nu_f) + nu_t
         else:
             nu_eff = cp.full_like(self.u, nu_f, dtype=cp.float32)
+        
+        # ⭐ Añadir viscosidad de estela (surrogate 3D)
+        if self.usar_viscosidad_estela:
+            nu_wake = self.compute_wake_viscosity()
+            nu_eff = nu_eff + nu_wake
         
         # Determinar viscosidad máxima para sub-stepping
         nu_max = float(cp.max(nu_eff))
@@ -1454,13 +1168,10 @@ class Mesh:
             dt_sub = dt
 
         dt_sub_cp = cp.float32(dt_sub)
-        # Coeficientes de stencil para derivadas (soporta malla variable)
-        # x-dir: (nx-2,), broadcastea por columnas
-        _d1x_W = self.d1x_W[1:-1];  _d1x_C = self.d1x_C[1:-1];  _d1x_E = self.d1x_E[1:-1]
-        _d2x_W = self.d2x_W[1:-1];  _d2x_C = self.d2x_C[1:-1];  _d2x_E = self.d2x_E[1:-1]
-        # y-dir: (ny-2, 1), broadcastea por filas
-        _d1y_S = self.d1y_S[1:-1, cp.newaxis];  _d1y_C = self.d1y_C[1:-1, cp.newaxis];  _d1y_N = self.d1y_N[1:-1, cp.newaxis]
-        _d2y_S = self.d2y_S[1:-1, cp.newaxis];  _d2y_C = self.d2y_C[1:-1, cp.newaxis];  _d2y_N = self.d2y_N[1:-1, cp.newaxis]
+        inv_dx2 = cp.float32(1.0 / (dx * dx))
+        inv_dy2 = cp.float32(1.0 / (dy * dy))
+        inv_2dx = cp.float32(0.5 / dx)
+        inv_2dy = cp.float32(0.5 / dy)
 
         # Prealocar temporales
         u_new = self.u.astype(cp.float32, copy=True)
@@ -1472,7 +1183,7 @@ class Mesh:
             
             # ⭐ Con viscosidad variable: ∇·(ν_eff ∇u) ≠ ν_eff ∇²u
             # Forma correcta: ∂(ν ∂u/∂x)/∂x + ∂(ν ∂u/∂y)/∂y
-            viscosidad_variable = usar_wale
+            viscosidad_variable = usar_wale or self.usar_viscosidad_estela
             if viscosidad_variable:
                 # Calcular gradientes de u,v
                 du_dx = cp.zeros_like(u, dtype=cp.float32)
@@ -1480,27 +1191,27 @@ class Mesh:
                 dv_dx = cp.zeros_like(v, dtype=cp.float32)
                 dv_dy = cp.zeros_like(v, dtype=cp.float32)
                 
-                du_dx[:, 1:-1] = _d1x_W * u[:, :-2] + _d1x_C * u[:, 1:-1] + _d1x_E * u[:, 2:]
-                du_dy[1:-1, :] = _d1y_S * u[:-2, :] + _d1y_C * u[1:-1, :] + _d1y_N * u[2:, :]
-                dv_dx[:, 1:-1] = _d1x_W * v[:, :-2] + _d1x_C * v[:, 1:-1] + _d1x_E * v[:, 2:]
-                dv_dy[1:-1, :] = _d1y_S * v[:-2, :] + _d1y_C * v[1:-1, :] + _d1y_N * v[2:, :]
+                du_dx[:, 1:-1] = (u[:, 2:] - u[:, :-2]) * inv_2dx
+                du_dy[1:-1, :] = (u[2:, :] - u[:-2, :]) * inv_2dy
+                dv_dx[:, 1:-1] = (v[:, 2:] - v[:, :-2]) * inv_2dx
+                dv_dy[1:-1, :] = (v[2:, :] - v[:-2, :]) * inv_2dy
                 
                 # Calcular gradientes de nu_eff
                 dnu_dx = cp.zeros_like(nu_eff, dtype=cp.float32)
                 dnu_dy = cp.zeros_like(nu_eff, dtype=cp.float32)
-                dnu_dx[:, 1:-1] = _d1x_W * nu_eff[:, :-2] + _d1x_C * nu_eff[:, 1:-1] + _d1x_E * nu_eff[:, 2:]
-                dnu_dy[1:-1, :] = _d1y_S * nu_eff[:-2, :] + _d1y_C * nu_eff[1:-1, :] + _d1y_N * nu_eff[2:, :]
+                dnu_dx[:, 1:-1] = (nu_eff[:, 2:] - nu_eff[:, :-2]) * inv_2dx
+                dnu_dy[1:-1, :] = (nu_eff[2:, :] - nu_eff[:-2, :]) * inv_2dy
                 
-                # Laplaciano de u,v (stencil no-uniforme)
+                # Laplaciano de u,v (parte nu·∇²u)
                 lap_u = cp.zeros_like(u, dtype=cp.float32)
                 lap_v = cp.zeros_like(v, dtype=cp.float32)
                 lap_u[1:-1, 1:-1] = (
-                    _d2x_W * u[1:-1, :-2] + _d2x_C * u[1:-1, 1:-1] + _d2x_E * u[1:-1, 2:]
-                    + _d2y_S * u[:-2, 1:-1] + _d2y_C * u[1:-1, 1:-1] + _d2y_N * u[2:, 1:-1]
+                    (u[1:-1, 2:] - 2.0 * u[1:-1, 1:-1] + u[1:-1, :-2]) * inv_dx2
+                    + (u[2:, 1:-1] - 2.0 * u[1:-1, 1:-1] + u[:-2, 1:-1]) * inv_dy2
                 )
                 lap_v[1:-1, 1:-1] = (
-                    _d2x_W * v[1:-1, :-2] + _d2x_C * v[1:-1, 1:-1] + _d2x_E * v[1:-1, 2:]
-                    + _d2y_S * v[:-2, 1:-1] + _d2y_C * v[1:-1, 1:-1] + _d2y_N * v[2:, 1:-1]
+                    (v[1:-1, 2:] - 2.0 * v[1:-1, 1:-1] + v[1:-1, :-2]) * inv_dx2
+                    + (v[2:, 1:-1] - 2.0 * v[1:-1, 1:-1] + v[:-2, 1:-1]) * inv_dy2
                 )
                 
                 # Término completo: ∇·(ν_eff ∇u) = ν_eff ∇²u + ∇ν_eff · ∇u
@@ -1510,16 +1221,16 @@ class Mesh:
                 u_new = u + dt_sub_cp * div_visc_u
                 v_new = v + dt_sub_cp * div_visc_v
             else:
-                # Viscosidad constante: caso simple (stencil no-uniforme)
+                # Viscosidad constante: caso simple
                 lap_u = cp.zeros_like(u, dtype=cp.float32)
                 lap_v = cp.zeros_like(v, dtype=cp.float32)
                 lap_u[1:-1, 1:-1] = (
-                    _d2x_W * u[1:-1, :-2] + _d2x_C * u[1:-1, 1:-1] + _d2x_E * u[1:-1, 2:]
-                    + _d2y_S * u[:-2, 1:-1] + _d2y_C * u[1:-1, 1:-1] + _d2y_N * u[2:, 1:-1]
+                    (u[1:-1, 2:] - 2.0 * u[1:-1, 1:-1] + u[1:-1, :-2]) * inv_dx2
+                    + (u[2:, 1:-1] - 2.0 * u[1:-1, 1:-1] + u[:-2, 1:-1]) * inv_dy2
                 )
                 lap_v[1:-1, 1:-1] = (
-                    _d2x_W * v[1:-1, :-2] + _d2x_C * v[1:-1, 1:-1] + _d2x_E * v[1:-1, 2:]
-                    + _d2y_S * v[:-2, 1:-1] + _d2y_C * v[1:-1, 1:-1] + _d2y_N * v[2:, 1:-1]
+                    (v[1:-1, 2:] - 2.0 * v[1:-1, 1:-1] + v[1:-1, :-2]) * inv_dx2
+                    + (v[2:, 1:-1] - 2.0 * v[1:-1, 1:-1] + v[:-2, 1:-1]) * inv_dy2
                 )
                 u_new = u + nu_eff[0,0] * dt_sub_cp * lap_u
                 v_new = v + nu_eff[0,0] * dt_sub_cp * lap_v
@@ -1536,6 +1247,202 @@ class Mesh:
         self.reforzar_impermeabilidad()
         self.apply_boundaries(after_projection=False)
 
+    def project2_adaptive(self, rho_sim, dt, tol_div=1e-5, tol_poisson=1e-5, 
+                          max_iter=500, min_iter=5, check_every=20, omega=0.8,
+                          print_every=100, verbose=False):
+   
+        dx = self.dx
+        dy = self.dy
+        assert abs(dx - dy) < 1e-6, "Esta version asume dx~dy."
+        
+        h2 = cp.float32(dx * dx)
+        rho_f = cp.float32(rho_sim)
+        dt_f = cp.float32(dt)
+        ny, nx = self.p.shape
+        
+        # Mascara de celdas libres
+        free = ~self.solid
+        
+        # ⭐ Aplicar Ghost-Cell IBM antes de calcular divergencia
+        self.apply_ghost_cell_bc()
+        
+        # ============================================================
+        # PRE-CHECK: Medir divergencia ANTES de proyectar
+        # Estrategia adaptativa SIMPLIFICADA (para usar como pre-suavizador):
+        # - Si div_before < tol_div: ejecutar max_iter/2 iteraciones (mantenimiento)
+        # - Si div_before >= tol_div: ejecutar max_iter iteraciones completas
+        # ============================================================
+        div_before = self._compute_divergence_field()
+        div_mean_before = float(cp.mean(cp.abs(div_before[free])))
+        
+        if verbose:
+            print(f"[Proyección Jacobi] Divergencia inicial: {div_mean_before:.6e}")
+        
+        # Ajustar iteraciones según estado actual
+        if div_mean_before < tol_div:
+            # Divergencia aceptable: modo mantenimiento (mitad de iteraciones)
+            adaptive_max_iter = max(min_iter, max_iter // 2)
+            if verbose:
+                print(f"[Proyección Jacobi] Modo mantenimiento: {adaptive_max_iter} iters")
+        else:
+            # Divergencia alta: usar max_iter completo
+            adaptive_max_iter = max_iter
+            if verbose:
+                print(f"[Proyección Jacobi] Modo completo: {adaptive_max_iter} iters")
+        
+        # ============================================================
+        # Setup Poisson: del^2 p = (rho/dt) * div(u*)
+        # ============================================================
+        rhs = cp.zeros((ny, nx), dtype=cp.float32)
+        rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_before[1:-1, 1:-1]
+
+        # Compatibilidad Neumann (si no hay Dirichlet de presión): sum(rhs)=0 en fluido
+        try:
+            hay_dirichlet = bool(cp.any(self.fixed_pressure_mask))
+        except Exception:
+            hay_dirichlet = False
+        if not hay_dirichlet:
+            mean_rhs = cp.mean(rhs[free])
+            rhs[free] = rhs[free] - mean_rhs
+        
+        # Warm start
+        p = self.p.astype(cp.float32, copy=True)
+        p_flat = p.ravel()
+        rhs_flat = rhs.ravel().astype(cp.float32, copy=False)
+        
+        # ============================================================
+        # Iteraciones Jacobi con chequeo de divergencia
+        # ============================================================
+        converged = False
+        div_mean_after = div_mean_before  # Inicializar para el retorno
+        
+        for it in range(adaptive_max_iter):
+            # Update Jacobi
+            out = self._jacobi_update_masked(
+                self.solid.ravel(), p_flat, rhs_flat, h2,
+                cp.int32(nx), cp.int32(ny), size=p_flat.size
+            )
+
+            # Enforce fixed-pressure Dirichlet puntos (si hay máscara)
+            try:
+                if cp.any(self.fixed_pressure_mask):
+                    mask_flat = self.fixed_pressure_mask.ravel()
+                    out[mask_flat] = self.fixed_pressure_value
+            except Exception:
+                pass
+
+            if omega != 1.0:
+                p_flat = (1.0 - omega) * p_flat + omega * out
+            else:
+                p_flat = out
+
+            # Reimponer valor fijo tras mezcla (por seguridad)
+            try:
+                if cp.any(self.fixed_pressure_mask):
+                    p_flat[self.fixed_pressure_mask.ravel()] = self.fixed_pressure_value
+            except Exception:
+                pass
+            
+            # Chequear convergencia cada check_every (pero minimo min_iter)
+            if it >= min_iter and it % check_every == 0:
+                # Actualizar presion temporal
+                self.p = p_flat.reshape(ny, nx)
+                self._aplicar_bc_presion_neumann()
+                
+                # Corregir velocidad temporalmente para medir div(u)
+                u_temp = self.u.copy()
+                v_temp = self.v.copy()
+                
+                coef = dt_f / rho_f
+                # grad(p) enmascarado cerca de sólidos (evita stencils que crucen sólido)
+                free_c = free[1:-1, 1:-1]
+                mask_x = free_c & free[1:-1, 2:] & free[1:-1, :-2]
+                mask_y = free_c & free[2:, 1:-1] & free[:-2, 1:-1]
+                dpdx = (self.p[1:-1, 2:] - self.p[1:-1, :-2]) / (2.0 * dx)
+                dpdy = (self.p[2:, 1:-1] - self.p[:-2, 1:-1]) / (2.0 * dy)
+                u_temp[1:-1, 1:-1] -= coef * cp.where(mask_x, dpdx, 0.0)
+                v_temp[1:-1, 1:-1] -= coef * cp.where(mask_y, dpdy, 0.0)
+                
+                # Calcular divergencia del campo corregido (consistente con sólidos)
+                div_after = self._compute_divergence_field_uv(u_temp, v_temp)
+                div_mean_after = float(cp.mean(cp.abs(div_after[free])))
+                
+                # CRITERIO PRINCIPAL: si div(u) es suficientemente pequeño, SALIR
+                if div_mean_after < tol_div:
+                    converged = True
+                    if verbose:
+                        print(f"[Proyección] ✓ Convergencia alcanzada en iter {it+1}: div={div_mean_after:.6e}")
+                    break
+                
+                # Criterio secundario: residuo Poisson (opcional)
+                # Residuo Poisson con operador enmascarado (si hay sólido, evita stencil)
+                lap_flat = self._laplacian_kernel_masked(
+                    self.solid.ravel(), p_flat, h2, cp.int32(nx), cp.int32(ny), size=p_flat.size
+                )
+                lap = lap_flat.reshape(ny, nx)[1:-1, 1:-1]
+                res_field = lap - rhs[1:-1, 1:-1]
+                res = cp.max(cp.abs(res_field[free[1:-1, 1:-1]]))
+                
+                if res < tol_poisson:
+                    converged = True
+                    if verbose:
+                        print(f"[Proyección] ✓ Convergencia Poisson en iter {it+1}: res={float(res):.6e}")
+                    break
+            
+            # Imprimir progreso cada print_every iteraciones
+            if verbose and (it + 1) % print_every == 0:
+                # Si acabamos de calcular div, mostrarla; si no, indicar que se calcula cada check_every
+                if it >= min_iter and (it % check_every == 0):
+                    print(f"  Iter {it+1:6d}: div={div_mean_after:.6e}")
+                else:
+                    print(f"  Iter {it+1:6d}: (div se calcula cada {check_every} iters)")
+        
+        # Advertencia si no convergió
+        if not converged and verbose:
+            print(f"[Proyección] ⚠ ADVERTENCIA: Alcanzado max_iter={adaptive_max_iter} sin convergencia completa")
+            print(f"              div_final={div_mean_after:.6e} (objetivo: {tol_div:.6e})")
+        
+        # ============================================================
+        # Aplicar correccion final
+        # ============================================================
+        self.p = p_flat.reshape(ny, nx)
+        self._aplicar_bc_presion_neumann()
+        # Reimponer presion fija en celdas marcadas
+        try:
+            if cp.any(self.fixed_pressure_mask):
+                self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
+        except Exception:
+            pass
+        
+        coef = dt_f / rho_f
+        free_c = free[1:-1, 1:-1]
+        mask_x = free_c & free[1:-1, 2:] & free[1:-1, :-2]
+        mask_y = free_c & free[2:, 1:-1] & free[:-2, 1:-1]
+        dpdx = (self.p[1:-1, 2:] - self.p[1:-1, :-2]) / (2.0 * dx)
+        dpdy = (self.p[2:, 1:-1] - self.p[:-2, 1:-1]) / (2.0 * dy)
+        self.u[1:-1, 1:-1] -= coef * cp.where(mask_x, dpdx, 0.0)
+        self.v[1:-1, 1:-1] -= coef * cp.where(mask_y, dpdy, 0.0)
+        
+        self.apply_ghost_cell_bc()
+        self.reforzar_impermeabilidad()
+        # ⭐ Usar after_projection=True para no sobrescribir outflow con Neumann
+        self.apply_boundaries(after_projection=True)
+        
+        # Asegurar referencia de presión antes de salir (malla fina sin Dirichlet)
+        try:
+            self._anchor_pressure()
+        except Exception:
+            pass
+
+        # Opcional: retornar info de diagnostico
+        return {
+            'iterations': it + 1,
+            'converged': converged,
+            'div_before': div_mean_before,
+            'div_after': div_mean_after,
+            'adaptive_max': adaptive_max_iter
+        }
+    
     def _compute_divergence_field(self):
         """
         Calcula el campo completo de divergencia del^2 u = du/dx + dv/dy.
@@ -1562,8 +1469,8 @@ class Mesh:
         self._divergence_kernel(
             (grid,), (block,),
             (u.ravel(), v.ravel(), self.solid.ravel(), div.ravel(),
-             self.d1x_W, self.d1x_C, self.d1x_E,
-             self.d1y_S, self.d1y_C, self.d1y_N,
+             cp.float32(1.0 / (2.0 * self.dx)),
+             cp.float32(1.0 / (2.0 * self.dy)),
              cp.int32(nx), cp.int32(ny))
         )
         return div
@@ -1585,15 +1492,14 @@ class Mesh:
         g21 = cp.zeros_like(u, dtype=cp.float32)  # dv/dx
         g22 = cp.zeros_like(u, dtype=cp.float32)  # dv/dy
 
-        # Coeficientes de stencil para primera derivada (soporta malla variable)
-        _d1x_W = self.d1x_W[1:-1];  _d1x_C = self.d1x_C[1:-1];  _d1x_E = self.d1x_E[1:-1]
-        _d1y_S = self.d1y_S[1:-1, cp.newaxis];  _d1y_C = self.d1y_C[1:-1, cp.newaxis];  _d1y_N = self.d1y_N[1:-1, cp.newaxis]
+        inv2dx = cp.float32(0.5 / dx)
+        inv2dy = cp.float32(0.5 / dy)
 
-        # centrales (interior) — stencil no-uniforme
-        g11[:, 1:-1] = _d1x_W * u[:, :-2] + _d1x_C * u[:, 1:-1] + _d1x_E * u[:, 2:]
-        g12[1:-1, :] = _d1y_S * u[:-2, :] + _d1y_C * u[1:-1, :] + _d1y_N * u[2:, :]
-        g21[:, 1:-1] = _d1x_W * v[:, :-2] + _d1x_C * v[:, 1:-1] + _d1x_E * v[:, 2:]
-        g22[1:-1, :] = _d1y_S * v[:-2, :] + _d1y_C * v[1:-1, :] + _d1y_N * v[2:, :]
+        # centrales (interior)
+        g11[:, 1:-1] = (u[:, 2:] - u[:, :-2]) * inv2dx
+        g12[1:-1, :] = (u[2:, :] - u[:-2, :]) * inv2dy
+        g21[:, 1:-1] = (v[:, 2:] - v[:, :-2]) * inv2dx
+        g22[1:-1, :] = (v[2:, :] - v[:-2, :]) * inv2dy
 
         # Partes simétricas S_ij = 0.5*(g_ij + g_ji)
         S11 = g11
@@ -1632,12 +1538,11 @@ class Mesh:
         num = cp.power(Qsd_pos, 1.5)
         den = cp.power(Qs_pos, 2.5) + cp.power(Qsd_pos, 1.25) + cp.float32(eps)
 
-        # Delta local: filtro de sub-malla basado en tamaño de celda local
-        dx_local = (self.dx_e + self.dx_w) * cp.float32(0.5)  # (nx,)
-        dy_local = (self.dy_n + self.dy_s) * cp.float32(0.5)  # (ny,)
-        Delta2 = dx_local[cp.newaxis, :] * dy_local[:, cp.newaxis]  # (ny, nx) area de celda
-        Delta = cp.sqrt(Delta2)
-        coef = (cp.float32(Cw) ** 2) * Delta2
+        # Mantener cálculos en GPU: representar dx,dy como scalars de CuPy
+        dx_cp = cp.asarray(dx, dtype=cp.float32)
+        dy_cp = cp.asarray(dy, dtype=cp.float32)
+        Delta = cp.sqrt(dx_cp * dy_cp)
+        coef = (cp.float32(Cw) * Delta) ** 2
 
         nu_t = coef * (num / den)
 
@@ -1658,6 +1563,107 @@ class Mesh:
             pass
 
         return nu_t.astype(cp.float32, copy=False)
+
+    def compute_wake_viscosity(self):
+        """
+        Calcula viscosidad turbulenta extra en la estela del perfil.
+        Simula la disipación 3D spanwise ausente en simulaciones 2D.
+        
+        nu_wake = C_estela * Delta^2 * |omega| * mascara_estela
+        
+        La máscara de estela se construye detectando la región aguas abajo
+        del sólido, en dirección del flujo libre.
+        """
+        dx = self.dx; dy = self.dy
+        u = self.u; v = self.v
+        ny, nx = u.shape
+        
+        # --- Vorticidad: omega = dv/dx - du/dy ---
+        inv2dx = cp.float32(0.5 / dx)
+        inv2dy = cp.float32(0.5 / dy)
+        
+        dvdx = cp.zeros_like(u, dtype=cp.float32)
+        dudy = cp.zeros_like(u, dtype=cp.float32)
+        dvdx[:, 1:-1] = (v[:, 2:] - v[:, :-2]) * inv2dx
+        dudy[1:-1, :] = (u[2:, :] - u[:-2, :]) * inv2dy
+        omega = cp.abs(dvdx - dudy)
+        
+        # --- Construir máscara de estela ---
+        if self._wake_mask is None or not hasattr(self, '_wake_alpha_cache'):
+            self._recompute_wake_mask()
+        
+        # --- nu_wake = C * Delta^2 * |omega| * mascara ---
+        Delta2 = cp.float32(dx * dy)
+        C = cp.float32(self.C_estela)
+        
+        nu_wake = C * Delta2 * omega * self._wake_mask
+        
+        # No-negatividad
+        nu_wake = cp.maximum(nu_wake, cp.float32(0.0))
+        nu_wake[self.solid] = cp.float32(0.0)
+        
+        return nu_wake.astype(cp.float32, copy=False)
+    
+    def _recompute_wake_mask(self):
+        """
+        Precomputa la máscara de estela basada en la posición del sólido
+        y la dirección del flujo libre.
+        La estela se define como la región aguas abajo del borde de salida
+        del perfil, con un ensanchamiento progresivo.
+        """
+        ny, nx = self.u.shape
+        solid_np = cp.asnumpy(self.solid)
+        
+        # Encontrar bounding box del sólido
+        solid_rows, solid_cols = np.where(solid_np)
+        if len(solid_rows) == 0:
+            self._wake_mask = cp.zeros((ny, nx), dtype=cp.float32)
+            self._wake_alpha_cache = getattr(self, 'alpha_deg', 0.0)
+            return
+        
+        # Borde de salida: columna máxima del sólido (en dirección x)
+        j_te = int(np.max(solid_cols))  # trailing edge column
+        i_min_solid = int(np.min(solid_rows))
+        i_max_solid = int(np.max(solid_rows))
+        i_center = (i_min_solid + i_max_solid) // 2
+        espesor_solid = i_max_solid - i_min_solid + 1
+        
+        # Ángulo del flujo (para orientar la estela)
+        alpha_rad = self._get_freestream_angle_rad()
+        cos_a = np.cos(alpha_rad)
+        sin_a = np.sin(alpha_rad)
+        
+        # Crear coordenadas de malla
+        jj, ii = np.meshgrid(np.arange(nx), np.arange(ny))
+        
+        # Vector desde el trailing edge a cada punto
+        dj = jj - j_te  # dirección x (columnas)
+        di = ii - i_center  # dirección y (filas, invertida)
+        
+        # Distancia aguas abajo (proyección en dirección del flujo)
+        # En la malla: x crece con j, y crece hacia abajo con i
+        dist_downstream = dj * cos_a - di * sin_a  # positivo = aguas abajo
+        
+        # Distancia perpendicular al flujo
+        dist_perp = np.abs(dj * sin_a + di * cos_a)
+        
+        # La estela empieza justo después del sólido y se ensancha
+        # Ensanchamiento: el ancho de la estela crece como sqrt(x)
+        wake_width = espesor_solid * 0.5 + np.sqrt(np.maximum(dist_downstream, 0.0)) * 0.5
+        
+        # Máscara: aguas abajo y dentro del cono de estela
+        mascara = (dist_downstream > 0) & (dist_perp < wake_width) & (~solid_np)
+        
+        # Intensidad decreciente con la distancia (más fuerte cerca del perfil)
+        longitud_estela = nx - j_te  # longitud total disponible
+        intensidad = np.where(
+            mascara,
+            np.exp(-0.5 * dist_downstream / max(longitud_estela * 0.5, 1.0)),
+            0.0
+        ).astype(np.float32)
+        
+        self._wake_mask = cp.asarray(intensidad, dtype=cp.float32)
+        self._wake_alpha_cache = getattr(self, 'alpha_deg', 0.0)
 
     def _anchor_pressure(self):
         """
@@ -1697,318 +1703,338 @@ class Mesh:
         except Exception:
             pass
 
-    def project_cg(self, rho_sim, dt, tol_div=1e-1, tol_residual=1e-6,
-                   max_iter=500, min_iter=5, check_every=50,
-                   verbose=False, print_every=100,
-                   max_outer=5, modo_adaptativo=True):
+    def project_cg(self, rho_sim, dt, tol_div=1e-1, tol_residual=1e-6, 
+                   max_iter=2000, min_iter=5, check_every=5, 
+                   verbose=False, print_every=50,
+                   usar_operador_spd=True,
+                   modo_adaptativo=False,
+                   detectar_estancamiento=False):
         """
-        Proyección incompresible con CG simétrico + defect-correction.
-
-        Operador CG: A = -V*L  (SPD, rápida convergencia).
-        Compatible con malla variable (coefs d2x/d2y/d1x/d1y por nodo).
-
-        Sigue el mismo esquema de robustez que project_multigrid:
-        - Safety: si corrección amplifica div, revert + reduce omega + retry
-        - Mantenimiento: cuando div < tol, trabajo ligero
-        - Global revert: si todo empeoró, restaurar estado inicial
-        - Iteraciones CG adaptativas según div/tol_div
+        Proyección incompresible usando Gradiente Conjugado (CG) precondicionado.
+        
+        CG converge 10-100× más rápido que Jacobi para sistemas elípticos.
+        Usa precondicionador Jacobi (diagonal) para mejorar el número de condición.
+        
+        Parámetros adicionales:
+            verbose: activar impresiones de monitoreo
+            print_every: cada cuantas iteraciones imprimir (si verbose=True)
         """
+        dx = self.dx
+        dy = self.dy
+        assert abs(dx - dy) < 1e-6, "Esta version asume dx ~ dy."
+        
+        h2 = cp.float32(dx * dx)
         rho_f = cp.float32(rho_sim)
         dt_f = cp.float32(dt)
         ny, nx = self.p.shape
-        coef_f = dt_f / rho_f
-
+        
+        # Mascara de fluido
         free = ~self.solid
-        solid_flat = self.solid.ravel()
-        free_flat = free.ravel()
-        vol_flat = self._vol_2d_flat
-        block_sz = 256
-        total_cells = ny * nx
-        grid_k = (total_cells + block_sz - 1) // block_sz
-        nx_i32 = cp.int32(nx)
-        ny_i32 = cp.int32(ny)
+        
+        # ⭐ Aplicar Ghost-Cell IBM antes de calcular divergencia
+        self.apply_ghost_cell_bc()
+        
+        # ============================================================
+        # PRE-CHECK: Medir divergencia ANTES
+        # ============================================================
+        div_before = self._compute_divergence_field()
+        div_mean_before = float(cp.mean(cp.abs(div_before[free])))
+        
+        if verbose:
+            print(f"[CG] Divergencia inicial: {div_mean_before:.6e}")
+        
+        # Iteraciones: por defecto NO usar modo adaptativo para evitar deriva (sub-resolución)
+        if modo_adaptativo:
+            if div_mean_before < tol_div * 0.1:
+                adaptive_max_iter = 10
+            elif div_mean_before < tol_div:
+                adaptive_max_iter = 100
+            else:
+                adaptive_max_iter = max_iter
+        else:
+            adaptive_max_iter = max_iter
+        
+        # ============================================================
+        # PASO 1: Construir RHS = (rho/dt) * div(u*)
+        # ============================================================
+        # Comentarios:
+        # - Se resuelve A x = b con A la discretización del Laplaciano (5-point)
+        # - Precondicionador Jacobi implementado en `_precond_jacobi_kernel` (M^-1 r)
+        # - `_laplacian_kernel` aplica A * x con la forma:
+        #     (x_E + x_W + x_N + x_S - 4 x_C) / h^2
+        rhs = cp.zeros((ny, nx), dtype=cp.float32)
+        rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_before[1:-1, 1:-1]
 
+        # Compatibilidad Neumann (si no hay Dirichlet de presión): sum(rhs)=0 en fluido
         try:
             hay_dirichlet = bool(cp.any(self.fixed_pressure_mask))
         except Exception:
             hay_dirichlet = False
-
-        # Ghost-Cell IBM
-        self.apply_ghost_cell_bc()
-
-        # Divergencia ANTES
-        div_before = self._compute_divergence_field()
-        n_free = float(cp.sum(free))
-        div_mean_before = float(cp.sum(cp.abs(div_before[free]))) / n_free
-        if verbose:
-            print(f"[CG] Divergencia inicial: {div_mean_before:.6e}")
-
-        # --- Determinar modo y número de outers ---
-        if div_mean_before < tol_div:
-            n_outer = 2
-            maintenance_mode = True
-        else:
-            maintenance_mode = False
-            if modo_adaptativo:
-                if div_mean_before < tol_div * 3.0:
-                    n_outer = max(3, max_outer // 2)
-                else:
-                    n_outer = max_outer
-            else:
-                n_outer = max_outer
+        if not hay_dirichlet:
+            mean_rhs = cp.mean(rhs[free])
+            rhs[free] = rhs[free] - mean_rhs
+        
+        # Aplanar arrays para kernels
+        rhs_flat = rhs.ravel().astype(cp.float32, copy=False)
 
         # ============================================================
-        # Operador SPD:  A = -V * L   (V = volumen, L = Laplaciano d2)
+        # CG requiere operador SPD. Nuestro kernel devuelve Laplaciano (definido negativo).
+        # Para garantizar SPD usamos A = -L y b = -rhs.
+        # Esto mejora estabilidad y evita comportamientos raros a largo plazo.
         # ============================================================
+        if usar_operador_spd:
+            rhs_flat = -rhs_flat
+
         def _aplicar_A(vec_flat):
-            Lx = self._laplacian_kernel_masked(
-                solid_flat, vec_flat,
-                self.d2x_W, self.d2x_C, self.d2x_E,
-                self.d2y_S, self.d2y_C, self.d2y_N,
-                nx_i32, ny_i32, size=vec_flat.size)
-            return -(Lx * vol_flat)
+            out_flat = self._laplacian_kernel_masked(
+                self.solid.ravel(), vec_flat, h2, cp.int32(nx), cp.int32(ny), size=vec_flat.size
+            )
+            return -out_flat if usar_operador_spd else out_flat
 
         def _aplicar_Minv(res_flat):
-            r_unscaled = res_flat / vol_flat
-            z_L = self._precond_jacobi_kernel_masked(
-                solid_flat, r_unscaled,
-                self.d2x_W, self.d2x_C, self.d2x_E,
-                self.d2y_S, self.d2y_C, self.d2y_N,
-                nx_i32, ny_i32, size=r_unscaled.size)
-            return -z_L
-
-        # Kernel corrección velocidad
-        vc_kernel = self._velocity_correction_kernel
-
-        # =========================================================
-        # DEFECT-CORRECTION con safety-check y mantenimiento
-        # =========================================================
-        p_acumulada = cp.zeros((ny, nx), dtype=cp.float32)
-        total_iters = 0
-        converged = False
-        div_mean_current = div_mean_before
-        omega_corr = 1.0  # damping para corrección de velocidad
-
-        # Guardar estado inicial para revert global
-        u_initial = self.u.copy()
-        v_initial = self.v.copy()
-
-        for outer in range(n_outer):
-            # Re-computar divergencia
-            div_field = self._compute_divergence_field()
-            div_mean_current = float(cp.sum(cp.abs(div_field[free]))) / n_free
-
-            # --- Check convergencia ---
-            if div_mean_current < tol_div:
-                if maintenance_mode and outer >= 1:
-                    converged = True
-                    if verbose:
-                        print(f"[CG] Mantenimiento OK outer {outer}: div={div_mean_current:.6e}")
-                    break
-                elif not maintenance_mode and outer > 0:
-                    converged = True
-                    if verbose:
-                        print(f"[CG] Convergencia div outer {outer}: div={div_mean_current:.6e}")
-                    break
-
-            # --- Iteraciones CG adaptativas ---
-            if maintenance_mode:
-                max_inner = max(100, max_iter // 4)
-            elif modo_adaptativo:
-                if div_mean_current < tol_div * 2.0:
-                    max_inner = max(100, max_iter // 2)
-                elif div_mean_current < tol_div * 5.0:
-                    max_inner = max(200, (max_iter * 2) // 3)
-                else:
-                    max_inner = max_iter
-            else:
-                max_inner = max_iter
-
-            # RHS: rhs = (rho/dt) * div(u)
-            rhs = cp.zeros((ny, nx), dtype=cp.float32)
-            rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_field[1:-1, 1:-1]
-            rhs_flat = rhs.ravel()
-
-            # Compatibilidad Neumann (volume-weighted)
-            if not hay_dirichlet:
-                vrs = cp.sum(rhs_flat[free_flat] * vol_flat[free_flat])
-                vt = cp.sum(vol_flat[free_flat])
-                rhs_flat[free_flat] -= vrs / vt
-
-            # RHS para operador SPD: b = -V * rhs
-            rhs_M = -(rhs_flat * vol_flat)
-
-            # CG init
-            if outer == 0:
-                x = self.p.ravel().astype(cp.float32, copy=True)
-            else:
-                x = cp.zeros(total_cells, dtype=cp.float32)
-
-            if hay_dirichlet:
-                x[self.fixed_pressure_mask.ravel()] = self.fixed_pressure_value
-
-            Ax = _aplicar_A(x)
-            r = rhs_M - Ax
-            if hay_dirichlet:
+            out_flat = self._precond_jacobi_kernel_masked(
+                self.solid.ravel(), res_flat, h2, cp.int32(nx), cp.int32(ny), size=res_flat.size
+            )
+            # El kernel implementa -(h^2/n_nb)*r. Para A=-L, Minv debe ser +(h^2/n_nb)*r.
+            return -out_flat if usar_operador_spd else out_flat
+        
+        # ============================================================
+        # PASO 2: Inicializar CG
+        # ============================================================
+        # x0 = presion actual (warm start)
+        x = self.p.ravel().astype(cp.float32, copy=True)
+        # Forzar valores fijos en x0 (si hay celdas Dirichlet puntuales)
+        try:
+            if cp.any(self.fixed_pressure_mask):
+                mask_flat = self.fixed_pressure_mask.ravel()
+                x[mask_flat] = self.fixed_pressure_value
+        except Exception:
+            pass
+        
+        # r0 = b - Ax0
+        Ax = cp.empty_like(x)
+        Ax = _aplicar_A(x)
+        r = rhs_flat - Ax
+        # Anular residuo en nodos con presión fijada (no deben moverse)
+        try:
+            if cp.any(self.fixed_pressure_mask):
                 r[self.fixed_pressure_mask.ravel()] = 0.0
-            z = _aplicar_Minv(r)
-            p_dir = z.copy()
-            rz = float(cp.dot(r, z))
-
-            # CG inner loop
-            recompute_every = 50
-            for it_cg in range(max_inner):
-                Ap = _aplicar_A(p_dir)
-                pAp = float(cp.dot(p_dir, Ap))
-                if abs(pAp) < 1e-30:
-                    break
-                alpha_f = rz / pAp
-                alpha = cp.float32(alpha_f)
-                x += alpha * p_dir
-                r -= alpha * Ap
-
-                # Recomputo periódico del residuo real (evita drift float32)
-                if (it_cg + 1) % recompute_every == 0:
-                    r = rhs_M - _aplicar_A(x)
-
-                if hay_dirichlet:
-                    r[self.fixed_pressure_mask.ravel()] = 0.0
-                elif (it_cg + 1) % recompute_every == 0:
-                    # Proyectar fuera del null-space (constante) para Neumann
-                    mean_x = float(cp.sum(x[free_flat] * vol_flat[free_flat]) /
-                                   cp.sum(vol_flat[free_flat]))
-                    x[free_flat] -= cp.float32(mean_x)
-                    r = rhs_M - _aplicar_A(x)
-
-                if it_cg >= min_iter and it_cg % check_every == 0:
-                    res_norm = float(cp.sqrt(cp.dot(r, r)))
-                    if verbose and it_cg % print_every == 0:
-                        print(f"  [CG outer={outer+1}] it={it_cg+1:5d}  res={res_norm:.6e}")
-                    if res_norm < tol_residual:
-                        break
-
-                z = _aplicar_Minv(r)
-                rz_new = float(cp.dot(r, z))
-                if abs(rz) < 1e-30:
-                    break
-                beta = rz_new / rz
-                rz = rz_new
-                p_dir = z + cp.float32(beta) * p_dir
-
-            total_iters += it_cg + 1
-            p_corr = x.reshape(ny, nx)
-            if hay_dirichlet:
-                p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
-
-            # ============================================================
-            # Corrección velocidad con safety check completo
-            # ============================================================
-            u_save = self.u.copy()
-            v_save = self.v.copy()
-
-            coef_eff = cp.float32(float(coef_f) * omega_corr)
-            vc_kernel(
-                (grid_k,), (block_sz,),
-                (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
-                 coef_eff,
-                 self.d1x_W, self.d1x_C, self.d1x_E,
-                 self.d1y_S, self.d1y_C, self.d1y_N,
-                 nx_i32, ny_i32))
-
-            self.apply_ghost_cell_bc()
-            self.reforzar_impermeabilidad()
-
-            # Safety: verificar que div mejoró
-            div_check = self._compute_divergence_field()
-            div_after_corr = float(cp.sum(cp.abs(div_check[free]))) / n_free
-
-            if div_after_corr > div_mean_current * 1.01:
-                # Corrección empeoró → revertir
-                self.u[:] = u_save
-                self.v[:] = v_save
-                if maintenance_mode:
-                    if verbose:
-                        print(f"[CG] Mant. outer {outer+1}: corrección empeoró, revirtiendo (div={div_mean_current:.6e})")
-                    break
-                # Modo normal: reducir omega y reintentar
-                omega_corr *= 0.5
-                if omega_corr < 0.05:
-                    if verbose:
-                        print(f"[CG] Outer {outer+1}: omega={omega_corr:.3f} muy bajo, deteniendo")
-                    break
-                coef_eff = cp.float32(float(coef_f) * omega_corr)
-                vc_kernel(
-                    (grid_k,), (block_sz,),
-                    (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
-                     coef_eff,
-                     self.d1x_W, self.d1x_C, self.d1x_E,
-                     self.d1y_S, self.d1y_C, self.d1y_N,
-                     nx_i32, ny_i32))
-                self.apply_ghost_cell_bc()
-                self.reforzar_impermeabilidad()
-                # Verificar retry
-                div_retry = self._compute_divergence_field()
-                d_retry = float(cp.sum(cp.abs(div_retry[free])) / n_free)
-                if d_retry > div_mean_current * 1.01:
-                    # Retry también empeoró → revertir totalmente este outer
-                    self.u[:] = u_save
-                    self.v[:] = v_save
-                    if verbose:
-                        print(f"[CG] Outer {outer+1}/{n_outer} (w={omega_corr:.3f}): retry empeoró, skip")
-                    continue
+        except Exception:
+            pass
+        
+        # z0 = M^-1 r0 (precondicionador Jacobi)
+        z = cp.empty_like(r)
+        z = _aplicar_Minv(r)
+        
+        # p0 = z0
+        p = z.copy()
+        
+        # r^T z inicial
+        rz = cp.dot(r, z)
+        
+        # ============================================================
+        # PASO 3: Iteraciones CG con chequeo adaptativo + detección de estancamiento
+        # ============================================================
+        converged = False
+        div_mean_after = div_mean_before  # Inicializar
+        div_history = []
+        stall_window = 50
+        stall_tol_abs = 1e-8
+        stall_tol_rel = 1e-8
+        
+        # ⭐ Variables para detectar oscilación cerca de la tolerancia
+        oscilacion_detectada = False
+        ventana_oscilacion = 10  # Últimas N mediciones para detectar oscilación
+        factor_tolerancia_oscilacion = 2.0  # Considerar "cerca" si div < factor × tol_div
+        
+        for it in range(adaptive_max_iter):
+            # Ap = A * p
+            Ap = cp.empty_like(p)
+            Ap = _aplicar_A(p)
+            
+            # alpha = (r^T z) / (p^T Ap)
+            pAp = cp.dot(p, Ap)
+            if cp.abs(pAp) < 1e-30:
                 if verbose:
-                    print(f"[CG] Outer {outer+1}/{n_outer} ({it_cg+1} iters, w={omega_corr:.3f} retry): div={d_retry:.6e}")
-            else:
-                # Corrección OK → restaurar omega gradualmente
-                if omega_corr < 1.0:
-                    omega_corr = min(1.0, omega_corr * 1.5)
-                if verbose:
-                    print(f"[CG] Outer {outer+1}/{n_outer} ({it_cg+1} iters, w={omega_corr:.3f}): div={div_after_corr:.6e}")
-
-            p_acumulada += p_corr
-
-        # --- Global safety: si todo empeoró, revertir al estado inicial ---
-        div_final_check = self._compute_divergence_field()
-        div_final = float(cp.sum(cp.abs(div_final_check[free]))) / n_free
-        if div_final > div_mean_before * 1.01 and not converged:
-            self.u[:] = u_initial
-            self.v[:] = v_initial
-            p_acumulada[:] = 0.0
-            if verbose:
-                print(f"[CG] Revert global: div {div_mean_before:.6e} → {div_final:.6e} (empeoró)")
-
-        # =========================================================
-        # FINALIZACIÓN
-        # =========================================================
-        self.p = p_acumulada
-        self._aplicar_bc_presion_neumann()
-        if hay_dirichlet:
-            self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
-
-        self.apply_ghost_cell_bc()
-        self.reforzar_impermeabilidad()
-        self.apply_boundaries(after_projection=True)
-
-        if not hay_dirichlet:
+                    print(f"[CG] Terminación temprana: pAp ~ 0 en iter {it+1}")
+                break  # Evitar division por cero
+            alpha = rz / pAp
+            
+            # x = x + alpha*p
+            x = x + alpha * p
+            # Reimponer valores fijos en x durante iteraciones
             try:
-                self._anchor_pressure()
+                if cp.any(self.fixed_pressure_mask):
+                    x[self.fixed_pressure_mask.ravel()] = self.fixed_pressure_value
             except Exception:
                 pass
+            
+            # r = r - alpha*Ap
+            r = r - alpha * Ap
+            # Asegurar residuo cero en nodos fijados
+            try:
+                if cp.any(self.fixed_pressure_mask):
+                    r[self.fixed_pressure_mask.ravel()] = 0.0
+            except Exception:
+                pass
+            
+            # Determinar si calcular divergencia e imprimir
+            debe_chequear = (it >= min_iter and it % check_every == 0)
+            debe_imprimir = (verbose and (it + 1) % print_every == 0)
+            
+            # Calcular divergencia si toca chequear O si toca imprimir
+            if debe_chequear or debe_imprimir:
+                # Actualizar presion temporal
+                self.p = x.reshape(ny, nx)
+                
+                # Corregir velocidad temporalmente
+                u_temp = self.u.copy()
+                v_temp = self.v.copy()
+                
+                coef = dt_f / rho_f
+                free_c = free[1:-1, 1:-1]
+                mask_x = free_c & free[1:-1, 2:] & free[1:-1, :-2]
+                mask_y = free_c & free[2:, 1:-1] & free[:-2, 1:-1]
+                dpdx = (self.p[1:-1, 2:] - self.p[1:-1, :-2]) / (2.0 * dx)
+                dpdy = (self.p[2:, 1:-1] - self.p[:-2, 1:-1]) / (2.0 * dy)
+                u_temp[1:-1, 1:-1] -= coef * cp.where(mask_x, dpdx, 0.0)
+                v_temp[1:-1, 1:-1] -= coef * cp.where(mask_y, dpdy, 0.0)
+                
+                # ⭐ CRÍTICO: Anular velocidad en sólido ANTES de calcular divergencia
+                u_temp[self.solid] = 0.0
+                v_temp[self.solid] = 0.0
+                
+                # Calcular div(u) del campo corregido (consistente con sólidos)
+                div_after = self._compute_divergence_field_uv(u_temp, v_temp)
+                div_mean_after = float(cp.mean(cp.abs(div_after[free])))
+                
+                # Guardar en historial para detectar estancamiento
+                div_history.append(div_mean_after)
+                
+                # Detección de estancamiento (opcional)
+                if detectar_estancamiento and len(div_history) > stall_window:
+                    div_recent = div_history[-stall_window:]
+                    div_min_recent = min(div_recent)
+                    div_max_recent = max(div_recent)
+                    div_range = div_max_recent - div_min_recent
+                    
+                    # Cambio relativo: (max-min)/min
+                    if div_min_recent > 0:
+                        cambio_relativo = div_range / div_min_recent
+                    else:
+                        cambio_relativo = div_range
+                    
+                    # Estancamiento si no cambia al 4º decimal (abs o relativo)
+                    if (div_range < stall_tol_abs) or (cambio_relativo < stall_tol_rel):
+                        if verbose:
+                            print(f"[CG] ⚠ ESTANCAMIENTO detectado en iter {it+1}")
+                            print(f"     Divergencia estancada en {div_mean_after:.6e}")
+                            print(f"     Rango abs últimas {stall_window} iters: {div_range:.6e} < {stall_tol_abs:.6e}")
+                            print(f"     Cambio relativo últimas {stall_window} iters: {cambio_relativo:.6e} < {stall_tol_rel:.6e}")
+                            print(f"     → Continuando con siguiente paso dt")
+                        converged = False
+                        break
+                
+                # Imprimir progreso si corresponde
+                if debe_imprimir:
+                    print(f"  Iter {it+1:5d}: div={div_mean_after:.6e}")
+                
+                # ⭐ DETECCIÓN DE OSCILACIÓN cerca de la tolerancia
+                # Si estamos cerca de la tolerancia, verificar si hay oscilación
+                if debe_chequear and len(div_history) >= ventana_oscilacion:
+                    # Tomar últimas mediciones
+                    div_reciente = div_history[-ventana_oscilacion:]
+                    div_promedio = sum(div_reciente) / len(div_reciente)
+                    
+                    # Verificar si estamos cerca de la tolerancia
+                    if div_promedio < factor_tolerancia_oscilacion * tol_div:
+                        # Detectar oscilación: si sube y baja repetidamente
+                        oscilaciones = 0
+                        for i in range(1, len(div_reciente)):
+                            if (div_reciente[i] > div_reciente[i-1] and i > 1 and div_reciente[i-1] < div_reciente[i-2]) or \
+                               (div_reciente[i] < div_reciente[i-1] and i > 1 and div_reciente[i-1] > div_reciente[i-2]):
+                                oscilaciones += 1
+                        
+                        # Si hay más de 3 oscilaciones en la ventana, considerarlo oscilante
+                        if oscilaciones >= 3:
+                            oscilacion_detectada = True
+                            if verbose and not converged:
+                                print(f"[CG] 🔄 Oscilación detectada cerca de tolerancia en iter {it+1}")
+                                print(f"     div_promedio={div_promedio:.6e}, oscilaciones={oscilaciones}")
+                                print(f"     → Continuando hasta max_iter para reducir más la divergencia")
+                
+                # Chequear convergencia si corresponde
+                if debe_chequear and div_mean_after < tol_div:
+                    # ⭐ Si hay oscilación, NO salir todavía (continuar hasta max_iter)
+                    if not oscilacion_detectada:
+                        converged = True
+                        if verbose:
+                            print(f"[CG] ✓ Convergencia alcanzada en iter {it+1}: div={div_mean_after:.6e}")
+                        break
+                    else:
+                        # Oscilando: marcar como convergido pero seguir iterando
+                        converged = True
+                        if verbose and it == min_iter + check_every:
+                            print(f"[CG] ⚙️  Convergencia con oscilación: continuando hasta max_iter")
 
-        div_after = self._compute_divergence_field()
-        div_mean_after = float(cp.sum(cp.abs(div_after[free]))) / n_free
+            
+            # z = M^-1 r (precondicionador)
+            z = _aplicar_Minv(r)
+            
+            # beta = (r_new^T z_new) / (r_old^T z_old)
+            rz_new = cp.dot(r, z)
+            beta = rz_new / rz
+            rz = rz_new
+            
+            # p = z + beta*p
+            p = z + beta * p
+        
+        # Mensaje final según el estado
+        if not converged and verbose:
+            print(f"[CG] No convergió en {adaptive_max_iter} iters: div={div_mean_after:.6e}")
+        elif converged and oscilacion_detectada and verbose:
+            print(f"[CG] ✓ Completó {adaptive_max_iter} iters por oscilación: div_final={div_mean_after:.6e}")
+        
+        # ============================================================
+        # PASO 4: Escribir presion y corregir velocidad
+        # ============================================================
+        self.p = x.reshape(ny, nx)
+        # Reimponer presion fija en celdas marcadas (CG)
+        try:
+            if cp.any(self.fixed_pressure_mask):
+                self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
+        except Exception:
+            pass
+        
+        # u <- u - (dt/rho) grad(p)
+        coef = dt_f / rho_f
+        free_c = free[1:-1, 1:-1]
+        mask_x = free_c & free[1:-1, 2:] & free[1:-1, :-2]
+        mask_y = free_c & free[2:, 1:-1] & free[:-2, 1:-1]
+        dpdx = (self.p[1:-1, 2:] - self.p[1:-1, :-2]) / (2.0 * dx)
+        dpdy = (self.p[2:, 1:-1] - self.p[:-2, 1:-1]) / (2.0 * dy)
+        self.u[1:-1, 1:-1] -= coef * cp.where(mask_x, dpdx, 0.0)
+        self.v[1:-1, 1:-1] -= coef * cp.where(mask_y, dpdy, 0.0)
+        
+        # Aplicar Ghost-Cell IBM y reforzar impermeabilidad
+        self.apply_ghost_cell_bc()
+        self.reforzar_impermeabilidad()
+        # ⭐ Usar after_projection=True para no sobrescribir outflow con Neumann
+        self.apply_boundaries(after_projection=True)
+        
+        # Asegurar referencia de presión antes de salir (malla fina sin Dirichlet)
+        try:
+            self._anchor_pressure()
+        except Exception:
+            pass
 
-        if verbose:
-            print(f"[CG] div_before={div_mean_before:.6e}  div_after={div_mean_after:.6e}  iters={total_iters}")
-
+        # Retornar info de diagnostico
         return {
-            'iterations': total_iters,
-            'cycles': total_iters,
-            'outers': outer + 1,
-            'converged': converged or (div_mean_after < tol_div),
+            'iterations': it + 1,
+            'converged': converged,
             'div_before': div_mean_before,
             'div_after': div_mean_after,
-            'n_outer_used': n_outer,
+            'adaptive_max': adaptive_max_iter
         }
 
     def project_multigrid(self, rho_sim, dt, tol_div=1e-2,
@@ -2023,22 +2049,21 @@ class Mesh:
         Estrategia: múltiples iteraciones externas, cada una re-computa la
         divergencia residual y resuelve un nuevo Poisson.  Esto elimina la
         inconsistencia entre el Laplaciano compacto del solver y el gradiente
-        central de la corrección de velocidad.
-
-        Ciclos adaptativos: una vez div < tol_div, reduce cycles_per_outer
-        a 1-2 para acelerar pasos posteriores.
+        central de la corrección de velocidad, logrando ~10× mejor reducción
+        de divergencia para el mismo número total de V-cycles.
 
         Parámetros:
             tol_div: tolerancia media sobre |div(u)|
             max_outer: iteraciones externas de defect-correction
-            cycles_per_outer: V-cycles por iteración externa (máximo)
+            cycles_per_outer: V-cycles por iteración externa
             niveles_max: niveles de coarsening (2×2)
             pre_suavizado/post_suavizado: iteraciones GS-SOR por nivel
             omega: factor sobre-relajación (1.0-1.5, típico 1.1-1.2)
-            modo_adaptativo: ajustar outers y ciclos según div
+            modo_adaptativo: ajustar outers según div inicial
         """
         dx = self.dx
         dy = self.dy
+        assert abs(dx - dy) < 1e-6, "Esta version asume dx ~ dy."
 
         rho_f = cp.float32(rho_sim)
         dt_f  = cp.float32(dt)
@@ -2052,12 +2077,7 @@ class Mesh:
         nivel_max    = self._mg_niveles
         solids       = self._mg_solids
         solids_flat  = self._mg_solids_flat
-        mg_d2x_W     = self._mg_d2x_W
-        mg_d2x_C     = self._mg_d2x_C
-        mg_d2x_E     = self._mg_d2x_E
-        mg_d2y_S     = self._mg_d2y_S
-        mg_d2y_C     = self._mg_d2y_C
-        mg_d2y_N     = self._mg_d2y_N
+        h2_levels    = self._mg_h2
         bufs         = self._mg_bufs
         dir_masks    = self._mg_dirichlet
         hay_dir      = self._mg_hay_dirichlet
@@ -2076,6 +2096,8 @@ class Mesh:
 
         # Constantes
         coef     = dt_f / rho_f
+        inv_2dx  = cp.float32(1.0 / (2.0 * dx))
+        inv_2dy  = cp.float32(1.0 / (2.0 * dy))
 
         # Divergencia inicial
         div_before = self._compute_divergence_field()
@@ -2084,21 +2106,16 @@ class Mesh:
         if verbose:
             print(f"[MG] Divergencia inicial: {div_mean_before:.6e}")
 
-        # --- Determinar modo y número de outers ---
-        min_cycles = max(3, cycles_per_outer // 2)  # nunca menos de 3 V-cycles
-        if div_mean_before < tol_div:
-            # Ya convergido → mantenimiento ligero
-            n_outer = 2
-            maintenance_mode = True
-        else:
-            maintenance_mode = False
-            if modo_adaptativo:
-                if div_mean_before < tol_div * 3.0:
-                    n_outer = max(5, max_outer // 2)
-                else:
-                    n_outer = max_outer
+        # Adaptar outers
+        if modo_adaptativo:
+            if div_mean_before < tol_div * 0.5:
+                n_outer = max(1, max_outer // 8)
+            elif div_mean_before < tol_div:
+                n_outer = max(2, max_outer // 2)
             else:
                 n_outer = max_outer
+        else:
+            n_outer = max_outer
 
         # =========================================================
         # FUNCIONES AUXILIARES (closures optimizadas con kdims cacheados)
@@ -2115,15 +2132,14 @@ class Mesh:
             p_flat = p_lvl.ravel()
             rhs_flat = rhs_lvl.ravel()
             sf = solids_flat[nivel]
-            d2xw = mg_d2x_W[nivel]; d2xc = mg_d2x_C[nivel]; d2xe = mg_d2x_E[nivel]
-            d2ys = mg_d2y_S[nivel]; d2yc = mg_d2y_C[nivel]; d2yn = mg_d2y_N[nivel]
+            h2_l = h2_levels[nivel]
             g = (kd['grid'],)
             b = (block_sz,)
             nx_i = kd['nx_i']
             ny_i = kd['ny_i']
             for _ in range(int(n_iter)):
-                kernel_gs(g, b, (sf, p_flat, rhs_flat, d2xw, d2xc, d2xe, d2ys, d2yc, d2yn, omega_f32, nx_i, ny_i, p0_i32))
-                kernel_gs(g, b, (sf, p_flat, rhs_flat, d2xw, d2xc, d2xe, d2ys, d2yc, d2yn, omega_f32, nx_i, ny_i, p1_i32))
+                kernel_gs(g, b, (sf, p_flat, rhs_flat, h2_l, omega_f32, nx_i, ny_i, p0_i32))
+                kernel_gs(g, b, (sf, p_flat, rhs_flat, h2_l, omega_f32, nx_i, ny_i, p1_i32))
             if hay_dir:
                 dm = dir_masks[nivel]
                 if nivel == 0:
@@ -2177,9 +2193,7 @@ class Mesh:
                 # Residuo: res = rhs - Lap(p)
                 res_buf = bufs[lvl]['res']
                 lap = self._laplacian_kernel_masked(
-                    solids_flat[lvl], p_by_level[lvl].ravel(),
-                    mg_d2x_W[lvl], mg_d2x_C[lvl], mg_d2x_E[lvl],
-                    mg_d2y_S[lvl], mg_d2y_C[lvl], mg_d2y_N[lvl],
+                    solids_flat[lvl], p_by_level[lvl].ravel(), h2_levels[lvl],
                     kd['nx_i'], kd['ny_i'], size=kd['total'])
                 cp.subtract(rhs_by_level[lvl].ravel(), lap, out=res_buf.ravel())
                 # Restricción con kernel fusionado (1 lanzamiento en vez de ~8)
@@ -2220,18 +2234,16 @@ class Mesh:
             return p_by_level[0]
 
         # =========================================================
-        # DEFECT-CORRECTION con safety-check y mantenimiento
-        # - Re-computa div residual cada outer
-        # - Safety: si corrección amplifica div, revert+reduce omega
-        #   Después del retry, verifica de nuevo; si sigue peor, revert total
-        # - Mantenimiento: cuando div < tol, revert si empeora y salir
-        # - Global: guarda estado inicial para revert si todo empeora
+        # DEFECT-CORRECTION: iteraciones externas optimizadas
+        # - Corrección de velocidad fusionada (1 kernel vs ~8 ops)
+        # - Ghost-Cell IBM + impermeabilidad después de cada corrección
+        # - RHS reutiliza buffer pre-alocado (evita cp.zeros cada outer)
+        # - Neumann mean subtraction sin GPU→CPU sync
         # =========================================================
         p_acumulada = cp.zeros((ny, nx), dtype=cp.float32)
         total_cycles = 0
         converged = False
         div_mean_current = div_mean_before
-        omega_corr = 1.0  # damping para corrección de velocidad
 
         total_cells = ny * nx
         grid_vc = (total_cells + block_sz - 1) // block_sz
@@ -2239,139 +2251,51 @@ class Mesh:
         ny_i32 = cp.int32(ny)
         solid_flat = self.solid.ravel()
 
-        # Guardar estado inicial para revert global
-        u_initial = self.u.copy()
-        v_initial = self.v.copy()
-
         for outer in range(n_outer):
             div_field = self._compute_divergence_field()
             div_mean_current = float(cp.sum(cp.abs(div_field[free]))) / n_free
 
-            # --- Check convergencia ---
-            if div_mean_current < tol_div:
-                if maintenance_mode and outer >= 1:
-                    converged = True
-                    if verbose:
-                        print(f"[MG] Mantenimiento OK outer {outer}: div={div_mean_current:.6e}")
-                    break
-                elif not maintenance_mode and outer > 0:
-                    converged = True
-                    if verbose:
-                        print(f"[MG] Convergencia div outer {outer}: div={div_mean_current:.6e}")
-                    break
+            if outer > 0 and div_mean_current < tol_div:
+                converged = True
+                if verbose:
+                    print(f"[MG] Convergencia div en outer {outer}: div={div_mean_current:.6e}")
+                break
 
-            # --- Ciclos adaptativos (nunca menos de min_cycles) ---
-            if maintenance_mode:
-                cycles_this = min_cycles
-            elif modo_adaptativo:
-                if div_mean_current < tol_div * 2.0:
-                    cycles_this = min_cycles
-                elif div_mean_current < tol_div * 5.0:
-                    cycles_this = max(min_cycles, (cycles_per_outer * 2) // 3)
-                else:
-                    cycles_this = cycles_per_outer
-            else:
-                cycles_this = cycles_per_outer
-
-            # RHS desde divergencia
+            # RHS desde divergencia (reutilizar buffer pre-alocado)
             rhs = bufs[0]['rhs']
             rhs[:] = 0.0
             rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_field[1:-1, 1:-1]
             if not hay_dir:
-                vol_flat_0 = self._vol_2d_flat
-                free_flat_0 = free.ravel()
-                vrs = cp.sum(rhs.ravel()[free_flat_0] * vol_flat_0[free_flat_0])
-                vt  = cp.sum(vol_flat_0[free_flat_0])
-                rhs[free] -= (vrs / vt)
+                mean_rhs = cp.sum(rhs[free]) / cp.float32(n_free)
+                rhs[free] -= mean_rhs
 
             if outer == 0:
                 p_corr = self.p.copy()
             else:
                 p_corr = cp.zeros((ny, nx), dtype=cp.float32)
-            for cyc in range(cycles_this):
+            for cyc in range(cycles_per_outer):
                 p_corr = _v_cycle(p_corr, rhs)
                 if hay_dir:
                     p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
-            total_cycles += cycles_this
+            total_cycles += cycles_per_outer
 
             _aplicar_bc(p_corr, 0)
+            p_acumulada += p_corr
 
-            # ============================================================
-            # Corrección velocidad con safety check completo
-            # ============================================================
-            u_save = self.u.copy()
-            v_save = self.v.copy()
-
-            coef_eff = cp.float32(float(coef) * omega_corr)
+            # Corrección velocidad fusionada (1 kernel: grad(p) + sustracción)
             vc_kernel(
                 (grid_vc,), (block_sz,),
                 (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
-                 coef_eff,
-                 self.d1x_W, self.d1x_C, self.d1x_E,
-                 self.d1y_S, self.d1y_C, self.d1y_N,
-                 nx_i32, ny_i32))
+                 coef, inv_2dx, inv_2dy, nx_i32, ny_i32))
 
+            # Ghost-Cell IBM + impermeabilidad después de cada corrección
             self.apply_ghost_cell_bc()
             self.reforzar_impermeabilidad()
 
-            # Safety: verificar que div mejoró
-            div_check = self._compute_divergence_field()
-            div_after_corr = float(cp.sum(cp.abs(div_check[free]))) / n_free
-
-            if div_after_corr > div_mean_current * 1.01:
-                # Corrección empeoró → revertir
-                self.u[:] = u_save
-                self.v[:] = v_save
-                if maintenance_mode:
-                    if verbose:
-                        print(f"[MG] Mant. outer {outer+1}: corrección empeoró, revirtiendo (div={div_mean_current:.6e})")
-                    break
-                # Modo normal: reducir omega y reintentar
-                omega_corr *= 0.5
-                if omega_corr < 0.05:
-                    if verbose:
-                        print(f"[MG] Outer {outer+1}: omega={omega_corr:.3f} muy bajo, deteniendo")
-                    break
-                coef_eff = cp.float32(float(coef) * omega_corr)
-                vc_kernel(
-                    (grid_vc,), (block_sz,),
-                    (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
-                     coef_eff,
-                     self.d1x_W, self.d1x_C, self.d1x_E,
-                     self.d1y_S, self.d1y_C, self.d1y_N,
-                     nx_i32, ny_i32))
-                self.apply_ghost_cell_bc()
-                self.reforzar_impermeabilidad()
-                # Verificar retry
-                div_retry = self._compute_divergence_field()
-                d_retry = float(cp.sum(cp.abs(div_retry[free])) / n_free)
-                if d_retry > div_mean_current * 1.01:
-                    # Retry también empeoró → revertir totalmente este outer
-                    self.u[:] = u_save
-                    self.v[:] = v_save
-                    if verbose:
-                        print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this}Vc, w={omega_corr:.3f}): retry empeoró, skip")
-                    continue
-                if verbose:
-                    print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this}Vc, w={omega_corr:.3f} retry): div={d_retry:.6e}")
-            else:
-                # Corrección OK → restaurar omega gradualmente
-                if omega_corr < 1.0:
-                    omega_corr = min(1.0, omega_corr * 1.5)
-                if verbose:
-                    print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this}Vc, w={omega_corr:.3f}): div={div_after_corr:.6e}")
-
-            p_acumulada += p_corr
-
-        # --- Global safety: si todo empeoró, revertir al estado inicial ---
-        div_final_check = self._compute_divergence_field()
-        div_final = float(cp.sum(cp.abs(div_final_check[free]))) / n_free
-        if div_final > div_mean_before * 1.01 and not converged:
-            self.u[:] = u_initial
-            self.v[:] = v_initial
-            p_acumulada[:] = 0.0
             if verbose:
-                print(f"[MG] Revert global: div {div_mean_before:.6e} → {div_final:.6e} (empeoró)")
+                div_after_outer = self._compute_divergence_field()
+                d = float(cp.sum(cp.abs(div_after_outer[free]))) / n_free
+                print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_per_outer}Vc): div={d:.6e}")
 
         # =========================================================
         # FINALIZACIÓN
@@ -2407,8 +2331,11 @@ class Mesh:
     '''Sólidos'''
 
     def _xy_grids(self):
-        """Mallas 2D de posiciones físicas (usa las almacenadas)."""
-        return self.XX, self.YY
+        # Mallas físicas para rasterizar sólidos
+        x = cp.arange(self.nx, dtype=cp.float32) * self.dx
+        y = cp.arange(self.ny, dtype=cp.float32) * self.dy
+        XX, YY = cp.meshgrid(x, y, indexing='xy')
+        return XX, YY
 
     def add_solid_circle(self, cx, cy, radius):
         """
@@ -2590,13 +2517,9 @@ class Mesh:
         from matplotlib.path import Path
         poly = Path(np.column_stack((x_final, y_final)))
 
-        # Coordenadas de centros de celdas (físicas, compatibles con malla variable)
-        if self.malla_variable:
-            x_centers = cp.asnumpy(self.X_1d)
-            y_centers = cp.asnumpy(self.Y_1d)
-        else:
-            x_centers = (np.arange(self.nx, dtype=np.float32) + 0.5) * self.dx
-            y_centers = (np.arange(self.ny, dtype=np.float32) + 0.5) * self.dy
+        # Coordenadas de centros de celdas
+        x_centers = (np.arange(self.nx, dtype=np.float32) + 0.5) * self.dx
+        y_centers = (np.arange(self.ny, dtype=np.float32) + 0.5) * self.dy
         XXc, YYc = np.meshgrid(x_centers, y_centers, indexing='xy')
         pts_grid = np.column_stack((XXc.ravel(), YYc.ravel()))
 
@@ -2663,17 +2586,19 @@ class Mesh:
         # Traer a CPU para matplotlib
         speed_np = cp.asnumpy(speed)
 
-        # Coordenadas físicas para pcolormesh (malla variable)
-        X_np = cp.asnumpy(self.XX)
-        Y_np = cp.asnumpy(self.YY)
-
+        # Tamaño de figura proporcional al dominio para mantener proporciones
         ar = self.Ly / self.Lx
         fig = plt.figure(figsize=(12, 12 * ar))
+        im = plt.imshow(
+            speed_np,
+            origin="lower",
+            interpolation="none",
+            cmap=cmap,
+            extent=[0, self.Lx, 0, self.Ly]
+        )
+        # Asegurar que no se deforme: mismo escalado en x e y
         ax = plt.gca()
-        im = ax.pcolormesh(X_np, Y_np, speed_np, cmap=cmap, shading='auto')
         ax.set_aspect('equal', adjustable='box')
-        ax.set_xlim(0, self.Lx)
-        ax.set_ylim(0, self.Ly)
         im.set_clim(0.0, speed_np.max())
         plt.colorbar(im, label="|u|")
         plt.xlabel("x")
@@ -3147,15 +3072,18 @@ class Mesh:
                 # Magnitud de la velocidad
                 speed = cp.sqrt(self.u**2 + self.v**2)
                 speed_np = cp.asnumpy(speed)
-                X_np = cp.asnumpy(self.XX)
-                Y_np = cp.asnumpy(self.YY)
                 ar = self.Ly / self.Lx
                 fig = plt.figure(figsize=(10, 10 * ar))
+                im = plt.imshow(
+                    speed_np,
+                    origin="lower",
+                    interpolation="none",
+                    cmap="rainbow",
+                    extent=[0, self.Lx, 0, self.Ly]
+                )
+                # Asegurar que no se deforme: mismo escalado en x e y
                 ax = plt.gca()
-                im = ax.pcolormesh(X_np, Y_np, speed_np, cmap='rainbow', shading='auto')
                 ax.set_aspect('equal', adjustable='box')
-                ax.set_xlim(0, self.Lx)
-                ax.set_ylim(0, self.Ly)
                 plt.colorbar(im, label="|u|")
                 plt.xlabel("x")
                 plt.ylabel("y")
@@ -3171,9 +3099,8 @@ class Mesh:
                 Tx_v = cp.asnumpy(data["Tx_v"]); Ty_v = cp.asnumpy(data["Ty_v"])
                 fig = plt.figure(figsize=(6,6))
                 speed = cp.sqrt(self.u**2 + self.v**2)
-                X_np = cp.asnumpy(self.XX)
-                Y_np = cp.asnumpy(self.YY)
-                plt.pcolormesh(X_np, Y_np, cp.asnumpy(speed), cmap='Greys', alpha=0.3, shading='auto')
+                plt.imshow(cp.asnumpy(speed), origin="lower",
+                           extent=[0, self.Lx, 0, self.Ly], cmap="Greys", alpha=0.3)
                 plt.quiver(Xb, Yb, scale*Tx_p, scale*Ty_p, color="red", angles="xy", scale_units="xy", scale=1,
                            label="Tracción presión")
                 plt.quiver(Xb, Yb, scale*Tx_v, scale*Ty_v, color="blue", angles="xy", scale_units="xy", scale=1,
@@ -3251,9 +3178,363 @@ class Mesh:
 
         return sd, nx, ny
 
-    # NOTA: compute_surface_forces, compute_surface_forces2,
-    #       compute_surface_forces_layers, compute_drag_lift_layers
-    #       ELIMINADOS — usar compute_surface_forces_definitive y compute_drag_lift
+    def compute_surface_forces(self, mu, separate_components=True):
+        """
+        Integral de esfuerzos en la superficie del sólido (2D, steady):
+        - T = -p n + mu (∇u + ∇u^T) · n
+        - F_total = sum_boundary T ds
+        Devuelve:
+          - dict con Fx, Fy, Fx_p, Fy_p, Fx_v, Fy_v si separate_components=True
+          - si False, solo Fx, Fy
+        """
+        # 1) Frontera del sólido
+        boundary = self._solid_boundary_mask(use_diagonals=True)
+
+        # 2) Normales (desde sólido hacia fluido)
+        _, nx, ny = self._signed_distance_and_normals()
+
+        # 3) Longitud elemental
+        ds = cp.float32(min(self.dx, self.dy))
+
+        # 4) Campos y gradientes en GPU
+        p = self.p
+        u = self.u
+        v = self.v
+        dx = self.dx; dy = self.dy
+        inv_dx = cp.float32(1.0 / dx)
+        inv_dy = cp.float32(1.0 / dy)
+
+        # Diferencias centradas
+        du_dx = cp.zeros_like(u, dtype=cp.float32)
+        du_dy = cp.zeros_like(u, dtype=cp.float32)
+        dv_dx = cp.zeros_like(v, dtype=cp.float32)
+        dv_dy = cp.zeros_like(v, dtype=cp.float32)
+
+        du_dx[:, 1:-1] = (u[:, 2:] - u[:, :-2]) * (0.5 * inv_dx)
+        du_dy[1:-1, :] = (u[2:, :] - u[:-2, :]) * (0.5 * inv_dy)
+        dv_dx[:, 1:-1] = (v[:, 2:] - v[:, :-2]) * (0.5 * inv_dx)
+        dv_dy[1:-1, :] = (v[2:, :] - v[:-2, :]) * (0.5 * inv_dy)
+
+        # 5) Tracción de presión: -p n
+        Tx_p = -p * nx
+        Ty_p = -p * ny
+
+        # 6) Parte viscosa: -mu (∇u + ∇u^T) · n
+        # (signo negativo porque n apunta hacia el fluido y queremos fuerza sobre el sólido)
+        # Suma simétrica: (∂u/∂y + ∂v/∂x)
+        sym_xy = du_dy + dv_dx
+
+        # Componentes
+        Tx_v = -mu * (2.0 * du_dx * nx + sym_xy * ny)
+        Ty_v = -mu * (sym_xy * nx + 2.0 * dv_dy * ny)
+
+        # 7) Integración sobre frontera
+        w = boundary.astype(cp.float32)  # peso 1 en frontera, 0 fuera
+
+        Fx_p = cp.sum(Tx_p * w) * ds
+        Fy_p = cp.sum(Ty_p * w) * ds
+        Fx_v = cp.sum(Tx_v * w) * ds
+        Fy_v = cp.sum(Ty_v * w) * ds
+
+        Fx = Fx_p + Fx_v
+        Fy = Fy_p + Fy_v
+
+        if separate_components:
+            return {
+                "Fx": float(Fx), "Fy": float(Fy),
+                "Fx_p": float(Fx_p), "Fy_p": float(Fy_p),
+                "Fx_v": float(Fx_v), "Fy_v": float(Fy_v)
+            }
+        else:
+            return {"Fx": float(Fx), "Fy": float(Fy)}
+
+    def compute_surface_forces2(self, mu, separate_components=True):
+        """
+        Integral de esfuerzos en dos capas alrededor del sólido:
+        - Capa 1: celdas de fluido adyacentes al sólido (frontera) muestreadas en 0.5 pasos sobre la normal.
+        - Capa 2: anillo exterior (una celda más hacia el fluido) muestreado en 1.5 pasos sobre la normal.
+        Se suman las fuerzas de ambas capas.
+        """
+        # 1) Frontera del sólido (capa 1)
+        boundary1 = self._solid_boundary_mask(use_diagonals=True)
+
+        # 2) Normales (desde sólido hacia fluido)
+        sd, nx_all, ny_all = self._signed_distance_and_normals()
+        # Normal solo donde hay capa válida
+        nx1 = nx_all * boundary1
+        ny1 = ny_all * boundary1
+
+        # 3) Construir capa 2: dilatación de boundary1 hacia el fluido, excluyendo sólido y capa1
+        solid = self.solid
+        fluid = ~solid
+        dil = (
+            cp.roll(boundary1, 1, axis=0) |
+            cp.roll(boundary1, -1, axis=0) |
+            cp.roll(boundary1, 1, axis=1) |
+            cp.roll(boundary1, -1, axis=1)
+        )
+        # incluir diagonales también para coherencia
+        dil |= cp.roll(cp.roll(boundary1, 1, axis=0), 1, axis=1)
+        dil |= cp.roll(cp.roll(boundary1, 1, axis=0), -1, axis=1)
+        dil |= cp.roll(cp.roll(boundary1, -1, axis=0), 1, axis=1)
+        dil |= cp.roll(cp.roll(boundary1, -1, axis=0), -1, axis=1)
+        boundary2 = fluid & dil & (~boundary1)
+
+        # Excluir bordes del dominio
+        for b in (boundary1, boundary2):
+            b[0, :] = False; b[-1, :] = False; b[:, 0] = False; b[:, -1] = False
+
+        # Normales para capa 2 (del mismo campo, enmascaradas)
+        nx2 = nx_all * boundary2
+        ny2 = ny_all * boundary2
+
+        dx = self.dx; dy = self.dy
+        assert abs(dx - dy) < 1e-6, "Esta integración asume dx≈dy"
+
+        # Elemento de arco con corrección para diagonales
+        diag_mask1 = (
+            cp.roll(cp.roll(solid, 1, axis=0), 1, axis=1) |
+            cp.roll(cp.roll(solid, 1, axis=0), -1, axis=1) |
+            cp.roll(cp.roll(solid, -1, axis=0), 1, axis=1) |
+            cp.roll(cp.roll(solid, -1, axis=0), -1, axis=1)
+        ) & boundary1
+        diag_mask2 = (
+            cp.roll(cp.roll(boundary1, 1, axis=0), 1, axis=1) |
+            cp.roll(cp.roll(boundary1, 1, axis=0), -1, axis=1) |
+            cp.roll(cp.roll(boundary1, -1, axis=0), 1, axis=1) |
+            cp.roll(cp.roll(boundary1, -1, axis=0), -1, axis=1)
+        ) & boundary2
+
+        dx_f = cp.float32(dx)
+        sqrt2_dx = cp.float32(dx * np.sqrt(2.0))
+        ds1 = cp.where(diag_mask1, sqrt2_dx, dx_f)
+        ds2 = cp.where(diag_mask2, sqrt2_dx, dx_f)
+
+        # 4) Muestreo en centros de cara desplazados a lo largo de n (en índices)
+        JJ, II = self.JJ, self.II
+
+        # Capa 1: 0.5 pasos (en índices; dx=dy)
+        j_face1 = JJ + 0.5 * nx1
+        i_face1 = II + 0.5 * ny1
+
+        # Capa 2: 1.5 pasos
+        j_face2 = JJ + 1.5 * nx2
+        i_face2 = II + 1.5 * ny2
+
+        # 5) Interpolar presión y velocidades en cada capa
+        p1 = self._bilinear_interpolate(self.p, j_face1, i_face1)
+        u1 = self._bilinear_interpolate(self.u, j_face1, i_face1)
+        v1 = self._bilinear_interpolate(self.v, j_face1, i_face1)
+
+        p2 = self._bilinear_interpolate(self.p, j_face2, i_face2)
+        u2 = self._bilinear_interpolate(self.u, j_face2, i_face2)
+        v2 = self._bilinear_interpolate(self.v, j_face2, i_face2)
+
+        inv_dx = cp.float32(1.0 / dx)
+        inv_dy = cp.float32(1.0 / dy)
+
+        # Gradientes centrados por capa (para esfuerzo viscoso)
+        def grads(u_f, v_f):
+            du_dx = cp.zeros_like(u_f, dtype=cp.float32)
+            du_dy = cp.zeros_like(u_f, dtype=cp.float32)
+            dv_dx = cp.zeros_like(v_f, dtype=cp.float32)
+            dv_dy = cp.zeros_like(v_f, dtype=cp.float32)
+            du_dx[:, 1:-1] = (u_f[:, 2:] - u_f[:, :-2]) * (0.5 * inv_dx)
+            du_dy[1:-1, :] = (u_f[2:, :] - u_f[:-2, :]) * (0.5 * inv_dy)
+            dv_dx[:, 1:-1] = (v_f[:, 2:] - v_f[:, :-2]) * (0.5 * inv_dx)
+            dv_dy[1:-1, :] = (v_f[2:, :] - v_f[:-2, :]) * (0.5 * inv_dy)
+            return du_dx, du_dy, dv_dx, dv_dy
+
+        du_dx1, du_dy1, dv_dx1, dv_dy1 = grads(u1, v1)
+        du_dx2, du_dy2, dv_dx2, dv_dy2 = grads(u2, v2)
+
+        # 6) Tracciones por capa
+        # Presión
+        Tx_p1 = -p1 * nx1; Ty_p1 = -p1 * ny1
+        Tx_p2 = -p2 * nx2; Ty_p2 = -p2 * ny2
+        # Viscosa (signo negativo: n apunta hacia fluido, queremos fuerza sobre sólido)
+        sym1 = du_dy1 + dv_dx1
+        sym2 = du_dy2 + dv_dx2
+        Tx_v1 = -mu * (2.0 * du_dx1 * nx1 + sym1 * ny1)
+        Ty_v1 = -mu * (sym1 * nx1 + 2.0 * dv_dy1 * ny1)
+        Tx_v2 = -mu * (2.0 * du_dx2 * nx2 + sym2 * ny2)
+        Ty_v2 = -mu * (sym2 * nx2 + 2.0 * dv_dy2 * ny2)
+
+        # 7) Integración por capa y suma
+        w1 = boundary1.astype(cp.float32)
+        w2 = boundary2.astype(cp.float32)
+
+        Fx_p = cp.sum(Tx_p1 * w1 * ds1) + cp.sum(Tx_p2 * w2 * ds2)
+        Fy_p = cp.sum(Ty_p1 * w1 * ds1) + cp.sum(Ty_p2 * w2 * ds2)
+        Fx_v = cp.sum(Tx_v1 * w1 * ds1) + cp.sum(Tx_v2 * w2 * ds2)
+        Fy_v = cp.sum(Ty_v1 * w1 * ds1) + cp.sum(Ty_v2 * w2 * ds2)
+
+        Fx = Fx_p + Fx_v
+        Fy = Fy_p + Fy_v
+
+        if separate_components:
+            return {
+                "Fx": float(Fx), "Fy": float(Fy),
+                "Fx_p": float(Fx_p), "Fy_p": float(Fy_p),
+                "Fx_v": float(Fx_v), "Fy_v": float(Fy_v)
+            }
+        else:
+            return {"Fx": float(Fx), "Fy": float(Fy)}
+
+    def compute_surface_forces_layers(self, mu, n_layers=2, step_base=0.5, step_inc=1.0, use_diagonals=True, separate_components=True):
+        """
+        Integra fuerzas en N capas alrededor del sólido.
+        - n_layers: número de capas (>=1)
+        - step_base: desplazamiento (en celdas) de la primera capa desde la frontera (ej. 0.5)
+        - step_inc: incremento adicional por capa (ej. 1.0 → capa k usa step_base + (k-1)*step_inc)
+        - use_diagonals: al construir anillos, usa vecinos diagonales también
+        - Devuelve suma de componentes en todas las capas.
+        """
+        assert n_layers >= 1, "n_layers debe ser >= 1"
+        dx = self.dx; dy = self.dy
+        assert abs(dx - dy) < 1e-6, "Esta integración asume dx≈dy"
+
+        # Frontera de sólido como capa base (capa 1 sin desplazamiento inicial)
+        boundary = self._solid_boundary_mask(use_diagonals=use_diagonals)
+
+        # Normales desde SDF (del sólido hacia el fluido)
+        _, nx_all, ny_all = self._signed_distance_and_normals()
+        JJ, II = self.JJ, self.II
+
+        # Construir capas sucesivas dilatando hacia el fluido
+        solid = self.solid
+        fluid = ~solid
+
+        def dilate(mask):
+            m = (
+                cp.roll(mask, 1, axis=0) |
+                cp.roll(mask, -1, axis=0) |
+                cp.roll(mask, 1, axis=1) |
+                cp.roll(mask, -1, axis=1)
+            )
+            if use_diagonals:
+                m |= cp.roll(cp.roll(mask, 1, axis=0), 1, axis=1)
+                m |= cp.roll(cp.roll(mask, 1, axis=0), -1, axis=1)
+                m |= cp.roll(cp.roll(mask, -1, axis=0), 1, axis=1)
+                m |= cp.roll(cp.roll(mask, -1, axis=0), -1, axis=1)
+            return m
+
+        # Lista de máscaras de capas (todas en fluido, sin solaparse)
+        layers = []
+        used = cp.zeros_like(fluid, dtype=cp.bool_)
+        curr = boundary.copy()
+
+        for k in range(n_layers):
+            # Capa k: fluido adyacente a la previa, excluyendo sólido y capas ya usadas
+            if k == 0:
+                mk = curr & fluid & (~used)
+            else:
+                curr = dilate(curr)
+                mk = curr & fluid & (~used)
+            # Excluir bordes de dominio
+            mk[0, :] = False; mk[-1, :] = False; mk[:, 0] = False; mk[:, -1] = False
+            layers.append(mk)
+            used |= mk
+
+        # Elemento de arco por capa: ajusta diagonales
+        def arc_length_mask(base_mask, ref_mask):
+            diag = (
+                cp.roll(cp.roll(ref_mask, 1, axis=0), 1, axis=1) |
+                cp.roll(cp.roll(ref_mask, 1, axis=0), -1, axis=1) |
+                cp.roll(cp.roll(ref_mask, -1, axis=0), 1, axis=1) |
+                cp.roll(cp.roll(ref_mask, -1, axis=0), -1, axis=1)
+            ) & base_mask
+            dx_f = cp.float32(dx)
+            ds = cp.where(diag, cp.float32(dx * np.sqrt(2.0)), dx_f)
+            return ds
+
+        inv_dx = cp.float32(1.0 / dx)
+        inv_dy = cp.float32(1.0 / dy)
+
+        Fx_p = cp.float32(0.0); Fy_p = cp.float32(0.0)
+        Fx_v = cp.float32(0.0); Fy_v = cp.float32(0.0)
+
+        for k, mk in enumerate(layers, start=1):
+            # Normales en la capa
+            nx_k = nx_all * mk
+            ny_k = ny_all * mk
+
+            # Desplazamiento (en índices) de la cara hacia el fluido
+            step_k = cp.float32(step_base + (k - 1) * step_inc)
+            j_face = JJ + step_k * nx_k
+            i_face = II + step_k * ny_k
+
+            # Interpolar p, u, v en la cara desplazada
+            p_k = self._bilinear_interpolate(self.p, j_face, i_face)
+            u_k = self._bilinear_interpolate(self.u, j_face, i_face)
+            v_k = self._bilinear_interpolate(self.v, j_face, i_face)
+
+            # Gradientes centrados locales para viscoso
+            du_dx = cp.zeros_like(u_k, dtype=cp.float32)
+            du_dy = cp.zeros_like(u_k, dtype=cp.float32)
+            dv_dx = cp.zeros_like(v_k, dtype=cp.float32)
+            dv_dy = cp.zeros_like(v_k, dtype=cp.float32)
+            du_dx[:, 1:-1] = (u_k[:, 2:] - u_k[:, :-2]) * (0.5 * inv_dx)
+            du_dy[1:-1, :] = (u_k[2:, :] - u_k[:-2, :]) * (0.5 * inv_dy)
+            dv_dx[:, 1:-1] = (v_k[:, 2:] - v_k[:, :-2]) * (0.5 * inv_dx)
+            dv_dy[1:-1, :] = (v_k[2:, :] - v_k[:-2, :]) * (0.5 * inv_dy)
+
+            sym_xy = du_dy + dv_dx
+
+            # Tracciones
+            Tx_p = -p_k * nx_k
+            Ty_p = -p_k * ny_k
+            Tx_v = -mu * (2.0 * du_dx * nx_k + sym_xy * ny_k)
+            Ty_v = -mu * (sym_xy * nx_k + 2.0 * dv_dy * ny_k)
+
+            # Longitud elemental de arco (corrige diagonales usando la referencia de la capa previa)
+            ref_mask = layers[k-2] if k > 1 else self.solid  # para la capa 1 referenciamos el sólido
+            ds_k = arc_length_mask(mk, ref_mask)
+
+            w = mk.astype(cp.float32)
+
+            Fx_p += cp.sum(Tx_p * w * ds_k)
+            Fy_p += cp.sum(Ty_p * w * ds_k)
+            Fx_v += cp.sum(Tx_v * w * ds_k)
+            Fy_v += cp.sum(Ty_v * w * ds_k)
+
+        Fx = Fx_p + Fx_v
+        Fy = Fy_p + Fy_v
+
+        if separate_components:
+            return {
+                "Fx": float(Fx), "Fy": float(Fy),
+                "Fx_p": float(Fx_p), "Fy_p": float(Fy_p),
+                "Fx_v": float(Fx_v), "Fy_v": float(Fy_v)
+            }
+        else:
+            return {"Fx": float(Fx), "Fy": float(Fy)}
+
+
+    def compute_drag_lift_layers(self, mu, n_layers=2, step_base=0.5, step_inc=1.0):
+        """
+        Calcula Drag y Lift usando múltiples capas de integración.
+        Transforma de coordenadas del cuerpo a sistema aerodinámico.
+        """
+        res = self.compute_surface_forces_layers(mu, n_layers=n_layers, step_base=step_base, step_inc=step_inc, separate_components=True)
+        
+        # Descomponer en ejes viento usando ángulo real del flujo libre
+        alpha_rad = self._get_freestream_angle_rad()
+        cos_a = np.cos(alpha_rad)
+        sin_a = np.sin(alpha_rad)
+        
+        Drag = res["Fx"] * cos_a + res["Fy"] * sin_a
+        Lift = -res["Fx"] * sin_a + res["Fy"] * cos_a
+        Drag_p = res["Fx_p"] * cos_a + res["Fy_p"] * sin_a
+        Lift_p = -res["Fx_p"] * sin_a + res["Fy_p"] * cos_a
+        Drag_v = res["Fx_v"] * cos_a + res["Fy_v"] * sin_a
+        Lift_v = -res["Fx_v"] * sin_a + res["Fy_v"] * cos_a
+        
+        return {
+            "Drag": Drag, "Lift": Lift,
+            "Drag_p": Drag_p, "Lift_p": Lift_p,
+            "Drag_v": Drag_v, "Lift_v": Lift_v
+        }
 
     def compute_drag_lift(self, mu, rho=1.0, n_extrap_layers=5):
         """
@@ -3584,6 +3865,383 @@ class Mesh:
                 return {'x': None, 'cp_mean_extrados': None, 'cp_mean_intrados': None, 'fig': fig}
 
 
+    def save_state(self, filepath):
+        """
+        Guarda el estado completo de la malla para poder reanudar la simulación.
+        
+        Parámetros:
+            filepath: Ruta donde guardar el archivo (se añadirá extensión .npz)
+        """
+        if not filepath.endswith('.npz'):
+            filepath += '.npz'
+        
+        # Convertir arrays de GPU a CPU
+        state = {
+            # Campos de flujo
+            'u': cp.asnumpy(self.u),
+            'v': cp.asnumpy(self.v),
+            'p': cp.asnumpy(self.p),
+            
+            # Vectores de históricos
+            'dvector': cp.asnumpy(self.dvector),
+            'lvector': cp.asnumpy(self.lvector),
+            'cdvector': cp.asnumpy(self.cdvector),
+            'clcdvector': cp.asnumpy(self.clcdvector),
+            'clvector': cp.asnumpy(self.clvector),
+            'divvector': cp.asnumpy(self.divvector),
+            
+            # Máscara de sólido
+            'solid': cp.asnumpy(self.solid),
+            
+            # Parámetros de la malla
+            'Lx': self.Lx,
+            'Ly': self.Ly,
+            'dx': self.dx,
+            'dy': self.dy,
+            'nx': self.nx,
+            'ny': self.ny,
+            
+            # Ángulo de geometría
+            'alpha_geometry': getattr(self, 'alpha_geometry', 0.0),
+        }
+        
+        np.savez_compressed(filepath, **state)
+        print(f"✓ Estado guardado en: {filepath}")
+    
+    def load_state(self, filepath, allow_geometry_change=False):
+        """
+        Carga el estado completo de la malla desde un archivo.
+        
+        Parámetros:
+            filepath: Ruta del archivo a cargar
+            allow_geometry_change: Si True, permite cargar campos de flujo incluso si 
+                                   la geometría del sólido es diferente. Útil para usar
+                                   un estado convergido como base para nuevas geometrías.
+        """
+        if not filepath.endswith('.npz'):
+            filepath += '.npz'
+
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"No se encontró el archivo: {filepath}")
+        
+        data = np.load(filepath)
+        
+        # Verificar compatibilidad de dimensiones
+        if data['nx'] != self.nx or data['ny'] != self.ny:
+            raise ValueError(f"Dimensiones incompatibles: archivo tiene {data['nx']}x{data['ny']}, "
+                           f"pero la malla actual es {self.nx}x{self.ny}")
+        
+        # Restaurar campos de flujo
+        u_cargado = cp.array(data['u'], dtype=cp.float32)
+        v_cargado = cp.array(data['v'], dtype=cp.float32)
+        p_cargado = cp.array(data['p'], dtype=cp.float32)
+        
+        # Restaurar vectores de históricos
+        self.dvector = cp.array(data['dvector'], dtype=cp.float32)
+        self.lvector = cp.array(data['lvector'], dtype=cp.float32)
+        self.cdvector = cp.array(data['cdvector'], dtype=cp.float32)
+        # Restaurar también el vector Cl/Cd si existe
+        if 'clcdvector' in data:
+            self.clcdvector = cp.array(data['clcdvector'], dtype=cp.float32)
+        else:
+            self.clcdvector = cp.zeros_like(self.cdvector)
+        self.clvector = cp.array(data['clvector'], dtype=cp.float32)
+        self.divvector = cp.array(data['divvector'], dtype=cp.float32)
+        
+        # Restaurar ángulo de geometría si existe
+        if 'alpha_geometry' in data:
+            self.alpha_geometry = float(data['alpha_geometry'])
+        
+        if allow_geometry_change:
+            # Modo compatible con cambio de geometría
+            solid_cargado = cp.array(data['solid'], dtype=cp.bool_)
+            
+            # Comparar geometrías
+            cambios_geometria = cp.sum(self.solid != solid_cargado)
+            porcentaje_cambio = 100 * float(cambios_geometria) / (self.nx * self.ny)
+            
+            print(f"⚠ Cambio de geometría detectado: {cambios_geometria} celdas ({porcentaje_cambio:.2f}%)")
+            
+            # Aplicar campos de flujo solo donde NO hay sólido en la nueva geometría
+            # En zonas con nuevo sólido, mantener las condiciones iniciales (ya establecidas)
+            self.u = cp.where(~self.solid, u_cargado, self.u)
+            self.v = cp.where(~self.solid, v_cargado, self.v)
+            self.p = cp.where(~self.solid, p_cargado, self.p)
+            
+            # En zonas donde había sólido pero ya no, usar interpolación de vecinos
+            zona_nuevo_fluido = (~self.solid) & solid_cargado
+            if cp.any(zona_nuevo_fluido):
+                n_nuevas = int(cp.sum(zona_nuevo_fluido))
+                print(f"  → Inicializando {n_nuevas} celdas nuevas de fluido por interpolación")
+                
+                # Interpolación simple: promedio de vecinos válidos
+                for field, field_cargado in [(self.u, u_cargado), (self.v, v_cargado), (self.p, p_cargado)]:
+                    # Crear copia con valores interpolados
+                    field_interp = field.copy()
+                    
+                    # Promedio de vecinos (arriba, abajo, izq, der)
+                    vecinos = (
+                        cp.roll(field_cargado, 1, axis=0) +
+                        cp.roll(field_cargado, -1, axis=0) +
+                        cp.roll(field_cargado, 1, axis=1) +
+                        cp.roll(field_cargado, -1, axis=1)
+                    ) / 4.0
+                    
+                    # Aplicar solo en zona_nuevo_fluido
+                    if field is self.u:
+                        self.u = cp.where(zona_nuevo_fluido, vecinos, self.u)
+                    elif field is self.v:
+                        self.v = cp.where(zona_nuevo_fluido, vecinos, self.v)
+                    else:
+                        self.p = cp.where(zona_nuevo_fluido, vecinos, self.p)
+            
+            print(f"✓ Estado adaptado a nueva geometría")
+        else:
+            # Modo estricto: restaurar tal cual (incluyendo sólido)
+            self.u = u_cargado
+            self.v = v_cargado
+            self.p = p_cargado
+            self.solid = cp.array(data['solid'], dtype=cp.bool_)
+        
+        print(f"✓ Estado cargado desde: {filepath}")
+        print(f"  Históricos: {len(self.cdvector)} iteraciones guardadas")
+
+
+def save_complete_checkpoint(filepath, mesh_fina, mesh_gruesa, metadata):
+    """
+    Guarda un checkpoint completo con ambas mallas y metadata en un solo archivo.
+    
+    Parámetros:
+        filepath: Ruta del archivo .npz a crear
+        mesh_fina: Instancia de Mesh con malla fina
+        mesh_gruesa: Instancia de Mesh con malla gruesa
+        metadata: Diccionario con información adicional (iteración, tiempo, etc.)
+    """
+    if not filepath.endswith('.npz'):
+        filepath += '.npz'
+    
+    # Preparar datos de malla fina (prefijo 'fina_')
+    state = {
+        # Malla fina
+        'fina_u': cp.asnumpy(mesh_fina.u),
+        'fina_v': cp.asnumpy(mesh_fina.v),
+        'fina_p': cp.asnumpy(mesh_fina.p),
+        'fina_dvector': cp.asnumpy(mesh_fina.dvector),
+        'fina_lvector': cp.asnumpy(mesh_fina.lvector),
+        'fina_cdvector': cp.asnumpy(mesh_fina.cdvector),
+        'fina_clcdvector': cp.asnumpy(mesh_fina.clcdvector),
+        'fina_clvector': cp.asnumpy(mesh_fina.clvector),
+        'fina_divvector': cp.asnumpy(mesh_fina.divvector),
+        'fina_solid': cp.asnumpy(mesh_fina.solid),
+        'fina_Lx': mesh_fina.Lx,
+        'fina_Ly': mesh_fina.Ly,
+        'fina_dx': mesh_fina.dx,
+        'fina_dy': mesh_fina.dy,
+        'fina_nx': mesh_fina.nx,
+        'fina_ny': mesh_fina.ny,
+        
+        # Malla gruesa
+        'gruesa_u': cp.asnumpy(mesh_gruesa.u),
+        'gruesa_v': cp.asnumpy(mesh_gruesa.v),
+        'gruesa_p': cp.asnumpy(mesh_gruesa.p),
+        'gruesa_dvector': cp.asnumpy(mesh_gruesa.dvector),
+        'gruesa_lvector': cp.asnumpy(mesh_gruesa.lvector),
+        'gruesa_cdvector': cp.asnumpy(mesh_gruesa.cdvector),
+        'gruesa_clcdvector': cp.asnumpy(getattr(mesh_gruesa, 'clcdvector', cp.zeros_like(mesh_gruesa.cdvector))),
+        'gruesa_clvector': cp.asnumpy(mesh_gruesa.clvector),
+        'gruesa_divvector': cp.asnumpy(mesh_gruesa.divvector),
+        'gruesa_solid': cp.asnumpy(mesh_gruesa.solid),
+        'gruesa_Lx': mesh_gruesa.Lx,
+        'gruesa_Ly': mesh_gruesa.Ly,
+        'gruesa_dx': mesh_gruesa.dx,
+        'gruesa_dy': mesh_gruesa.dy,
+        'gruesa_nx': mesh_gruesa.nx,
+        'gruesa_ny': mesh_gruesa.ny,
+    }
+    
+    # Agregar metadata (valores escalares y dict serializado)
+    # Guardar también parámetros críticos para reanudación consistente
+    metadata_expandida = dict(metadata) if metadata is not None else {}
+    metadata_expandida.setdefault('dx_fino', float(mesh_fina.dx))
+    metadata_expandida.setdefault('dy_fino', float(mesh_fina.dy))
+    metadata_expandida.setdefault('dx_grueso', float(mesh_gruesa.dx))
+    metadata_expandida.setdefault('dy_grueso', float(mesh_gruesa.dy))
+    metadata_expandida.setdefault('Lx', float(mesh_gruesa.Lx))
+    metadata_expandida.setdefault('Ly', float(mesh_gruesa.Ly))
+
+    # Serializar metadata completa para conservar estructuras (tuplas/dicts)
+    state['meta_json'] = json.dumps(metadata_expandida, ensure_ascii=False)
+
+    # Guardar también claves escalares como meta_* (útil para lectura rápida)
+    for key, value in metadata_expandida.items():
+        if isinstance(value, (int, float, np.integer, np.floating, bool)):
+            state[f'meta_{key}'] = value
+    
+    np.savez_compressed(filepath, **state)
+    print(f"✓ Checkpoint completo guardado en: {filepath}")
+
+
+def load_complete_checkpoint(filepath, mesh_fina, mesh_gruesa, allow_geometry_change=False):
+    """
+    Carga un checkpoint completo desde un solo archivo.
+    
+    Parámetros:
+        filepath: Ruta del archivo .npz a cargar
+        mesh_fina: Instancia de Mesh donde cargar malla fina
+        mesh_gruesa: Instancia de Mesh donde cargar malla gruesa
+        allow_geometry_change: Permitir cambios de geometría
+    
+    Retorna:
+        dict: Metadata del checkpoint (iteración, tiempo, etc.)
+    """
+    if not filepath.endswith('.npz'):
+        filepath += '.npz'
+
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"No se encontró el archivo: {filepath}")
+    
+    data = np.load(filepath)
+    
+    # Verificar dimensiones de malla fina
+    if data['fina_nx'] != mesh_fina.nx or data['fina_ny'] != mesh_fina.ny:
+        raise ValueError(f"Dimensiones de malla fina incompatibles: archivo tiene {data['fina_nx']}x{data['fina_ny']}, "
+                       f"pero la malla actual es {mesh_fina.nx}x{mesh_fina.ny}")
+    
+    # Verificar dimensiones de malla gruesa
+    if data['gruesa_nx'] != mesh_gruesa.nx or data['gruesa_ny'] != mesh_gruesa.ny:
+        raise ValueError(f"Dimensiones de malla gruesa incompatibles: archivo tiene {data['gruesa_nx']}x{data['gruesa_ny']}, "
+                       f"pero la malla actual es {mesh_gruesa.nx}x{mesh_gruesa.ny}")
+
+    # Verificar parámetros de malla (dx/dy/Lx/Ly) para evitar inconsistencias silenciosas
+    dx_fino_ckpt = float(data['fina_dx'])
+    dy_fino_ckpt = float(data['fina_dy'])
+    dx_grueso_ckpt = float(data['gruesa_dx'])
+    dy_grueso_ckpt = float(data['gruesa_dy'])
+
+    if abs(float(mesh_fina.dx) - dx_fino_ckpt) > 1e-12 or abs(float(mesh_fina.dy) - dy_fino_ckpt) > 1e-12:
+        raise ValueError(
+            f"dx/dy de malla fina incompatibles: checkpoint tiene dx={dx_fino_ckpt}, dy={dy_fino_ckpt}, "
+            f"pero la malla actual tiene dx={mesh_fina.dx}, dy={mesh_fina.dy}. "
+            f"Solución: crea la simulación con esos dx/dy o activa usar_parametros_checkpoint=True."
+        )
+
+    if abs(float(mesh_gruesa.dx) - dx_grueso_ckpt) > 1e-12 or abs(float(mesh_gruesa.dy) - dy_grueso_ckpt) > 1e-12:
+        raise ValueError(
+            f"dx/dy de malla gruesa incompatibles: checkpoint tiene dx={dx_grueso_ckpt}, dy={dy_grueso_ckpt}, "
+            f"pero la malla actual tiene dx={mesh_gruesa.dx}, dy={mesh_gruesa.dy}. "
+            f"Solución: crea la simulación con esos dx/dy o activa usar_parametros_checkpoint=True."
+        )
+    
+    # Cargar malla fina
+    # Nota: np.load devuelve escalares como numpy.ndarray 0-D; convertir a float evita errores con CuPy
+    mesh_fina.Lx = float(data['fina_Lx'])
+    mesh_fina.Ly = float(data['fina_Ly'])
+    mesh_fina.dx = float(data['fina_dx'])
+    mesh_fina.dy = float(data['fina_dy'])
+
+    u_fina = cp.array(data['fina_u'], dtype=cp.float32)
+    v_fina = cp.array(data['fina_v'], dtype=cp.float32)
+    p_fina = cp.array(data['fina_p'], dtype=cp.float32)
+    
+    mesh_fina.dvector = cp.array(data['fina_dvector'], dtype=cp.float32)
+    mesh_fina.lvector = cp.array(data['fina_lvector'], dtype=cp.float32)
+    mesh_fina.cdvector = cp.array(data['fina_cdvector'], dtype=cp.float32)
+    # Restaurar también cl/cd ratio si está en el checkpoint
+    if 'fina_clcdvector' in data:
+        mesh_fina.clcdvector = cp.array(data['fina_clcdvector'], dtype=cp.float32)
+    else:
+        mesh_fina.clcdvector = cp.zeros_like(mesh_fina.cdvector)
+    mesh_fina.clvector = cp.array(data['fina_clvector'], dtype=cp.float32)
+    mesh_fina.divvector = cp.array(data['fina_divvector'], dtype=cp.float32)
+
+    # Cargar malla gruesa
+    mesh_gruesa.Lx = float(data['gruesa_Lx'])
+    mesh_gruesa.Ly = float(data['gruesa_Ly'])
+    mesh_gruesa.dx = float(data['gruesa_dx'])
+    mesh_gruesa.dy = float(data['gruesa_dy'])
+
+    u_gruesa = cp.array(data['gruesa_u'], dtype=cp.float32)
+    v_gruesa = cp.array(data['gruesa_v'], dtype=cp.float32)
+    p_gruesa = cp.array(data['gruesa_p'], dtype=cp.float32)
+    
+    mesh_gruesa.dvector = cp.array(data['gruesa_dvector'], dtype=cp.float32)
+    mesh_gruesa.lvector = cp.array(data['gruesa_lvector'], dtype=cp.float32)
+    mesh_gruesa.cdvector = cp.array(data['gruesa_cdvector'], dtype=cp.float32)
+    if 'gruesa_clcdvector' in data:
+        mesh_gruesa.clcdvector = cp.array(data['gruesa_clcdvector'], dtype=cp.float32)
+    else:
+        mesh_gruesa.clcdvector = cp.zeros_like(mesh_gruesa.cdvector)
+    mesh_gruesa.clvector = cp.array(data['gruesa_clvector'], dtype=cp.float32)
+    mesh_gruesa.divvector = cp.array(data['gruesa_divvector'], dtype=cp.float32)
+    
+    # Manejar geometría
+    if allow_geometry_change:
+        # Malla fina
+        solid_fina_cargado = cp.array(data['fina_solid'], dtype=cp.bool_)
+        cambios_fina = cp.sum(mesh_fina.solid != solid_fina_cargado)
+        porcentaje_fina = 100 * float(cambios_fina) / (mesh_fina.nx * mesh_fina.ny)
+        
+        if cambios_fina > 0:
+            print(f"⚠ Cambio de geometría en malla fina: {cambios_fina} celdas ({porcentaje_fina:.2f}%)")
+            mesh_fina.u = cp.where(~mesh_fina.solid, u_fina, mesh_fina.u)
+            mesh_fina.v = cp.where(~mesh_fina.solid, v_fina, mesh_fina.v)
+            mesh_fina.p = cp.where(~mesh_fina.solid, p_fina, mesh_fina.p)
+        else:
+            mesh_fina.u = u_fina
+            mesh_fina.v = v_fina
+            mesh_fina.p = p_fina
+        
+        # Malla gruesa
+        solid_gruesa_cargado = cp.array(data['gruesa_solid'], dtype=cp.bool_)
+        cambios_gruesa = cp.sum(mesh_gruesa.solid != solid_gruesa_cargado)
+        porcentaje_gruesa = 100 * float(cambios_gruesa) / (mesh_gruesa.nx * mesh_gruesa.ny)
+        
+        if cambios_gruesa > 0:
+            print(f"⚠ Cambio de geometría en malla gruesa: {cambios_gruesa} celdas ({porcentaje_gruesa:.2f}%)")
+            mesh_gruesa.u = cp.where(~mesh_gruesa.solid, u_gruesa, mesh_gruesa.u)
+            mesh_gruesa.v = cp.where(~mesh_gruesa.solid, v_gruesa, mesh_gruesa.v)
+            mesh_gruesa.p = cp.where(~mesh_gruesa.solid, p_gruesa, mesh_gruesa.p)
+        else:
+            mesh_gruesa.u = u_gruesa
+            mesh_gruesa.v = v_gruesa
+            mesh_gruesa.p = p_gruesa
+    else:
+        # Modo estricto
+        mesh_fina.u = u_fina
+        mesh_fina.v = v_fina
+        mesh_fina.p = p_fina
+        mesh_fina.solid = cp.array(data['fina_solid'], dtype=cp.bool_)
+        
+        mesh_gruesa.u = u_gruesa
+        mesh_gruesa.v = v_gruesa
+        mesh_gruesa.p = p_gruesa
+        mesh_gruesa.solid = cp.array(data['gruesa_solid'], dtype=cp.bool_)
+    
+    # Extraer metadata
+    metadata = {}
+
+    # JSON completo (si existe)
+    if 'meta_json' in data.files:
+        try:
+            meta_texto = data['meta_json'].item() if hasattr(data['meta_json'], 'item') else str(data['meta_json'])
+            metadata.update(json.loads(meta_texto))
+        except Exception:
+            pass
+
+    # Claves meta_* (sobrescriben si aplica)
+    for key in data.files:
+        if key.startswith('meta_'):
+            try:
+                metadata[key[5:]] = data[key].item() if hasattr(data[key], 'ndim') and data[key].ndim == 0 else data[key]
+            except Exception:
+                metadata[key[5:]] = data[key]
+    
+    print(f"✓ Checkpoint completo cargado desde: {filepath}")
+    print(f"  Históricos: {len(mesh_fina.cdvector)} iteraciones guardadas")
+    
+    return metadata
+
+
 def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: int, it_actual: int, 
                                 tiempo_fisico_acumulado: float, rho: float, U_inf: float, chord: float, nu: float, mu: float,
                                 graficos: bool = True, verbose: bool = True):
@@ -3776,6 +4434,7 @@ def _guardar_punto_polar(polar_data, mesh, mu, rho, U_inf, chord,
 def main(
     # Parámetros temporales
     CFL=0.8,
+    T=0.2,
     
     # Geometría del perfil
     alpha_deg=5,
@@ -3786,101 +4445,159 @@ def main(
     Lx=7,
     Ly=6,
     
-    # Resolución de malla
-    dx_min=0.01,       # Espaciado mínimo (zona fina alrededor del perfil)
-    dy_min=None,       # Si None, se usa dx_min
-    factor_expansion=1.05,  # Factor geométrico de crecimiento
-    ancho_zona_fina_x=None,  # Ancho de zona fina en X (None → 0.1*Lx)
-    ancho_zona_fina_y=None,  # Ancho de zona fina en Y (None → 0.1*Ly)
-    dx_max=None,       # Espaciado máximo (None → 20*dx_min)
-    dy_max=None,       # Espaciado máximo Y (None → 20*dy_min)
-    usar_wale=False,   # Si True, activa modelo de turbulencia WALE
-    
+    # Resolución de mallas
+    dx_grueso=0.01,   
+    dx_fino=0.002,
+    dy_grueso=None,  # Si None, se usa dx_grueso
+    dy_fino=None,    # Si None, se usa dx_fino
+    usar_wale=False,  # Si True, activa modelo de turbulencia WALE
+    usar_viscosidad_estela=False,  # Si True, añade viscosidad extra en la estela (surrogate 3D)
+    C_estela=0.05,  # Coeficiente de viscosidad de estela (0.01-0.1 típico)
     # Posición del perfil
     cx=2,
     cy=None,  # Si None, se centra verticalmente
     
+    # Zona de refinamiento
+    ancho_ref_factor=3,  # Factor multiplicador del chord
+    alto_ref_factor=1,   # Factor multiplicador del chord
+    offset_refinado=0.5,   # Offset del centro refinado respecto al leading edge (en fracciones de chord)
+    
     # Condiciones iniciales
-    p0=0,      # Pa
-    v0x=5,     # m/s
-    v0y=0.0,   # m/s
+    p0=0,  # Pa
+    v0x=5,  # m/s
+    v0y=0.0,  # m/s
     
     # Propiedades del fluido
-    rho=1.225,   # kg/m^3
-    nu=1.5e-5,   # m^2/s (viscosidad cinemática)
-    divergencia=1e-1,
-    
+    rho=1.225,#1.225,  # kg/m^3 (aire a nivel del mar)
+    nu=1.5e-5,#1.5e-5,  # m^2/s (viscosidad cinemática del aire)
+    divergencia=1e-1,  # Relajado: nested mesh no puede alcanzar divergencia muy baja
     # Condiciones de frontera
-    boundary_left=("inflow", None),
+    boundary_left=("inflow", None),  # (tipo, valor) - si valor es None, usa (v0x, v0y)
     boundary_top=("slip", None),
     boundary_bottom=("slip", None),
-    boundary_right=("outflow", None),
+    boundary_right=("outflow", None),  # si valor es None, usa p0 (presión fija en salida)
     
-    # Parámetros de simulación
-    guardado=50,
+    # Parámetros numéricos
+    tol_poisson=1,
+    max_iter_poisson=500,
+    guardado=50,  # guardar cada N iteraciones
     iteraciones=2000,
+    # Parámetros de cálculo de fuerzas
+    n_layers=1,
+    step_base=0.0,
+    step_inc=0.1,
     
     # Opciones de visualización y guardado
     save_frames=False,
+    frames_dir_fino=None,
     frames_dir_grueso=None,
+    visualize_mesh=False,
+    show_weights=True,
     graficos=False,
     
-    # Control de convergencia
-    stop_on_convergence=True,
+    # Opciones de checkpoint (guardar/reanudar)
+    checkpoint_file=None,  # Si se especifica, intenta cargar desde este archivo
+    save_checkpoint_every=None,  # Guardar checkpoint cada N iteraciones (None = no guardar)
+    checkpoint_dir="checkpoints",  # Directorio donde guardar checkpoints
+    allow_geometry_change=False,  # Permitir cargar checkpoint con geometría diferente
+    usar_parametros_checkpoint=True,  # Si True, al cargar se fuerzan dx/dy/Lx/Ly/dt/guardado del checkpoint
     
-    # Plan polar automático
+    # Control de convergencia
+    stop_on_convergence=True,  # Si True, detiene la simulación al alcanzar estado estacionario
+    
+    # Plan polar automático: lista de (alpha_grados, n_iteraciones)
+    # Ej: [(0,3000),(2,2000),(4,2000),(6,2000),(8,2000)]
+    # Si None, usa iteraciones normales sin cambio automático de alpha
     plan_polar=None,
+    # Fracción del inicio de cada tramo a descartar para la media (transitorio)
     polar_descarte=0.3,
     
-    # Vista en tiempo real
-    live_view=False,
-    
-    # Visualización de malla
-    mostrar_malla=False
+    # Vista en tiempo real (proceso externo)
+    live_view=False  # Si True, publica datos en memoria compartida para viewer_live.py
 ):
     # Procesar valores por defecto
-    if dy_min is None:
-        dy_min = dx_min
+    if dy_fino is None:
+        dy_fino = dx_fino
+    if dy_grueso is None:
+        dy_grueso = dx_grueso
     if cy is None:
         cy = Ly / 2.0
+    
+    ancho_ref = chord * ancho_ref_factor
+    alto_ref = chord * alto_ref_factor
     
     # Calcular viscosidad dinámica
     mu = rho * nu
 
     # ============================================================
-    # GENERAR MALLA VARIABLE (stretching 1D)
+    # PRE-LOAD (opcional): si hay checkpoint, usar sus parámetros para evitar dx/dy inconsistentes
     # ============================================================
-    X_1d = generar_malla_estirada(
-        L=Lx, x_centro=cx + chord * 0.5,
-        dx_min=dx_min, factor_expansion=factor_expansion,
-        ancho_zona_fina=ancho_zona_fina_x, dx_max=dx_max
-    )
-    Y_1d = generar_malla_estirada(
-        L=Ly, x_centro=cy,
-        dx_min=dy_min if dy_min else dx_min,
-        factor_expansion=factor_expansion,
-        ancho_zona_fina=ancho_zona_fina_y, dx_max=dy_max
+    checkpoint_meta = None
+    if checkpoint_file and os.path.exists(checkpoint_file) and usar_parametros_checkpoint:
+        try:
+            _ckpt = np.load(checkpoint_file)
+            dx_fino = float(_ckpt['fina_dx'])
+            dy_fino = float(_ckpt['fina_dy'])
+            dx_grueso = float(_ckpt['gruesa_dx'])
+            dy_grueso = float(_ckpt['gruesa_dy'])
+            Lx = float(_ckpt['gruesa_Lx'])
+            Ly = float(_ckpt['gruesa_Ly'])
+            if 'meta_json' in _ckpt.files:
+                try:
+                    meta_texto = _ckpt['meta_json'].item() if hasattr(_ckpt['meta_json'], 'item') else str(_ckpt['meta_json'])
+                    checkpoint_meta = json.loads(meta_texto)
+                except Exception:
+                    checkpoint_meta = None
+            print("\n" + "="*70)
+            print("CHECKPOINT: usando parámetros guardados")
+            print("="*70)
+            print(f"  dx_fino={dx_fino}, dy_fino={dy_fino}")
+            print(f"  dx_grueso={dx_grueso}, dy_grueso={dy_grueso}")
+            print(f"  Lx={Lx}, Ly={Ly}")
+        except Exception as e:
+            print(f"⚠ No se pudieron leer parámetros del checkpoint: {e}")
+            checkpoint_meta = None
+
+    # Crear geometría de mallas
+    geometria = mmr.MallaMultiRes(
+        Lx=Lx, Ly=Ly,
+        dx_grueso=dx_grueso, dx_fino=dx_fino,
+        centro_refinado=(cx + chord * offset_refinado, cy),
+        ancho_refinado=ancho_ref, alto_refinado=alto_ref, tipo_zona="rectangular"
     )
     
-    print(f"Malla variable: {len(X_1d)} x {len(Y_1d)} nodos")
-    print(f"  X: dx_min={np.min(np.diff(X_1d)):.6f}, dx_max={np.max(np.diff(X_1d)):.6f}")
-    print(f"  Y: dy_min={np.min(np.diff(Y_1d)):.6f}, dy_max={np.max(np.diff(Y_1d)):.6f}")
+    # Crear mallas física (gruesa y fina)
+    mesh_gruesa = Mesh(Lx, Ly, p0, v0x, v0y, dx_grueso, dy_grueso, usar_wale,
+                       usar_viscosidad_estela=usar_viscosidad_estela, C_estela=C_estela)
 
-    # Crear malla con densidad variable
-    mesh_gruesa = Mesh(Lx, Ly, p0, v0x, v0y, dx_min, dy_min if dy_min else dx_min,
-                       usar_wale=usar_wale, X_1d=X_1d, Y_1d=Y_1d)
+    limites = geometria.get_limites_fino()
+    mesh_fina = Mesh(limites['Lx'], limites['Ly'], p0, v0x, v0y, dx_fino, dy_fino)
 
+    
     # Ángulo de geometría: si hay plan_polar, cargar a 0° (el flujo se rota)
+    # Si no hay plan_polar, cargar al alpha_deg solicitado (flujo horizontal)
     alpha_geom = 0.0 if (plan_polar is not None and len(plan_polar) > 0) else alpha_deg
     
-    # Espesor mínimo del TE
-    min_te = 2.0 * dx_min
+    # Espesor mínimo del TE: usar dx_grueso como referencia para ambas mallas
+    min_te = 2.0 * dx_grueso
     
-    # Añadir sólido a malla
+    # Añadir sólido a malla gruesa
     mesh_gruesa.load_solids_from_file(
         filepath=filepath,
         chord=chord,
         x_offset=cx, y_offset=cy,
+        alpha_deg=alpha_geom, fill=True, plot=False,
+        min_te_height=min_te
+    )
+    
+    #mesh_gruesa.add_solid_circle(cx,cy,0.5*chord)  # Para probar sólido circular (descomentar)
+
+    # Añadir sólido a malla fina (coordenadas trasladadas)
+    cx_fino, cy_fino = geometria.offset_solido_para_fino(cx, cy)
+    mesh_fina.load_solids_from_file(
+        filepath=filepath,
+        chord=chord,
+        x_offset=cx_fino, y_offset=cy_fino,
         alpha_deg=alpha_geom, fill=True, plot=False,
         min_te_height=min_te
     )
@@ -3902,13 +4619,38 @@ def main(
     mesh_gruesa.set_boundary("top", boundary_type_top, value=boundary_val_top)
     mesh_gruesa.set_boundary("bottom", boundary_type_bottom, value=boundary_val_bottom)
     mesh_gruesa.set_boundary("right", boundary_type_right, value=boundary_val_right)
-    
-    # Parámetros físicos
-    CFL = CFL
-    dt = CFL * min(dx_min, dy_min if dy_min else dx_min) / np.sqrt(v0x**2 + v0y**2)
-    print(f"dt = {dt:.6f} s  (CFL={CFL})")  
 
-    guardado = guardado
+    # La malla fina NO debe tener boundaries configuradas porque es embebida
+    # Recibe todos sus valores de borde por interpolación de la malla gruesa
+    # Si se configuran boundaries, apply_boundaries() sobreescribe los valores interpolados
+    # mesh_fina.set_boundary("top", boundary_type_top, value=boundary_val_top)
+    # mesh_fina.set_boundary("bottom", boundary_type_bottom, value=boundary_val_bottom)
+    
+    # Visualizar mallas si se solicita
+    if visualize_mesh:
+        geometria.visualizar_mallado(mostrar_pesos=show_weights)
+    
+    # Parámetros físicos (ya calculados arriba)
+    # rho, nu, mu ya están definidos
+    
+    tol_poisson = tol_poisson
+    CFL = CFL
+    dt = CFL * min(dx_grueso,dy_grueso) / np.sqrt(v0x**2 + v0y**2)
+    print(f"dt = {dt:.6f} s  (CFL={CFL})")  
+    # Si el checkpoint trae dt/guardado, podemos forzar consistencia (para reanudar sin saltos)
+    if checkpoint_meta is not None and usar_parametros_checkpoint:
+        if 'guardado' in checkpoint_meta:
+            guardado_ckpt = int(checkpoint_meta['guardado'])
+            if guardado_ckpt != guardado:
+                print(f"⚠ guardado cambiado por checkpoint: {guardado} → {guardado_ckpt}")
+                guardado = guardado_ckpt
+        if 'dt' in checkpoint_meta:
+            dt_ckpt = float(checkpoint_meta['dt'])
+            if abs(dt_ckpt - dt) > 1e-12:
+                print(f"⚠ dt cambiado por checkpoint: {dt} → {dt_ckpt}")
+                dt = dt_ckpt
+
+    guardado = guardado  # guardar cada N iteraciones
     iteraciones = iteraciones
     if iteraciones % guardado != 0:
         iteraciones += guardado - (iteraciones % guardado)
@@ -3918,55 +4660,74 @@ def main(
     mesh_gruesa.clvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.divvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.clcdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
-    mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
+    mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)  # Cada iteración
     
+    mesh_fina.guardado = guardado
+    mesh_fina.cdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_fina.clvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_fina.divvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_fina.clcdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_fina.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
+
     # Estadísticas
-    print(f"Malla: {mesh_gruesa.nx} x {mesh_gruesa.ny} ({mesh_gruesa.nx * mesh_gruesa.ny:,} celdas)")
+    total_gruesa = mesh_gruesa.nx * mesh_gruesa.ny
+    activas_gruesa = int(cp.sum(geometria.mascara_gruesa_activa))
+    total_fina = mesh_fina.nx * mesh_fina.ny
+    borde_fino = int(cp.sum(geometria.mascara_fina_borde))
+    celdas_uniforme = int(Lx * Ly / (dx_fino ** 2))
+    celdas_multires = total_gruesa + total_fina
+    print(f"Malla gruesa: {mesh_gruesa.nx} x {mesh_gruesa.ny}  ({activas_gruesa:,} celdas activas)")
 
     # ============================================================
-    # VISUALIZACIÓN DE DENSIDAD DE MALLA (opcional, auto-cierre 5s)
+    # CHECKPOINT: Cargar estado previo si existe
     # ============================================================
-    if mostrar_malla:
-        _fig_m, _axes_m = plt.subplots(1, 2, figsize=(14, 5))
-        # Panel 1: mapa de tamaño de celda (área = dx*dy)
-        _dx_1d = np.diff(X_1d)
-        _dy_1d = np.diff(Y_1d)
-        _cell_area = np.outer(_dy_1d, _dx_1d)  # (ny-1, nx-1)
-        _xc = 0.5 * (X_1d[:-1] + X_1d[1:])
-        _yc = 0.5 * (Y_1d[:-1] + Y_1d[1:])
-        _XC, _YC = np.meshgrid(_xc, _yc)
-        _pcm = _axes_m[0].pcolormesh(_XC, _YC, _cell_area, shading='auto', cmap='viridis_r')
-        _fig_m.colorbar(_pcm, ax=_axes_m[0], label='Área celda (m²)')
-        _axes_m[0].set_title('Densidad de malla (área de celda)')
-        _axes_m[0].set_xlabel('X (m)')
-        _axes_m[0].set_ylabel('Y (m)')
-        _axes_m[0].set_aspect('equal')
-        # Dibujar sólido encima
-        _solid_np = cp.asnumpy(mesh_gruesa.solid)
-        _XX_np = cp.asnumpy(mesh_gruesa.XX)
-        _YY_np = cp.asnumpy(mesh_gruesa.YY)
-        _axes_m[0].contour(_XX_np, _YY_np, _solid_np.astype(float), levels=[0.5], colors='r', linewidths=1.5)
-        # Panel 2: grilla de líneas (cada N líneas para no saturar)
-        _max_lines = 80
-        _step_x = max(1, len(X_1d) // _max_lines)
-        _step_y = max(1, len(Y_1d) // _max_lines)
-        for _xi in X_1d[::_step_x]:
-            _axes_m[1].axvline(_xi, color='steelblue', linewidth=0.3, alpha=0.7)
-        for _yi in Y_1d[::_step_y]:
-            _axes_m[1].axhline(_yi, color='steelblue', linewidth=0.3, alpha=0.7)
-        _axes_m[1].contour(_XX_np, _YY_np, _solid_np.astype(float), levels=[0.5], colors='r', linewidths=1.5)
-        _axes_m[1].set_title(f'Líneas de malla (cada {_step_x}/{_step_y})')
-        _axes_m[1].set_xlabel('X (m)')
-        _axes_m[1].set_ylabel('Y (m)')
-        _axes_m[1].set_aspect('equal')
-        _fig_m.suptitle(f'Malla {mesh_gruesa.nx}x{mesh_gruesa.ny} — dx_min={dx_min}, factor={factor_expansion}', fontsize=12)
-        _fig_m.tight_layout()
-        plt.show(block=False)
-        plt.pause(10.0)
-        plt.close(_fig_m)
+    iteracion_inicial = 0
+    tiempo_simulado_previo = 0.0
+    
+    if checkpoint_file and os.path.exists(checkpoint_file):
+        print("\n" + "="*70)
+        print("CARGANDO CHECKPOINT")
+        print("="*70)
+        try:
+            # Cargar checkpoint completo (ambas mallas + metadata en un solo archivo)
+            metadata = load_complete_checkpoint(
+                checkpoint_file,
+                mesh_fina,
+                mesh_gruesa,
+                allow_geometry_change=allow_geometry_change
+            )
+            
+            # Extraer información de la metadata
+            if 'iteracion' in metadata:
+                iteracion_inicial = int(metadata['iteracion'])
+            if 'tiempo_simulado' in metadata:
+                tiempo_simulado_previo = float(metadata['tiempo_simulado'])
+            
+            print(f"  Reanudando desde iteración: {iteracion_inicial}")
+            print(f"  Tiempo simulado previo: {tiempo_simulado_previo:.4f} s")
+            
+            # Mostrar info de geometría si hubo cambios
+            if allow_geometry_change and 'alpha_deg' in metadata:
+                alpha_prev = float(metadata['alpha_deg'])
+                if abs(alpha_prev - alpha_deg) > 0.01:
+                    print(f"  ⚠ Cambio de ángulo: {alpha_prev:.1f}° → {alpha_deg:.1f}°")
+            
+            print("✓ Checkpoint cargado exitosamente")
+        except Exception as e:
+            print(f"⚠ Error al cargar checkpoint: {e}")
+            print("  Iniciando simulación desde cero")
+            iteracion_inicial = 0
+            tiempo_simulado_previo = 0.0
+    
+    # Crear directorio de checkpoints si se requiere guardar
+    if save_checkpoint_every:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        print(f"\n✓ Checkpoints se guardarán cada {save_checkpoint_every} iteraciones en: {checkpoint_dir}")
+
+################################################################################################################################################################################################################################################################################################################################################################################################################################
 
     # ============================================================
-    # INSTRUMENTACIÓN DE TIMING
+    # INSTRUMENTACIÓN DE TIMING (medición de rendimiento)
     # ============================================================
     timing_stats = {
         'recalculo_dt': 0.0,
@@ -3978,8 +4739,8 @@ def main(
         'total_por_paso': []
     }
     
-    # ⭐ Variable para acumular tiempo físico simulado
-    tiempo_fisico_acumulado = 0.0
+    # ⭐ Variable para acumular tiempo físico simulado (transitorio)
+    tiempo_fisico_acumulado = tiempo_simulado_previo
     
     # ============================================================
     # SISTEMA DE CONTROL INTERACTIVO: TRIGGERS Y SEÑALES
@@ -4013,7 +4774,7 @@ def main(
     
     # Registro polar: almacena Cd/Cl convergido para cada alpha
     polar_data = []  # Lista de dicts: {alpha, Cd, Cl, Cd_p, Cd_v, Cl_p, Cl_v, iter_inicio, iter_fin}
-    iter_inicio_alpha = 0  # Iteración donde empezó el alpha actual
+    iter_inicio_alpha = iteracion_inicial  # Iteración donde empezó el alpha actual
     archivo_polar = "polar_results.json"
     
     # ============================================================
@@ -4035,7 +4796,7 @@ def main(
         
         # Geometría cargada a 0°: SIEMPRE programar el primer alpha
         # (el flujo arranca horizontal, hay que rotarlo al primer alpha del plan)
-        acum = 0
+        acum = iteracion_inicial
         for idx_plan, (alpha_plan, n_iter_plan) in enumerate(plan_polar):
             cambios_alpha_programados[acum] = alpha_plan
             acum += n_iter_plan
@@ -4043,7 +4804,7 @@ def main(
         print("\n" + "="*70)
         print("📅 PLAN POLAR AUTOMÁTICO:")
         print("="*70)
-        iter_acum = 0
+        iter_acum = iteracion_inicial
         for alpha_p, n_p in plan_polar:
             print(f"   α = {alpha_p:+6.2f}°  |  iter {iter_acum:>6d} → {iter_acum+n_p:>6d}  ({n_p} iters, descarte {polar_descarte*100:.0f}%)")
             iter_acum += n_p
@@ -4125,7 +4886,7 @@ def main(
     # ============================================================
     # BUCLE PRINCIPAL: MALLA SIMPLE (SOLO GRUESA)
     # ============================================================
-    for it in tqdm(range(iteraciones)):
+    for it in tqdm(range(iteracion_inicial, iteraciones)):
         t_paso_inicio = time.time()
         
         # Recalcular dt cada iteración (CFL adaptativo + restricción viscosa)
@@ -4142,12 +4903,13 @@ def main(
                 Umax = float(np.sqrt(v0x**2 + v0y**2))
             
             # dt advectivo (CFL)
-            dt_adv = float(CFL * min(mesh_gruesa.dx, mesh_gruesa.dy) / max(Umax, 1e-12))
+            dt_adv = float(CFL * min(dx_grueso, dy_grueso) / max(Umax, 1e-12))
             
             # dt viscoso (estabilidad difusiva)
             if mesh_gruesa.usar_wale:
                 nu_t_g = mesh_gruesa.compute_wale_viscosity()
                 
+                # ⭐ LIMITAR nu_t para evitar valores excesivos que reduzcan dt demasiado
                 nu_t_max_permitido = 100.0 * nu
                 nu_t_g = cp.minimum(nu_t_g, cp.float32(nu_t_max_permitido))
                 
@@ -4155,6 +4917,12 @@ def main(
                 nu_eff_max = float(nu_eff_max_cp) if float(nu_eff_max_cp) > 0 else float(nu)
             else:
                 nu_eff_max = float(nu)
+            
+            # Incluir viscosidad de estela en cálculo de dt
+            if mesh_gruesa.usar_viscosidad_estela:
+                nu_wake_g = mesh_gruesa.compute_wake_viscosity()
+                nu_eff_con_estela = cp.float32(nu_eff_max) + cp.max(nu_wake_g)
+                nu_eff_max = float(nu_eff_con_estela)
             
             # ⚠️ Advertencia si nu_eff es anormalmente alto
             if nu_eff_max > 10.0 * nu and it % (guardado * 10) == 0:
@@ -4164,7 +4932,7 @@ def main(
             
             C_visc = 0.25
             if nu_eff_max > 1e-12:
-                dt_visc = float(C_visc * (min(mesh_gruesa.dx, mesh_gruesa.dy)**2) / nu_eff_max)
+                dt_visc = float(C_visc * (min(dx_grueso, dy_grueso)**2) / nu_eff_max)
             else:
                 dt_visc = float('inf')
             
@@ -4181,27 +4949,78 @@ def main(
             
         timing_stats['recalculo_dt'] += time.time() - t0
         
+        #dt_use = dt  # Usar dt fijo en este bucle simple
+        
+        # --- DIAGNÓSTICO NaN: trazar cada paso en las primeras iteraciones ---
+        _DIAG_NAN = (it < 20 or it % 10 == 0)
+        def _chk(label):
+            """Chequeo rápido de NaN/Inf después de cada operación."""
+            if not _DIAG_NAN:
+                return
+            u_nan = bool(cp.isnan(mesh_gruesa.u).any())
+            v_nan = bool(cp.isnan(mesh_gruesa.v).any())
+            p_nan = bool(cp.isnan(mesh_gruesa.p).any())
+            u_inf = bool(cp.isinf(mesh_gruesa.u).any())
+            v_inf = bool(cp.isinf(mesh_gruesa.v).any())
+            umax = float(cp.max(cp.abs(mesh_gruesa.u)))
+            vmax = float(cp.max(cp.abs(mesh_gruesa.v)))
+            pmax = float(cp.max(cp.abs(mesh_gruesa.p)))
+            status = "NaN!" if (u_nan or v_nan or p_nan) else ("Inf!" if (u_inf or v_inf) else "ok")
+            if status != "ok" or it < 20:
+                print(f"  [iter {it:>4d}] {label:<20s} |u|={umax:.4f} |v|={vmax:.4f} |p|={pmax:.4f} dt={dt_use:.2e} {status}")
+            if u_nan or v_nan or p_nan:
+                # Localizar DONDE está el NaN
+                if u_nan:
+                    nan_locs = cp.where(cp.isnan(mesh_gruesa.u))
+                    n = min(5, len(nan_locs[0]))
+                    print(f"    u NaN en: {[(int(nan_locs[0][k]), int(nan_locs[1][k])) for k in range(n)]}")
+                if v_nan:
+                    nan_locs = cp.where(cp.isnan(mesh_gruesa.v))
+                    n = min(5, len(nan_locs[0]))
+                    print(f"    v NaN en: {[(int(nan_locs[0][k]), int(nan_locs[1][k])) for k in range(n)]}")
+                if p_nan:
+                    nan_locs = cp.where(cp.isnan(mesh_gruesa.p))
+                    n = min(5, len(nan_locs[0]))
+                    print(f"    p NaN en: {[(int(nan_locs[0][k]), int(nan_locs[1][k])) for k in range(n)]}")
+        
         # Advección
         t0 = time.time()
         mesh_gruesa.advect_velocities(dt_use)
+        _chk("after advect")
         mesh_gruesa.apply_boundaries(after_projection=False)
+        _chk("after bound(adv)")
         timing_stats['adveccion'] += time.time() - t0
         
         # Difusión
         t0 = time.time()
         mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=mesh_gruesa.usar_wale)
+        _chk("after diffuse")
         mesh_gruesa.apply_boundaries(after_projection=False)
+        _chk("after bound(dif)")
         timing_stats['difusion'] += time.time() - t0
         
         # Proyección
         t0 = time.time()
+        
+        #mesh_gruesa.project2_adaptive(rho,dt_use,tol_div=divergencia,max_iter=200,verbose=False)
+        '''
+        mesh_gruesa.project_cg(
+            rho, dt_use,
+            tol_div=divergencia,
+            max_iter=3000,
+            verbose=False,
+            usar_operador_spd=True,
+            modo_adaptativo=True,
+            detectar_estancamiento=True
+        )
+        '''
         mg_info = mesh_gruesa.project_multigrid(rho,dt_use,tol_div=divergencia, verbose=False)
-        #mg_info = mesh_gruesa.project_cg(rho,dt_use,tol_div=divergencia, verbose=False)
-        
-        
+        _chk("after project")
         # Almacenar ciclos usados
         mesh_gruesa.mg_cycles_vector[it] = mg_info['cycles']
+        # ⭐ DESPUÉS de proyección: NO sobrescribir outflow
         mesh_gruesa.apply_boundaries(after_projection=True)
+        _chk("after bound(prj)")
         timing_stats['proyeccion'] += time.time() - t0
         
         # ============================================================
@@ -4322,9 +5141,9 @@ def main(
         # ============================================================
         if it in cambios_alpha_programados:
             nuevo_alpha = cambios_alpha_programados[it]
-            if abs(nuevo_alpha - alpha_actual) > 0.001 or it == 0:
+            if abs(nuevo_alpha - alpha_actual) > 0.001 or it == iteracion_inicial:
                 # Guardar punto polar del alpha que termina (salvo primera iteración)
-                if it > 0:
+                if it > iteracion_inicial:
                     _guardar_punto_polar(polar_data, mesh_gruesa, mu, rho, U_inf, chord,
                                          alpha_actual, iter_inicio_alpha, it, guardado, polar_descarte)
                     try:
@@ -4415,6 +5234,24 @@ def main(
                 # Liberar memoria de figuras matplotlib cada cierto número de frames
                 if it % (guardado * 10) == 0:
                     plt.close('all')
+        
+        # Checkpoint periódico
+        if save_checkpoint_every and (it % save_checkpoint_every == 0) and (it > iteracion_inicial):
+            checkpoint_name = f"checkpoint_iter_{it:06d}.npz"
+            checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
+            
+            metadata = {
+                'iteracion': it,
+                'tiempo_simulado': tiempo_fisico_acumulado,  # ⭐ Usar tiempo acumulado real
+                'CFL': CFL,
+                'alpha_deg': alpha_actual,
+                'chord': chord,
+                'Reynolds': (U_inf * chord) / nu,
+                'dt': dt,
+                'dt_ultimo': float(dt_use),  # ⭐ Guardar último dt usado
+                'guardado': guardado
+            }
+            save_complete_checkpoint(checkpoint_path, mesh_gruesa, None, metadata)
         
         if it % guardado == 0:
             timing_stats['guardado'] += time.time() - t0
@@ -4631,33 +5468,49 @@ def main(
         except:
             pass
 
-    return mesh_gruesa
+    return mesh_fina, mesh_gruesa, geometria
+    # Parámetros de simulación 
 
 if __name__ == "__main__":
-    mesh = main(    
-        Lx=10,
-        Ly=6,  
-        cx=1,
-        CFL=0.5,
-        alpha_deg=5,
-        polar_descarte=0.3,
-        iteraciones=4000,
-        divergencia=1e-1,
-        v0x=1,
-        v0y=0,
-        rho=1.0,
-        nu=1/100000,
-        filepath="NACA_0012",
-        chord=1.0,
-        dx_min=0.001,
-        ancho_zona_fina_x=1.2,
-        ancho_zona_fina_y=0.3,
-        factor_expansion=1.05,
-        graficos=True,
-        save_frames=False, 
-        frames_dir_grueso="",
-        usar_wale=False,
-        stop_on_convergence=False,
-        live_view=True,
-        mostrar_malla=True
-    )
+    mesh_finat,mesh_gruesat,geo=main(    
+    Lx=7,
+    Ly=6 ,  
+    T=0.5,
+    cx=1,
+    CFL=0.5,
+    alpha_deg=6,
+    polar_descarte=0.3,
+    iteraciones=4000,
+    divergencia=1e-1,
+    v0x=1,
+    v0y=0,
+    rho=1.0,
+    nu=1/100000,
+    filepath="NACA_0012",
+    chord=1.0,
+    dx_grueso=0.004,    
+    graficos=True,
+    save_frames=False, 
+    frames_dir_grueso="",
+    usar_wale=False,
+    usar_viscosidad_estela=False,
+    C_estela=0.05,
+    stop_on_convergence=False,
+    live_view=True
+
+)
+'''    
+plan_polar=[
+           # α=0°  durante 3000 iteraciones
+        (2,  3000),   # α=2°  durante 2000 iteraciones
+        (4,  3000),   # α=4°  durante 2000 iteraciones
+        (6,  3000),   # α=6°  durante 2000 iteraciones
+           # α=8°  durante 2000 iteraciones
+
+    ],
+'''
+# OPCIÓN 1: Descomentar para ejecutar con checkpoint
+# mesh_finat,mesh_gruesat,geo=main(checkpoint_file="checkpoints_test/checkpoint_iter_001000.npz",graficos=True)
+
+# OPCIÓN 2: Descomentar para ejecutar sin checkpoint (simulación nueva)
+# mesh_finat,mesh_gruesat,geo=main(CFL=0.8, T=0.2, alpha_deg=5, graficos=True)
