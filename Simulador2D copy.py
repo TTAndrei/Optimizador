@@ -2037,7 +2037,7 @@ class Mesh:
             'adaptive_max': adaptive_max_iter
         }
 
-    def project_multigrid(self, rho_sim, dt, tol_div=1e-2,
+    def project_multigrid(self, rho_sim, dt, tol_div=1e-1,
                           max_outer=20, cycles_per_outer=5,
                           niveles_max=8, pre_suavizado=2, post_suavizado=2,
                           omega=1.15, verbose=False,

@@ -524,6 +524,8 @@ class Mesh:
         extern "C" __global__ void prolongate_add_2d(
             const float* __restrict__ coarse,
             float* __restrict__ fine,
+            const float* __restrict__ wx_arr,
+            const float* __restrict__ wy_arr,
             int nx_c, int ny_c, int nx_f, int ny_f
         ) {
             int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -537,10 +539,10 @@ class Mesh:
             if (ic >= ny_c) ic = ny_c - 1;
             int jc1 = jc + 1 < nx_c ? jc + 1 : jc;
             int ic1 = ic + 1 < ny_c ? ic + 1 : ic;
-            // Pesos: 0.0 para par, 0.5 para impar
-            float wx = (jf & 1) ? 0.5f : 0.0f;
-            float wy = (if_ & 1) ? 0.5f : 0.0f;
-            // Si es impar y no hay vecino superior, skip (coincide con original)
+            // Pesos basados en posicion real (pre-computados)
+            float wx = wx_arr[jf];
+            float wy = wy_arr[if_];
+            // Si es impar y no hay vecino superior, skip
             if (wx > 0.0f && jc1 == jc) return;
             if (wy > 0.0f && ic1 == ic) return;
             float f00 = coarse[ic * nx_c + jc];
@@ -581,10 +583,12 @@ class Mesh:
             int W = i*nx + (j-1);
             int N = (i+1)*nx + j;
             int S = (i-1)*nx + j;
-            float du_dx = (!solid[E] && !solid[W]) ?
-                d1x_W[j]*u[W] + d1x_C[j]*u[idx] + d1x_E[j]*u[E] : 0.0f;
-            float dv_dy = (!solid[N] && !solid[S]) ?
-                d1y_S[i]*v[S] + d1y_C[i]*v[idx] + d1y_N[i]*v[N] : 0.0f;
+            bool sE = solid[E], sW = solid[W], sN = solid[N], sS = solid[S];
+            // Solo computar componente du/dx si NINGUN vecino en x es solido.
+            // Si alguno es solid (ghost cell), el valor IBM no satisface
+            // continuidad discreta -> genera divergencia espuria.
+            float du_dx = (!sE && !sW) ? (d1x_W[j]*u[W] + d1x_C[j]*u[idx] + d1x_E[j]*u[E]) : 0.0f;
+            float dv_dy = (!sN && !sS) ? (d1y_S[i]*v[S] + d1y_C[i]*v[idx] + d1y_N[i]*v[N]) : 0.0f;
             div[idx] = du_dx + dv_dy;
         }
         ''', 'divergence_masked')
@@ -667,10 +671,20 @@ class Mesh:
             int W = i*nx + (j-1);
             int N = (i+1)*nx + j;
             int S = (i-1)*nx + j;
-            if (!solid[E] && !solid[W])
-                u[idx] -= coef * (d1x_W[j]*p[W] + d1x_C[j]*p[idx] + d1x_E[j]*p[E]);
-            if (!solid[N] && !solid[S])
-                v[idx] -= coef * (d1y_S[i]*p[S] + d1y_C[i]*p[idx] + d1y_N[i]*p[N]);
+            bool sE = solid[E], sW = solid[W], sN = solid[N], sS = solid[S];
+            // Gradiente de presion: consistente con divergencia.
+            // Si el kernel de divergencia pone du/dx=0 (porque algun vecino x
+            // es solido), aqui tambien ponemos dp/dx=0 para esa celda.
+            // Idem para dp/dy. Esto evita correcciones espurias en celdas
+            // adyacentes al cuerpo.
+            float pW = sW ? p[idx] : p[W];
+            float pE = sE ? p[idx] : p[E];
+            float pS = sS ? p[idx] : p[S];
+            float pN = sN ? p[idx] : p[N];
+            float dp_dx = (!sE && !sW) ? (d1x_W[j]*pW + d1x_C[j]*p[idx] + d1x_E[j]*pE) : 0.0f;
+            float dp_dy = (!sN && !sS) ? (d1y_S[i]*pS + d1y_C[i]*p[idx] + d1y_N[i]*pN) : 0.0f;
+            u[idx] -= coef * dp_dx;
+            v[idx] -= coef * dp_dy;
         }
         ''', 'velocity_correction')
 
@@ -823,6 +837,45 @@ class Mesh:
             self._mg_d2y_N.append(met_y['d2_E'])
             if lvl < self._mg_niveles:
                 # Coarsen positions: take every-other node
+                nx_c = len(X_1d_lvl) // 2
+                ny_c = len(Y_1d_lvl) // 2
+                X_1d_lvl = X_1d_lvl[:nx_c*2:2]
+                Y_1d_lvl = Y_1d_lvl[:ny_c*2:2]
+
+        # Pre-computar pesos de prolongación por nivel (malla no-uniforme)
+        # wx[jf]=0 si jf par, wx[jf]=(x_f[jf]-x_f[jf-1])/(x_f[jf+1]-x_f[jf-1]) si impar
+        self._mg_prolong_wx = []
+        self._mg_prolong_wy = []
+        X_1d_lvl = self.X_1d
+        Y_1d_lvl = self.Y_1d
+        for lvl in range(self._mg_niveles + 1):
+            nx_f = len(X_1d_lvl)
+            ny_f = len(Y_1d_lvl)
+            wx = cp.zeros(nx_f, dtype=cp.float32)
+            wy = cp.zeros(ny_f, dtype=cp.float32)
+            # Pesos x: para índices impares
+            for jf in range(1, nx_f, 2):
+                if jf + 1 < nx_f:
+                    denom = float(X_1d_lvl[jf + 1] - X_1d_lvl[jf - 1])
+                    if abs(denom) > 1e-30:
+                        wx[jf] = float(X_1d_lvl[jf] - X_1d_lvl[jf - 1]) / denom
+                    else:
+                        wx[jf] = 0.5
+                else:
+                    wx[jf] = 0.5
+            # Pesos y: para índices impares
+            for if_ in range(1, ny_f, 2):
+                if if_ + 1 < ny_f:
+                    denom = float(Y_1d_lvl[if_ + 1] - Y_1d_lvl[if_ - 1])
+                    if abs(denom) > 1e-30:
+                        wy[if_] = float(Y_1d_lvl[if_] - Y_1d_lvl[if_ - 1]) / denom
+                    else:
+                        wy[if_] = 0.5
+                else:
+                    wy[if_] = 0.5
+            self._mg_prolong_wx.append(wx)
+            self._mg_prolong_wy.append(wy)
+            if lvl < self._mg_niveles:
                 nx_c = len(X_1d_lvl) // 2
                 ny_c = len(Y_1d_lvl) // 2
                 X_1d_lvl = X_1d_lvl[:nx_c*2:2]
@@ -992,6 +1045,7 @@ class Mesh:
         if n_ghost == 0:
             self._ghost_cell_ready = False
             self._ghost_mask = ghost_mask
+            self._ghost_direct_zero = cp.zeros(0, dtype=cp.bool_)
             return
         
         # Distancia de cada ghost cell a la pared (en celdas, siempre negativa dentro del sólido)
@@ -1019,10 +1073,49 @@ class Mesh:
         # Clamp para que queden dentro del dominio
         j_image = cp.clip(j_image, cp.float32(1.0), cp.float32(nx - 2))
         i_image = cp.clip(i_image, cp.float32(1.0), cp.float32(ny - 2))
-        
-        # Verificar que los puntos imagen están en fluido, si no, ajustar
-        # (interpolación bilineal podría necesitar celdas vecinas en fluido)
-        
+
+        # ── Validar que los 4 nodos de la interpolación bilineal estén en fluido ──
+        # Causa de inestabilidad con dx_min fino: en esquinas del perfil escalonado
+        # (staircase), la normal apunta en diagonal y el punto imagen puede caer
+        # sobre otra ghost cell B, generando u_ghost_A = +u_imagen_B > 0 (fuente de
+        # aceleración en vez de freno). Se extiende el desplazamiento 1 celda a la vez
+        # hasta que todos los nodos bilineales sean fluido.
+        n_corregidos = 0
+        for _iter in range(25):
+            j0_v = cp.clip(cp.floor(j_image).astype(cp.int32), 0, nx - 2)
+            i0_v = cp.clip(cp.floor(i_image).astype(cp.int32), 0, ny - 2)
+            # Los 4 nodos bilineales que usará _bilinear_interpolate
+            bad = (solid[i0_v,     j0_v    ] |
+                   solid[i0_v,     j0_v + 1] |
+                   solid[i0_v + 1, j0_v    ] |
+                   solid[i0_v + 1, j0_v + 1])
+            if not cp.any(bad):
+                break
+            if _iter == 0:
+                n_corregidos = int(cp.sum(bad))
+            # Empujar 1 celda más lejos en dirección normal para los problemáticos
+            desplazamiento = cp.where(bad, desplazamiento + cp.float32(1.0), desplazamiento)
+            j_image = j_ghost + desplazamiento * nx_g
+            i_image = i_ghost + desplazamiento * ny_g
+            j_image = cp.clip(j_image, cp.float32(1.0), cp.float32(nx - 2))
+            i_image = cp.clip(i_image, cp.float32(1.0), cp.float32(ny - 2))
+
+        # Para los pocos casos donde incluso 25 iteraciones no bastan (ángulos muy
+        # oblicuos en aristas de sólido): marcar esos ghost cells como "directos"
+        # (se fijarán a 0 en apply_ghost_cell_bc en vez de usar el punto imagen).
+        j0_v = cp.clip(cp.floor(j_image).astype(cp.int32), 0, nx - 2)
+        i0_v = cp.clip(cp.floor(i_image).astype(cp.int32), 0, ny - 2)
+        still_bad = (solid[i0_v,     j0_v    ] |
+                     solid[i0_v,     j0_v + 1] |
+                     solid[i0_v + 1, j0_v    ] |
+                     solid[i0_v + 1, j0_v + 1])
+        n_still_bad = int(cp.sum(still_bad))
+        if n_corregidos > 0 or n_still_bad > 0:
+            print(f"  [Ghost-cell] {n_corregidos} image points corregidos | "
+                  f"{n_still_bad} irreparables (forzados a 0) | total ghost={n_ghost}")
+        # Guardar máscara de ghost cells "directos" (u_ghost = 0 para estos)
+        self._ghost_direct_zero = still_bad  # shape: (n_ghost,)
+
         self._ghost_mask = ghost_mask
         self._ghost_i = ghost_indices[0]
         self._ghost_j = ghost_indices[1]
@@ -1064,6 +1157,14 @@ class Mesh:
         # Ghost cell = negativo de imagen (para que en la pared: promedio = 0)
         self.u[self._ghost_i, self._ghost_j] = -u_image
         self.v[self._ghost_i, self._ghost_j] = -v_image
+
+        # Ghost cells "directos" (imagen en sólido incluso tras 25 iters):
+        # imponer velocidad cero directamente (no-slip de primer orden, estable)
+        if hasattr(self, '_ghost_direct_zero') and cp.any(self._ghost_direct_zero):
+            gi = self._ghost_i[self._ghost_direct_zero]
+            gj = self._ghost_j[self._ghost_direct_zero]
+            self.u[gi, gj] = cp.float32(0.0)
+            self.v[gi, gj] = cp.float32(0.0)
         
         # Sólido interior (lejos de la interfaz): mantener a cero
         self.u[self._solid_interior] = 0.0
@@ -1222,27 +1323,27 @@ class Mesh:
                 self.v[v_slice] = value[1]
 
             elif bc_type == "outflow":
-                # Presión fija en la frontera: p = p0 (pasar p0 como 'value' en set_boundary)
+                # Presión Dirichlet en la salida (p = value, típicamente 0).
+                # Esto estabiliza la proyección incompresible.
                 if value is not None:
                     self.p[u_slice] = value
-                
-                # ⚠️ IMPORTANTE: NO sobrescribir velocidades después de proyección
-                # La proyección ya aplicó grad(p) correctamente en los bordes
-                if not after_projection:
-                    # Solo aplicar Neumann antes de proyección
-                    # grad(u) = grad(v) = 0 → copiar interior correcto
-                    if side == "left":
-                        self.u[:, 0] = self.u[:, 1]
-                        self.v[:, 0] = self.v[:, 1]
-                    elif side == "right":
-                        self.u[:, -1] = self.u[:, -2]
-                        self.v[:, -1] = self.v[:, -2]
-                    elif side == "bottom":
-                        self.u[0, :] = self.u[1, :]
-                        self.v[0, :] = self.v[1, :]
-                    elif side == "top":
-                        self.u[-1, :] = self.u[-2, :]
-                        self.v[-1, :] = self.v[-2, :]
+
+                # Neumann de velocidad SIEMPRE (antes y después de proyección).
+                # El kernel de corrección no actúa en j=nx-1, así que la celda
+                # frontera no se actualiza por proyección; es necesario copiar
+                # para mantener consistencia con el interior en todo momento.
+                if side == "left":
+                    self.u[:, 0] = self.u[:, 1]
+                    self.v[:, 0] = self.v[:, 1]
+                elif side == "right":
+                    self.u[:, -1] = self.u[:, -2]
+                    self.v[:, -1] = self.v[:, -2]
+                elif side == "bottom":
+                    self.u[0, :] = self.u[1, :]
+                    self.v[0, :] = self.v[1, :]
+                elif side == "top":
+                    self.u[-1, :] = self.u[-2, :]
+                    self.v[-1, :] = self.v[-2, :]
 
             elif bc_type == "slip":
                 # No penetración → velocidad normal = 0
@@ -1536,6 +1637,27 @@ class Mesh:
         self.reforzar_impermeabilidad()
         self.apply_boundaries(after_projection=False)
 
+    def apply_pressure_gradient(self, rho, dt):
+        """
+        Aplica -(dt/rho)*grad(p^n) al campo de velocidad (paso predictor
+        del método incremental de corrección de presión).
+        Reutiliza el kernel de corrección de velocidad.
+        """
+        if float(cp.max(cp.abs(self.p))) < 1e-30:
+            return  # No hay presión acumulada aún
+        ny, nx = self.p.shape
+        total = nx * ny
+        block = 256
+        grid = (total + block - 1) // block
+        coef = cp.float32(float(dt) / float(rho))
+        self._velocity_correction_kernel(
+            (grid,), (block,),
+            (self.u.ravel(), self.v.ravel(), self.p.ravel(), self.solid.ravel(),
+             coef,
+             self.d1x_W, self.d1x_C, self.d1x_E,
+             self.d1y_S, self.d1y_C, self.d1y_N,
+             cp.int32(nx), cp.int32(ny)))
+
     def _compute_divergence_field(self):
         """
         Calcula el campo completo de divergencia del^2 u = du/dx + dv/dy.
@@ -1781,15 +1903,14 @@ class Mesh:
         vc_kernel = self._velocity_correction_kernel
 
         # =========================================================
-        # DEFECT-CORRECTION con safety-check y mantenimiento
+        # DEFECT-CORRECTION
         # =========================================================
         p_acumulada = cp.zeros((ny, nx), dtype=cp.float32)
         total_iters = 0
         converged = False
         div_mean_current = div_mean_before
-        omega_corr = 1.0  # damping para corrección de velocidad
 
-        # Guardar estado inicial para revert global
+        # Guardar estado inicial para protección contra NaN
         u_initial = self.u.copy()
         v_initial = self.v.copy()
 
@@ -1838,11 +1959,8 @@ class Mesh:
             # RHS para operador SPD: b = -V * rhs
             rhs_M = -(rhs_flat * vol_flat)
 
-            # CG init
-            if outer == 0:
-                x = self.p.ravel().astype(cp.float32, copy=True)
-            else:
-                x = cp.zeros(total_cells, dtype=cp.float32)
+            # CG init - siempre desde ceros (cada outer resuelve corrección incremental)
+            x = cp.zeros(total_cells, dtype=cp.float32)
 
             if hay_dirichlet:
                 x[self.fixed_pressure_mask.ravel()] = self.fixed_pressure_value
@@ -1901,12 +2019,10 @@ class Mesh:
                 p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
 
             # ============================================================
-            # Corrección velocidad con safety check completo
+            # Corrección velocidad
             # ============================================================
-            u_save = self.u.copy()
-            v_save = self.v.copy()
 
-            coef_eff = cp.float32(float(coef_f) * omega_corr)
+            coef_eff = cp.float32(float(coef_f))
             vc_kernel(
                 (grid_k,), (block_sz,),
                 (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
@@ -1918,69 +2034,32 @@ class Mesh:
             self.apply_ghost_cell_bc()
             self.reforzar_impermeabilidad()
 
-            # Safety: verificar que div mejoró
-            div_check = self._compute_divergence_field()
-            div_after_corr = float(cp.sum(cp.abs(div_check[free]))) / n_free
-
-            if div_after_corr > div_mean_current * 1.01:
-                # Corrección empeoró → revertir
-                self.u[:] = u_save
-                self.v[:] = v_save
-                if maintenance_mode:
-                    if verbose:
-                        print(f"[CG] Mant. outer {outer+1}: corrección empeoró, revirtiendo (div={div_mean_current:.6e})")
-                    break
-                # Modo normal: reducir omega y reintentar
-                omega_corr *= 0.5
-                if omega_corr < 0.05:
-                    if verbose:
-                        print(f"[CG] Outer {outer+1}: omega={omega_corr:.3f} muy bajo, deteniendo")
-                    break
-                coef_eff = cp.float32(float(coef_f) * omega_corr)
-                vc_kernel(
-                    (grid_k,), (block_sz,),
-                    (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
-                     coef_eff,
-                     self.d1x_W, self.d1x_C, self.d1x_E,
-                     self.d1y_S, self.d1y_C, self.d1y_N,
-                     nx_i32, ny_i32))
-                self.apply_ghost_cell_bc()
-                self.reforzar_impermeabilidad()
-                # Verificar retry
-                div_retry = self._compute_divergence_field()
-                d_retry = float(cp.sum(cp.abs(div_retry[free])) / n_free)
-                if d_retry > div_mean_current * 1.01:
-                    # Retry también empeoró → revertir totalmente este outer
-                    self.u[:] = u_save
-                    self.v[:] = v_save
-                    if verbose:
-                        print(f"[CG] Outer {outer+1}/{n_outer} (w={omega_corr:.3f}): retry empeoró, skip")
-                    continue
+            # Protección contra NaN
+            has_nan = bool(cp.isnan(self.u).any() or cp.isnan(self.v).any())
+            if has_nan:
+                self.u[:] = u_initial
+                self.v[:] = v_initial
+                p_acumulada[:] = 0.0
                 if verbose:
-                    print(f"[CG] Outer {outer+1}/{n_outer} ({it_cg+1} iters, w={omega_corr:.3f} retry): div={d_retry:.6e}")
-            else:
-                # Corrección OK → restaurar omega gradualmente
-                if omega_corr < 1.0:
-                    omega_corr = min(1.0, omega_corr * 1.5)
-                if verbose:
-                    print(f"[CG] Outer {outer+1}/{n_outer} ({it_cg+1} iters, w={omega_corr:.3f}): div={div_after_corr:.6e}")
+                    print(f"[CG] NaN detectado en outer {outer+1}, revertido")
+                break
 
             p_acumulada += p_corr
 
-        # --- Global safety: si todo empeoró, revertir al estado inicial ---
-        div_final_check = self._compute_divergence_field()
-        div_final = float(cp.sum(cp.abs(div_final_check[free]))) / n_free
-        if div_final > div_mean_before * 1.01 and not converged:
-            self.u[:] = u_initial
-            self.v[:] = v_initial
-            p_acumulada[:] = 0.0
             if verbose:
-                print(f"[CG] Revert global: div {div_mean_before:.6e} → {div_final:.6e} (empeoró)")
+                div_check = self._compute_divergence_field()
+                div_after_corr = float(cp.sum(cp.abs(div_check[free]))) / n_free
+                print(f"[CG] Outer {outer+1}/{n_outer} ({it_cg+1} iters): div={div_after_corr:.6e}")
+
+            # Actualizar estado guardado para protección NaN
+            u_initial[:] = self.u
+            v_initial[:] = self.v
 
         # =========================================================
         # FINALIZACIÓN
         # =========================================================
-        self.p = p_acumulada
+        if float(cp.max(cp.abs(p_acumulada))) > 0.0:
+            self.p = p_acumulada
         self._aplicar_bc_presion_neumann()
         if hay_dirichlet:
             self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
@@ -2012,8 +2091,8 @@ class Mesh:
         }
 
     def project_multigrid(self, rho_sim, dt, tol_div=1e-2,
-                          max_outer=20, cycles_per_outer=5,
-                          niveles_max=8, pre_suavizado=2, post_suavizado=2,
+                          max_outer=8, cycles_per_outer=5,
+                          niveles_max=8, pre_suavizado=3, post_suavizado=3,
                           omega=1.15, verbose=False,
                           modo_adaptativo=True):
         """
@@ -2021,12 +2100,13 @@ class Mesh:
         Smoother: Red-Black Gauss-Seidel SOR (CUDA kernel in-place).
 
         Estrategia: múltiples iteraciones externas, cada una re-computa la
-        divergencia residual y resuelve un nuevo Poisson.  Esto elimina la
-        inconsistencia entre el Laplaciano compacto del solver y el gradiente
-        central de la corrección de velocidad.
+        divergencia residual y resuelve un nuevo Poisson con V-cycles multigrid.
+        La corrección se aplica siempre (sin line-search): la divergencia se mide
+        antes del post-procesado IBM (que reintroduce divergencia en la interfaz
+        sólido-fluido y haría rechazar correcciones válidas).
 
-        Ciclos adaptativos: una vez div < tol_div, reduce cycles_per_outer
-        a 1-2 para acelerar pasos posteriores.
+        Ciclos adaptativos: una vez div < tol_div, reduce ciclos de cálculo
+        a un mínimo de mantenimiento para maximizar velocidad.
 
         Parámetros:
             tol_div: tolerancia media sobre |div(u)|
@@ -2037,114 +2117,86 @@ class Mesh:
             omega: factor sobre-relajación (1.0-1.5, típico 1.1-1.2)
             modo_adaptativo: ajustar outers y ciclos según div
         """
-        dx = self.dx
-        dy = self.dy
-
+        # ================================================================
+        # Constantes y pre-cómputos
+        # ================================================================
         rho_f = cp.float32(rho_sim)
-        dt_f  = cp.float32(dt)
+        dt_f = cp.float32(dt)
         ny, nx = self.p.shape
+        coef_f = dt_f / rho_f          # dt/rho para corrección de velocidad
 
-        # Inicializar jerarquía si falta o cambió niveles_max
-        if not getattr(self, '_mg_initialized', False) or self._mg_niveles_max_param != niveles_max:
+        block_sz = 256
+        total_cells = ny * nx
+        grid_k = (total_cells + block_sz - 1) // block_sz
+        nx_i32 = cp.int32(nx)
+        ny_i32 = cp.int32(ny)
+
+        # --- Inicializar jerarquía multigrid si hace falta ---
+        if not self._mg_initialized:
             self._init_mg_hierarchy(niveles_max)
 
-        # --- Referencias cacheadas ---
-        nivel_max    = self._mg_niveles
-        solids       = self._mg_solids
-        solids_flat  = self._mg_solids_flat
-        mg_d2x_W     = self._mg_d2x_W
-        mg_d2x_C     = self._mg_d2x_C
-        mg_d2x_E     = self._mg_d2x_E
-        mg_d2y_S     = self._mg_d2y_S
-        mg_d2y_C     = self._mg_d2y_C
-        mg_d2y_N     = self._mg_d2y_N
-        bufs         = self._mg_bufs
-        dir_masks    = self._mg_dirichlet
-        hay_dir      = self._mg_hay_dirichlet
-        fixed_flat   = self._mg_fixed_mask_flat
-        fixed_val    = self.fixed_pressure_value
-        free         = self._mg_free
-        n_free       = self._mg_n_free
-        mask_x_f     = self._mg_mask_x_f32
-        mask_y_f     = self._mg_mask_y_f32
-        kernel_gs    = self._rb_gs_sor_kernel
-        omega_f32    = cp.float32(omega)
-        block_sz     = 256
+        n_levels = self._mg_niveles   # niveles de coarsening disponibles
 
-        # Aplicar Ghost-Cell IBM antes de proyección
-        self.apply_ghost_cell_bc()
+        # --- Máscaras ---
+        free = self._mg_free
+        free_flat = self._mg_free_flat
+        n_free = self._mg_n_free
 
-        # Constantes
-        coef     = dt_f / rho_f
+        try:
+            hay_dirichlet = bool(cp.any(self.fixed_pressure_mask))
+        except Exception:
+            hay_dirichlet = False
 
-        # Divergencia inicial
-        div_before = self._compute_divergence_field()
-        div_mean_before = float(cp.sum(cp.abs(div_before[free]))) / n_free
+        solid_flat = self._mg_solids_flat[0]
 
-        if verbose:
-            print(f"[MG] Divergencia inicial: {div_mean_before:.6e}")
+        # Iteraciones en el nivel más grueso (resolver cuasi-exactamente)
+        coarsest_iters = max(50, 8 * max(
+            self._mg_kdims[n_levels]['nx'],
+            self._mg_kdims[n_levels]['ny']))
 
-        # --- Determinar modo y número de outers ---
-        min_cycles = max(3, cycles_per_outer // 2)  # nunca menos de 3 V-cycles
-        if div_mean_before < tol_div:
-            # Ya convergido → mantenimiento ligero
-            n_outer = 2
-            maintenance_mode = True
-        else:
-            maintenance_mode = False
-            if modo_adaptativo:
-                if div_mean_before < tol_div * 3.0:
-                    n_outer = max(5, max_outer // 2)
-                else:
-                    n_outer = max_outer
-            else:
-                n_outer = max_outer
-
-        # =========================================================
-        # FUNCIONES AUXILIARES (closures optimizadas con kdims cacheados)
-        # =========================================================
-        kdims      = self._mg_kdims
+        # ================================================================
+        # Funciones locales
+        # ================================================================
+        rb_kernel = self._rb_gs_sor_kernel
         restrict_k = self._restrict_kernel
-        prolong_k  = self._prolongate_add_kernel
-        vc_kernel  = self._velocity_correction_kernel
-        p0_i32     = cp.int32(0)
-        p1_i32     = cp.int32(1)
+        prolong_k = self._prolongate_add_kernel
+        vc_kernel = self._velocity_correction_kernel
 
-        def _suavizar(p_lvl, rhs_lvl, nivel, n_iter):
-            kd = kdims[nivel]
-            p_flat = p_lvl.ravel()
-            rhs_flat = rhs_lvl.ravel()
-            sf = solids_flat[nivel]
-            d2xw = mg_d2x_W[nivel]; d2xc = mg_d2x_C[nivel]; d2xe = mg_d2x_E[nivel]
-            d2ys = mg_d2y_S[nivel]; d2yc = mg_d2y_C[nivel]; d2yn = mg_d2y_N[nivel]
-            g = (kd['grid'],)
-            b = (block_sz,)
-            nx_i = kd['nx_i']
-            ny_i = kd['ny_i']
-            for _ in range(int(n_iter)):
-                kernel_gs(g, b, (sf, p_flat, rhs_flat, d2xw, d2xc, d2xe, d2ys, d2yc, d2yn, omega_f32, nx_i, ny_i, p0_i32))
-                kernel_gs(g, b, (sf, p_flat, rhs_flat, d2xw, d2xc, d2xe, d2ys, d2yc, d2yn, omega_f32, nx_i, ny_i, p1_i32))
-            if hay_dir:
-                dm = dir_masks[nivel]
-                if nivel == 0:
-                    p_flat[fixed_flat] = fixed_val
-                else:
-                    p_lvl[dm] = 0.0
+        omega_f32 = cp.float32(omega)
+        p0_i32    = cp.int32(0)
+        p1_i32    = cp.int32(1)
 
-        def _aplicar_bc(p_nivel, nivel):
+        omega_coarse_f32 = cp.float32(1.0)   # pure Gauss-Seidel para niveles gruesos
+
+        def _smooth(p_arr, rhs, lvl, n_sweeps):
+            kd      = self._mg_kdims[lvl]
+            sol     = self._mg_solids_flat[lvl]
+            nx_l    = kd['nx_i']
+            ny_l    = kd['ny_i']
+            grid_l  = (kd['grid'],)
+            p_flat   = p_arr.ravel()
+            rhs_flat = rhs.ravel()
+            d2xW = self._mg_d2x_W[lvl]; d2xC = self._mg_d2x_C[lvl]; d2xE = self._mg_d2x_E[lvl]
+            d2yS = self._mg_d2y_S[lvl]; d2yC = self._mg_d2y_C[lvl]; d2yN = self._mg_d2y_N[lvl]
+            # Usar omega solo en nivel fino; GS puro (omega=1) en niveles gruesos
+            om = omega_f32 if lvl == 0 else omega_coarse_f32
+            for _ in range(n_sweeps):
+                rb_kernel(grid_l, (256,),
+                          (sol, p_flat, rhs_flat,
+                           d2xW, d2xC, d2xE, d2yS, d2yC, d2yN,
+                           om, nx_l, ny_l, p0_i32))
+                rb_kernel(grid_l, (256,),
+                          (sol, p_flat, rhs_flat,
+                           d2xW, d2xC, d2xE, d2yS, d2yC, d2yN,
+                           om, nx_l, ny_l, p1_i32))
+
+        def _aplicar_bc_mg(p_nivel, lvl):
+            """Fuerza Neumann cero-gradiente en bordes (copiando celda vecina),
+               respetando Dirichlet donde aplica."""
             ny_n, nx_n = p_nivel.shape
-            if not hay_dir:
-                # Neumann puro: copia simple (sin indexing complejo)
-                if nx_n >= 2:
-                    p_nivel[:, 0] = p_nivel[:, 1]
-                    p_nivel[:, -1] = p_nivel[:, -2]
-                if ny_n >= 2:
-                    p_nivel[0, :] = p_nivel[1, :]
-                    p_nivel[-1, :] = p_nivel[-2, :]
-            else:
-                solid_n = solids[nivel]
-                fl = ~solid_n
-                dm = dir_masks[nivel]
+            if hay_dirichlet:
+                dm = self._mg_dirichlet[lvl]
+                fl = ~self._mg_solids[lvl]
                 if nx_n >= 2:
                     mk = fl[:, 0] & ~dm[:, 0]
                     p_nivel[mk, 0] = p_nivel[mk, 1]
@@ -2155,253 +2207,334 @@ class Mesh:
                     p_nivel[0, mk] = p_nivel[1, mk]
                     mk = fl[-1, :] & ~dm[-1, :]
                     p_nivel[-1, mk] = p_nivel[-2, mk]
-                if nivel == 0:
-                    p_nivel[dm] = fixed_val
+                if lvl == 0:
+                    p_nivel[dm] = self.fixed_pressure_value
                 else:
-                    p_nivel[dm] = 0.0
+                    p_nivel[dm] = cp.float32(0.0)
+            else:
+                if nx_n >= 2:
+                    p_nivel[:, 0]  = p_nivel[:, 1]
+                    p_nivel[:, -1] = p_nivel[:, -2]
+                if ny_n >= 2:
+                    p_nivel[0, :]  = p_nivel[1, :]
+                    p_nivel[-1, :] = p_nivel[-2, :]
 
-        # =========================================================
-        # V-CYCLE con kernels fusionados (restrict/prolongate)
-        # Ahorra ~2200 lanzamientos de kernel por proyección
-        # =========================================================
-        def _v_cycle(p_in, rhs_in):
-            p_by_level = [None] * (nivel_max + 1)
-            rhs_by_level = [None] * (nivel_max + 1)
-            p_by_level[0] = p_in
-            rhs_by_level[0] = rhs_in
+        def _residual_norm(p, rhs_r, lvl=0):
+            """Calcula ||rhs - L*p|| en el nivel dado."""
+            kd = self._mg_kdims[lvl]
+            Lp = self._laplacian_kernel_masked(
+                self._mg_solids_flat[lvl], p.ravel(),
+                self._mg_d2x_W[lvl], self._mg_d2x_C[lvl], self._mg_d2x_E[lvl],
+                self._mg_d2y_S[lvl], self._mg_d2y_C[lvl], self._mg_d2y_N[lvl],
+                kd['nx_i'], kd['ny_i'], size=kd['total'])
+            return float(cp.linalg.norm(rhs_r - Lp))
 
-            # --- Descenso ---
-            for lvl in range(nivel_max):
-                kd = kdims[lvl]
-                _suavizar(p_by_level[lvl], rhs_by_level[lvl], lvl, pre_suavizado)
-                # Residuo: res = rhs - Lap(p)
-                res_buf = bufs[lvl]['res']
-                lap = self._laplacian_kernel_masked(
-                    solids_flat[lvl], p_by_level[lvl].ravel(),
-                    mg_d2x_W[lvl], mg_d2x_C[lvl], mg_d2x_E[lvl],
-                    mg_d2y_S[lvl], mg_d2y_C[lvl], mg_d2y_N[lvl],
+        # Limitar niveles efectivos de MG: con malla 20:1 no-uniforme, niveles
+        # profundos son inconsistentes (L_c ≠ R·L_f·P). Usando máx 2 niveles
+        # la relación geométrica local es ~4x y la aproximación es suficiente.
+        nlvl_use = min(n_levels, 2)
+        # Iteraciones en nivel 'coarsest' del V-cycle (puede ser nivel 1 o 2)
+        coarse_solve_iters = 20   # pocas: sólo corregir modos bajos, no resolver exactamente
+
+        def _v_cycle(p_arr, rhs, _dbg=False):
+            """V-cycle iterativo: resuelve L*p = rhs usando nlvl_use niveles."""
+
+            if _dbg:
+                r_antes = _residual_norm(p_arr, rhs.ravel())
+                print(f"  [DBG] ||r|| inicial={r_antes:.4e}  ||rhs||={float(cp.linalg.norm(rhs)):.4e}")
+
+            # Arrays por nivel (sólo hasta nlvl_use)
+            p_lv   = [None] * (nlvl_use + 1)
+            rhs_lv = [None] * (nlvl_use + 1)
+            p_lv[0]   = p_arr
+            rhs_lv[0] = rhs
+
+            # ---- Descenso ----
+            for lvl in range(nlvl_use):
+                _smooth(p_lv[lvl], rhs_lv[lvl], lvl, pre_suavizado)
+                _aplicar_bc_mg(p_lv[lvl], lvl)
+
+                if _dbg and lvl == 0:
+                    print(f"  [DBG] ||r|| tras presmooth lvl0={_residual_norm(p_lv[0], rhs.ravel()):.4e}")
+
+                # Residuo: r = rhs - L*p
+                kd  = self._mg_kdims[lvl]
+                sol = self._mg_solids_flat[lvl]
+                Lp  = self._laplacian_kernel_masked(
+                    sol, p_lv[lvl].ravel(),
+                    self._mg_d2x_W[lvl], self._mg_d2x_C[lvl], self._mg_d2x_E[lvl],
+                    self._mg_d2y_S[lvl], self._mg_d2y_C[lvl], self._mg_d2y_N[lvl],
                     kd['nx_i'], kd['ny_i'], size=kd['total'])
-                cp.subtract(rhs_by_level[lvl].ravel(), lap, out=res_buf.ravel())
-                # Restricción con kernel fusionado (1 lanzamiento en vez de ~8)
-                kd_c = kdims[lvl + 1]
+                res_buf = self._mg_bufs[lvl]['res']
+                cp.subtract(rhs_lv[lvl].ravel(), Lp, out=res_buf.ravel())
+
+                # Restricción residuo → RHS del nivel grueso
+                kd_c = self._mg_kdims[lvl + 1]
                 if kd_c['ny'] < 2 or kd_c['nx'] < 2:
-                    for lvl_up in range(lvl, -1, -1):
-                        _suavizar(p_by_level[lvl_up], rhs_by_level[lvl_up], lvl_up, post_suavizado)
-                        _aplicar_bc(p_by_level[lvl_up], lvl_up)
-                    return p_by_level[0]
-                rhs_coarse = bufs[lvl + 1]['rhs']
+                    for lu in range(lvl, -1, -1):
+                        _smooth(p_lv[lu], rhs_lv[lu], lu, post_suavizado)
+                        _aplicar_bc_mg(p_lv[lu], lu)
+                    return
+
+                rhs_c = self._mg_bufs[lvl + 1]['rhs']
                 restrict_k(
-                    (kd_c['grid'],), (block_sz,),
-                    (res_buf.ravel(), rhs_coarse.ravel(),
-                     kd['nx_i'], kd['ny_i'], kd_c['nx_i'], kd_c['ny_i']))
-                rhs_by_level[lvl + 1] = rhs_coarse
-                e_c = bufs[lvl + 1]['error']
+                    (kd_c['grid'],), (256,),
+                    (res_buf.ravel(), rhs_c.ravel(),
+                     cp.int32(kd['nx']), cp.int32(kd['ny']),
+                     cp.int32(kd_c['nx']), cp.int32(kd_c['ny'])))
+                rhs_lv[lvl + 1] = rhs_c
+
+                e_c = self._mg_bufs[lvl + 1]['error']
                 e_c[:] = 0.0
-                p_by_level[lvl + 1] = e_c
+                p_lv[lvl + 1] = e_c
 
-            # --- Nivel más grueso: suavizado extra (escalar con tamaño) ---
-            _ny_c, _nx_c = p_by_level[nivel_max].shape
-            _coarse_sweeps = max(pre_suavizado + 10, 2 * max(_ny_c, _nx_c))
-            _suavizar(p_by_level[nivel_max], rhs_by_level[nivel_max],
-                      nivel_max, _coarse_sweeps)
-            _aplicar_bc(p_by_level[nivel_max], nivel_max)
+            # ---- Nivel más grueso del V-cycle (= nlvl_use) ----
+            _smooth(p_lv[nlvl_use], rhs_lv[nlvl_use], nlvl_use, coarse_solve_iters)
+            _aplicar_bc_mg(p_lv[nlvl_use], nlvl_use)
 
-            # --- Ascenso con prolongación fusionada (add directo, 1 vs ~15 launches) ---
-            for lvl in range(nivel_max - 1, -1, -1):
-                kd_c = kdims[lvl + 1]
-                kd_f = kdims[lvl]
+            # ---- Ascenso ----
+            for lvl in range(nlvl_use - 1, -1, -1):
+                kd_c = self._mg_kdims[lvl + 1]
+                kd_f = self._mg_kdims[lvl]
+                wx   = self._mg_prolong_wx[lvl]
+                wy   = self._mg_prolong_wy[lvl]
                 prolong_k(
-                    (kd_f['grid'],), (block_sz,),
-                    (p_by_level[lvl + 1].ravel(), p_by_level[lvl].ravel(),
-                     kd_c['nx_i'], kd_c['ny_i'], kd_f['nx_i'], kd_f['ny_i']))
-                _suavizar(p_by_level[lvl], rhs_by_level[lvl], lvl, post_suavizado)
-                _aplicar_bc(p_by_level[lvl], lvl)
+                    (kd_f['grid'],), (256,),
+                    (p_lv[lvl + 1].ravel(), p_lv[lvl].ravel(), wx, wy,
+                     cp.int32(kd_c['nx']), cp.int32(kd_c['ny']),
+                     cp.int32(kd_f['nx']), cp.int32(kd_f['ny'])))
+                p_lv[lvl][self._mg_solids[lvl]] = cp.float32(0.0)
+                _smooth(p_lv[lvl], rhs_lv[lvl], lvl, post_suavizado)
+                _aplicar_bc_mg(p_lv[lvl], lvl)
 
-            return p_by_level[0]
+                if _dbg and lvl == 0:
+                    print(f"  [DBG] ||r|| tras postsmooth lvl0={_residual_norm(p_lv[0], rhs.ravel()):.4e}")
 
-        # =========================================================
-        # DEFECT-CORRECTION con safety-check y mantenimiento
-        # - Re-computa div residual cada outer
-        # - Safety: si corrección amplifica div, revert+reduce omega
-        #   Después del retry, verifica de nuevo; si sigue peor, revert total
-        # - Mantenimiento: cuando div < tol, revert si empeora y salir
-        # - Global: guarda estado inicial para revert si todo empeora
-        # =========================================================
-        p_acumulada = cp.zeros((ny, nx), dtype=cp.float32)
+            if _dbg:
+                print(f"  [DBG] ||r|| tras V-cycle COMPLETO={_residual_norm(p_arr, rhs.ravel()):.4e}")
+
+        # ================================================================
+        # Preparar campo (Ghost-Cell IBM)
+        # ================================================================
+        self.apply_ghost_cell_bc()
+
+        # ================================================================
+        # Divergencia ANTES
+        # ================================================================
+        div_before_field = self._compute_divergence_field()
+        _div_abs_before   = cp.abs(div_before_field[free])
+        div_mean_before   = float(cp.mean(_div_abs_before))        # L1-media (informativo)
+        div_max_before    = float(cp.max(_div_abs_before))          # L∞ (independiente del dominio)
+        # Métrica efectiva: máxima entre media y valor típico local (percentil grueso).
+        # Esto evita que un dominio grande diluya la media y engañe al modo adaptativo.
+        div_eff_before    = max(div_mean_before, div_max_before * 0.01)
+
+        if verbose:
+            print(f"[MG] Divergencia inicial: media={div_mean_before:.4e}  max={div_max_before:.4e}")
+
+        # ================================================================
+        # Modo adaptativo: número de outers y ciclos
+        # ================================================================
+        if modo_adaptativo:
+            if div_eff_before < tol_div * 0.5:
+                n_outer = 1
+                n_cycles = 1
+                maintenance_mode = True
+            elif div_eff_before < tol_div:
+                n_outer = 2
+                n_cycles = max(2, cycles_per_outer // 2)
+                maintenance_mode = True
+            elif div_eff_before < tol_div * 3.0:
+                n_outer = max(3, max_outer // 2)
+                n_cycles = cycles_per_outer
+                maintenance_mode = False
+            else:
+                n_outer = max_outer
+                n_cycles = cycles_per_outer
+                maintenance_mode = False
+        else:
+            n_outer = max_outer
+            n_cycles = cycles_per_outer
+            maintenance_mode = False
+
+        # ================================================================
+        # Bucle externo de defect-correction
+        # ================================================================
+        p_last = cp.zeros((ny, nx), dtype=cp.float32)   # presión del último outer
         total_cycles = 0
         converged = False
         div_mean_current = div_mean_before
-        omega_corr = 1.0  # damping para corrección de velocidad
 
-        total_cells = ny * nx
-        grid_vc = (total_cells + block_sz - 1) // block_sz
-        nx_i32 = cp.int32(nx)
-        ny_i32 = cp.int32(ny)
-        solid_flat = self.solid.ravel()
-
-        # Guardar estado inicial para revert global
+        # Estado inicial para recuperación ante NaN
         u_initial = self.u.copy()
         v_initial = self.v.copy()
 
         for outer in range(n_outer):
+            # --- Divergencia del outer actual ---
             div_field = self._compute_divergence_field()
-            div_mean_current = float(cp.sum(cp.abs(div_field[free]))) / n_free
+            _div_abs_cur     = cp.abs(div_field[free])
+            div_mean_current = float(cp.mean(_div_abs_cur))
+            div_max_current  = float(cp.max(_div_abs_cur))
+            div_eff_current  = max(div_mean_current, div_max_current * 0.01)
 
-            # --- Check convergencia ---
-            if div_mean_current < tol_div:
-                if maintenance_mode and outer >= 1:
-                    converged = True
-                    if verbose:
-                        print(f"[MG] Mantenimiento OK outer {outer}: div={div_mean_current:.6e}")
-                    break
-                elif not maintenance_mode and outer > 0:
-                    converged = True
-                    if verbose:
-                        print(f"[MG] Convergencia div outer {outer}: div={div_mean_current:.6e}")
-                    break
+            # --- Criterio de convergencia (sólo divergencia) ---
+            # NOTA: solo romper si ya se aplicó al menos 1 corrección (outer > 0).
+            # Si rompemos en outer=0, NO se aplica nada aunque la media esté diluida
+            # por un dominio grande con poca divergencia local pero significativa.
+            if div_eff_current < tol_div and outer > 0:
+                converged = True
+                if verbose:
+                    print(f"[MG] Convergido en outer {outer}: div_media={div_mean_current:.4e}  div_max={div_max_current:.4e}")
+                break
 
-            # --- Ciclos adaptativos (nunca menos de min_cycles) ---
-            if maintenance_mode:
-                cycles_this = min_cycles
-            elif modo_adaptativo:
-                if div_mean_current < tol_div * 2.0:
-                    cycles_this = min_cycles
-                elif div_mean_current < tol_div * 5.0:
-                    cycles_this = max(min_cycles, (cycles_per_outer * 2) // 3)
+            # --- Ciclos adaptativos intra-outer ---
+            if modo_adaptativo and outer > 0:
+                ratio = div_mean_current / max(tol_div, 1e-30)
+                if ratio < 1.0:
+                    cycles_this = 1
+                elif ratio < 2.0:
+                    cycles_this = max(2, n_cycles // 2)
                 else:
-                    cycles_this = cycles_per_outer
+                    cycles_this = n_cycles
             else:
-                cycles_this = cycles_per_outer
+                cycles_this = n_cycles
 
-            # RHS desde divergencia
-            rhs = bufs[0]['rhs']
-            rhs[:] = 0.0
+            # --- RHS: (rho/dt) * div(u*) ---
+            rhs = cp.zeros((ny, nx), dtype=cp.float32)
             rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_field[1:-1, 1:-1]
-            if not hay_dir:
-                vol_flat_0 = self._vol_2d_flat
-                free_flat_0 = free.ravel()
-                vrs = cp.sum(rhs.ravel()[free_flat_0] * vol_flat_0[free_flat_0])
-                vt  = cp.sum(vol_flat_0[free_flat_0])
-                rhs[free] -= (vrs / vt)
 
-            if outer == 0:
-                p_corr = self.p.copy()
-            else:
-                p_corr = cp.zeros((ny, nx), dtype=cp.float32)
-            for cyc in range(cycles_this):
-                p_corr = _v_cycle(p_corr, rhs)
-                if hay_dir:
-                    p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
+            # Columna de salida (j=nx-2): la BC Neumann u[nx-1]=u[nx-2] hace que
+            # la divergencia allí sea una diferencia unilateral que el solver de
+            # presión no puede compensar sin oscilar (polo amplificante).
+            # Solución: vaciar el término fuente en esa columna y no aplicar
+            # corrección de velocidad → la proyección no "toca" la salida.
+            rhs[:, -2] = cp.float32(0.0)
+
+            # Compatibilidad Neumann: media ponderada por volumen = 0
+            if not hay_dirichlet:
+                vol_flat = self._vol_2d_flat
+                rhs_flat = rhs.ravel()
+                vrs = cp.sum(rhs_flat[free_flat] * vol_flat[free_flat])
+                vt = cp.sum(vol_flat[free_flat])
+                if float(vt) > 0:
+                    rhs_flat[free_flat] -= vrs / vt
+
+            # --- Resolver Poisson: L * p_corr = rhs ---
+            p_corr = cp.zeros((ny, nx), dtype=cp.float32)
+            if hay_dirichlet:
+                p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
+
+            # Residuo inicial para detectar si el V-cycle diverge
+            rhs_flat_ref = rhs.ravel()
+            r_antes = _residual_norm(p_corr, rhs_flat_ref)
+
+            for cyc_i in range(cycles_this):
+                _v_cycle(p_corr, rhs, _dbg=(verbose and outer == 0 and cyc_i < 2))
             total_cycles += cycles_this
 
-            _aplicar_bc(p_corr, 0)
+            # Seguridad: si el V-cycle amplificó el residuo de Poisson,
+            # descartamos y usamos GS solo en nivel fino con suficientes sweeps
+            r_despues = _residual_norm(p_corr, rhs_flat_ref)
+            if r_despues > r_antes * 1.5:
+                if verbose:
+                    print(f"  [MG] V-cycle diverge ({r_antes:.3e}→{r_despues:.3e}): usando GS fino")
+                p_corr[:] = 0.0
+                if hay_dirichlet:
+                    p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
+                # 300 sweeps: factor reducción ~0.98^300 ≈ 0.002 (99.8%)
+                gs_sweeps = max(300, cycles_this * (pre_suavizado + post_suavizado + 50))
+                _smooth(p_corr, rhs, 0, gs_sweeps)
+                _aplicar_bc_mg(p_corr, 0)
 
-            # ============================================================
-            # Corrección velocidad con safety check completo
-            # ============================================================
-            u_save = self.u.copy()
-            v_save = self.v.copy()
+            if hay_dirichlet:
+                p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
 
-            coef_eff = cp.float32(float(coef) * omega_corr)
+            # Neumann: eliminar modo constante de la corrección
+            if not hay_dirichlet:
+                p_free = p_corr[free]
+                if p_free.size > 0:
+                    p_corr -= cp.mean(p_free)
+
+            # --- Aplicar corrección: u -= (dt/rho) * grad(p_corr) ---
+            # IMPORTANTE: no se usa line-search. La divergencia se mide ANTES del
+            # post-procesado IBM (que reintroduce divergencia en la interfaz y haría
+            # rechazar correcciones válidas). La corrección se aplica siempre.
+            # Guardar columna de salida: no aplicamos corrección allí (ver rhs[:,-2]=0)
+            u_out_save = self.u[:, -2].copy()
+            v_out_save = self.v[:, -2].copy()
+            coef_eff = cp.float32(float(coef_f))
             vc_kernel(
-                (grid_vc,), (block_sz,),
+                (grid_k,), (block_sz,),
                 (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
                  coef_eff,
                  self.d1x_W, self.d1x_C, self.d1x_E,
                  self.d1y_S, self.d1y_C, self.d1y_N,
                  nx_i32, ny_i32))
+            # Restaurar columna de salida (la proyección no actúa allí)
+            self.u[:, -2] = u_out_save
+            self.v[:, -2] = v_out_save
 
             self.apply_ghost_cell_bc()
             self.reforzar_impermeabilidad()
 
-            # Safety: verificar que div mejoró
-            div_check = self._compute_divergence_field()
-            div_after_corr = float(cp.sum(cp.abs(div_check[free]))) / n_free
-
-            if div_after_corr > div_mean_current * 1.01:
-                # Corrección empeoró → revertir
-                self.u[:] = u_save
-                self.v[:] = v_save
-                if maintenance_mode:
-                    if verbose:
-                        print(f"[MG] Mant. outer {outer+1}: corrección empeoró, revirtiendo (div={div_mean_current:.6e})")
-                    break
-                # Modo normal: reducir omega y reintentar
-                omega_corr *= 0.5
-                if omega_corr < 0.05:
-                    if verbose:
-                        print(f"[MG] Outer {outer+1}: omega={omega_corr:.3f} muy bajo, deteniendo")
-                    break
-                coef_eff = cp.float32(float(coef) * omega_corr)
-                vc_kernel(
-                    (grid_vc,), (block_sz,),
-                    (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
-                     coef_eff,
-                     self.d1x_W, self.d1x_C, self.d1x_E,
-                     self.d1y_S, self.d1y_C, self.d1y_N,
-                     nx_i32, ny_i32))
-                self.apply_ghost_cell_bc()
-                self.reforzar_impermeabilidad()
-                # Verificar retry
-                div_retry = self._compute_divergence_field()
-                d_retry = float(cp.sum(cp.abs(div_retry[free])) / n_free)
-                if d_retry > div_mean_current * 1.01:
-                    # Retry también empeoró → revertir totalmente este outer
-                    self.u[:] = u_save
-                    self.v[:] = v_save
-                    if verbose:
-                        print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this}Vc, w={omega_corr:.3f}): retry empeoró, skip")
-                    continue
+            # Protección NaN: revertir al estado inicial y salir
+            if bool(cp.isnan(self.u).any() or cp.isnan(self.v).any()):
+                self.u[:] = u_initial
+                self.v[:] = v_initial
                 if verbose:
-                    print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this}Vc, w={omega_corr:.3f} retry): div={d_retry:.6e}")
-            else:
-                # Corrección OK → restaurar omega gradualmente
-                if omega_corr < 1.0:
-                    omega_corr = min(1.0, omega_corr * 1.5)
-                if verbose:
-                    print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this}Vc, w={omega_corr:.3f}): div={div_after_corr:.6e}")
+                    print(f"[MG] NaN outer {outer+1}, revertido")
+                break
 
-            p_acumulada += p_corr
+            p_last = p_corr
 
-        # --- Global safety: si todo empeoró, revertir al estado inicial ---
-        div_final_check = self._compute_divergence_field()
-        div_final = float(cp.sum(cp.abs(div_final_check[free]))) / n_free
-        if div_final > div_mean_before * 1.01 and not converged:
-            self.u[:] = u_initial
-            self.v[:] = v_initial
-            p_acumulada[:] = 0.0
             if verbose:
-                print(f"[MG] Revert global: div {div_mean_before:.6e} → {div_final:.6e} (empeoró)")
+                div_log = float(cp.sum(cp.abs(
+                    self._compute_divergence_field()[free]))) / max(n_free, 1.0)
+                print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this} V-cyc): "
+                      f"div={div_log:.6e}")
 
-        # =========================================================
-        # FINALIZACIÓN
-        # =========================================================
-        self.p = p_acumulada
+            # Guardar estado para la siguiente iteración
+            u_initial[:] = self.u
+            v_initial[:] = self.v
+
+        # ================================================================
+        # Finalización
+        # ================================================================
+        if float(cp.max(cp.abs(p_last))) > 0.0:
+            self.p = p_last
+
         self._aplicar_bc_presion_neumann()
-        if hay_dir:
+        if hay_dirichlet:
             self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
 
-        # Ghost-Cell IBM final + refuerzo
         self.apply_ghost_cell_bc()
         self.reforzar_impermeabilidad()
         self.apply_boundaries(after_projection=True)
 
-        if not hay_dir:
+        if not hay_dirichlet:
             try:
                 self._anchor_pressure()
             except Exception:
                 pass
 
-        div_after = self._compute_divergence_field()
-        div_mean_after = float(cp.sum(cp.abs(div_after[free]))) / n_free
+        div_after_field = self._compute_divergence_field()
+        _div_abs_after = cp.abs(div_after_field[free])
+        div_mean_after = float(cp.mean(_div_abs_after))
+        div_max_after  = float(cp.max(_div_abs_after))
+        div_eff_after  = max(div_mean_after, div_max_after * 0.01)
+
+        if verbose:
+            print(f"[MG] div_media: {div_mean_before:.4e}→{div_mean_after:.4e}  "
+                  f"div_max: {div_max_before:.4e}→{div_max_after:.4e}  cycles={total_cycles}")
 
         return {
+            'iterations': total_cycles,
             'cycles': total_cycles,
-            'outers': outer + 1,
-            'converged': converged or (div_mean_after < tol_div),
+            'outers': outer + 1 if n_outer > 0 else 0,
+            'converged': converged or (div_eff_after < tol_div),
             'div_before': div_mean_before,
             'div_after': div_mean_after,
-            'n_outer_used': n_outer
+            'n_outer_used': n_outer,
         }
 
     '''Sólidos'''
@@ -3637,6 +3770,20 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     print(f"\n--- Resultados (Re={Re:.0f}, t={tiempo_fisico_acumulado:.4f}s) ---")
     print(f"  Cl medio = {cl_medio:.6f}   Cd medio = {cd_medio:.6f}   L/D = {ld_medio:.2f}")
     print(f"{'─'*52}")
+    print(f"  Descomposición de fuerzas (valor instantáneo final):")
+    print(f"  {'':20s}  {'Drag (X)':>12s}  {'Lift (Y)':>12s}")
+    print(f"  {'─'*50}")
+    print(f"  {'TOTAL':20s}  {Fx_total:>12.6f}  {Fy_total:>12.6f}  N/m")
+    print(f"  {'  Presión':20s}  {Fx_presion:>12.6f}  {Fy_presion:>12.6f}  N/m")
+    print(f"  {'  Viscosa (fricción)':20s}  {Fx_friccion:>12.6f}  {Fy_friccion:>12.6f}  N/m")
+    print(f"  {'─'*50}")
+    print(f"  {'Cd total':20s}  {2*Fx_total/(rho*U_inf**2*chord):>12.6f}")
+    print(f"  {'  Cd presión':20s}  {Cd_presion:>12.6f}  ({100*Cd_presion/(2*Fx_total/(rho*U_inf**2*chord)+1e-30):.1f}%)")
+    print(f"  {'  Cd fricción':20s}  {Cd_friccion:>12.6f}  ({100*Cd_friccion/(2*Fx_total/(rho*U_inf**2*chord)+1e-30):.1f}%)")
+    print(f"  {'Cl total':20s}  {2*Fy_total/(rho*U_inf**2*chord):>12.6f}")
+    print(f"  {'  Cl presión':20s}  {Cl_presion:>12.6f}  ({100*Cl_presion/(2*Fy_total/(rho*U_inf**2*chord)+1e-30):.1f}%)")
+    print(f"  {'  Cl fricción':20s}  {Cl_friccion:>12.6f}  ({100*Cl_friccion/(2*Fy_total/(rho*U_inf**2*chord)+1e-30):.1f}%)")
+    print(f"{'─'*52}")
     # retener variables para posible uso posterior
     
     if graficos:    
@@ -3814,7 +3961,10 @@ def main(
     boundary_left=("inflow", None),
     boundary_top=("slip", None),
     boundary_bottom=("slip", None),
-    boundary_right=("outflow", None),
+    # outflow con value=0.0: fija p=0 como Dirichlet en la salida.
+    # Esto estabiliza la proyección: evita el modo amplificante Neumann+Neumann
+    # que produce picos u = 2*u[n-2] - u[n-3] en la frontera de salida.
+    boundary_right=("outflow", 0.0),
     
     # Parámetros de simulación
     guardado=50,
@@ -4120,7 +4270,64 @@ def main(
     
     # Velocidad máxima permitida (red de seguridad contra blowup)
     U_ref = float(np.sqrt(v0x**2 + v0y**2))
-    vel_clamp_max = 10.0 * max(U_ref, 1.0)
+    vel_clamp_max = 50.0 * max(U_ref, 1.0)
+
+    # ── Diagnóstico de blowup ─────────────────────────────────────────────────
+    # Umbral a partir del cual se activa el diagnóstico detallado (3× libre)
+    _DIAG_THRESHOLD = 3.0 * max(U_ref, 1.0)
+    _diag_triggered = False   # evitar inundación de prints
+
+    def _diag_check(etapa):
+        """Imprime info detallada si la velocidad supera _DIAG_THRESHOLD."""
+        nonlocal _diag_triggered
+        speed = cp.sqrt(mesh_gruesa.u**2 + mesh_gruesa.v**2)
+        fluid_mask = ~mesh_gruesa.solid
+        if not cp.any(fluid_mask):
+            return
+        speed_fluid = speed[fluid_mask]
+        vel_max = float(cp.max(speed_fluid))
+        if vel_max <= _DIAG_THRESHOLD:
+            return
+
+        # Localizar celda con velocidad máxima (en toda la malla, no solo fluido)
+        idx_max = int(cp.argmax(speed))
+        j_max = idx_max % mesh_gruesa.nx
+        i_max = idx_max // mesh_gruesa.nx
+        x_phys = float(mesh_gruesa.X_1d[j_max])
+        y_phys = float(mesh_gruesa.Y_1d[i_max])
+        es_solido   = bool(mesh_gruesa.solid[i_max, j_max])
+        es_ghost    = (mesh_gruesa._ghost_cell_ready and
+                       bool(mesh_gruesa._ghost_mask[i_max, j_max]))
+        u_val = float(mesh_gruesa.u[i_max, j_max])
+        v_val = float(mesh_gruesa.v[i_max, j_max])
+
+        # Vecinas de la celda máxima
+        ny_m, nx_m = mesh_gruesa.solid.shape
+        vecinas = ""
+        for di, dj in [(-1,0),(1,0),(0,-1),(0,1)]:
+            ii, jj = i_max+di, j_max+dj
+            if 0 <= ii < ny_m and 0 <= jj < nx_m:
+                s = "S" if mesh_gruesa.solid[ii,jj] else "F"
+                g = "G" if (mesh_gruesa._ghost_cell_ready and mesh_gruesa._ghost_mask[ii,jj]) else ""
+                vecinas += f"({di:+d},{dj:+d}):{s}{g}={mesh_gruesa.u[ii,jj]:.2f} "
+
+        tipo = "SÓLIDO/GHOST" if es_solido else "FLUIDO"
+        if es_ghost:
+            tipo = "GHOST"
+        print(f"\n{'─'*65}")
+        print(f"⚠️  SPIKE detectado tras [{etapa}]  vel_max={vel_max:.2f} m/s  (umbral={_DIAG_THRESHOLD:.1f})")
+        print(f"   Celda ({i_max},{j_max})  físico=({x_phys:.4f},{y_phys:.4f})  tipo={tipo}")
+        print(f"   u={u_val:.4f}  v={v_val:.4f}")
+        print(f"   Vecinas: {vecinas}")
+        if not _diag_triggered:
+            # Primera vez: imprimir estadísticas globales de ghost cells
+            if mesh_gruesa._ghost_cell_ready:
+                print(f"   Ghost cells totales: {mesh_gruesa._n_ghost}")
+                if hasattr(mesh_gruesa, '_ghost_direct_zero'):
+                    n_dz = int(cp.sum(mesh_gruesa._ghost_direct_zero))
+                    print(f"   Ghost 'direct-zero': {n_dz}")
+            _diag_triggered = True
+        print(f"{'─'*65}")
     
     # ============================================================
     # BUCLE PRINCIPAL: MALLA SIMPLE (SOLO GRUESA)
@@ -4185,12 +4392,14 @@ def main(
         t0 = time.time()
         mesh_gruesa.advect_velocities(dt_use)
         mesh_gruesa.apply_boundaries(after_projection=False)
+        _diag_check("ADVECCIÓN")
         timing_stats['adveccion'] += time.time() - t0
         
         # Difusión
         t0 = time.time()
         mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=mesh_gruesa.usar_wale)
         mesh_gruesa.apply_boundaries(after_projection=False)
+        _diag_check("DIFUSIÓN")
         timing_stats['difusion'] += time.time() - t0
         
         # Proyección
@@ -4202,6 +4411,7 @@ def main(
         # Almacenar ciclos usados
         mesh_gruesa.mg_cycles_vector[it] = mg_info['cycles']
         mesh_gruesa.apply_boundaries(after_projection=True)
+        _diag_check("PROYECCIÓN")
         timing_stats['proyeccion'] += time.time() - t0
         
         # ============================================================
@@ -4635,13 +4845,13 @@ def main(
 
 if __name__ == "__main__":
     mesh = main(    
-        Lx=10,
-        Ly=6,  
-        cx=1,
+        Lx=12,
+        Ly=8,  
+        cx=2,
         CFL=0.5,
         alpha_deg=5,
         polar_descarte=0.3,
-        iteraciones=4000,
+        iteraciones=10000,
         divergencia=1e-1,
         v0x=1,
         v0y=0,
@@ -4651,8 +4861,8 @@ if __name__ == "__main__":
         chord=1.0,
         dx_min=0.001,
         ancho_zona_fina_x=1.2,
-        ancho_zona_fina_y=0.3,
-        factor_expansion=1.05,
+        ancho_zona_fina_y=1,
+        factor_expansion=1.1,
         graficos=True,
         save_frames=False, 
         frames_dir_grueso="",

@@ -1,0 +1,383 @@
+================================================================================
+  PROMPT: Implementar función project_multigrid en un simulador CFD 2D GPU
+================================================================================
+
+CONTEXTO DEL SIMULADOR
+-----------------------
+Es un simulador de fluidos incompresibles 2D en GPU (CuPy + CUDA RawKernels).
+La clase principal se llama Simulador2D (o similar).
+Campos principales:
+  self.u, self.v    → velocidades (cp.float32, shape ny×nx)
+  self.p            → presión (cp.float32, shape ny×nx)
+  self.solid        → máscara booleana de sólidos (cp.bool_, shape ny×nx)
+  self.X_1d, self.Y_1d → coordenadas 1D del grid no-uniforme (np.ndarray)
+  self.XX, self.YY  → grids 2D de posiciones físicas
+  self.fixed_pressure_mask  → máscara Dirichlet de presión (cp.bool_)
+  self.fixed_pressure_value → valor Dirichlet (float)
+
+El grid es NO-UNIFORME con variación hasta 20:1 entre celda mínima y máxima.
+Usa un esquema de volúmenes finitos con métricas calculadas por calcular_metricas_1d().
+calcular_metricas_1d() devuelve dict con claves d1_W, d1_C, d1_E, d2_W, d2_C, d2_E
+donde d2_* son coeficientes del Laplaciano 3 puntos para malla no-uniforme:
+  d2_W[j] = 2/(hw*(he+hw))   d2_C[j] = -2/(he*hw)   d2_E[j] = 2/(he*(he+hw))
+con he = X[j+1]-X[j], hw = X[j]-X[j-1].
+
+
+OBJETIVO DE LA FUNCIÓN
+-----------------------
+Implementar el paso de proyección incompresible (método de la presión) que:
+  1. Calcula la divergencia del campo de velocidades: div(u)
+  2. Resuelve la ecuación de Poisson: L·p = (rho/dt)·div(u)
+     donde L es el operador Laplaciano discreto con malla no-uniforme
+  3. Corrige las velocidades: u -= (dt/rho)·grad(p)
+
+El solver de Poisson usa Multigrid (V-cycle) con smoother Gauss-Seidel SOR.
+Se implementa como defect-correction iterativo (múltiples iteraciones externas).
+
+
+FIRMA DE LA FUNCIÓN
+-------------------
+def project_multigrid(self, rho_sim, dt, tol_div=1e-2,
+                      max_outer=8, cycles_per_outer=5,
+                      niveles_max=8, pre_suavizado=3, post_suavizado=3,
+                      omega=1.15, verbose=False,
+                      modo_adaptativo=True):
+
+Retorna un dict con:
+  iterations, cycles, outers, converged, div_before, div_after, n_outer_used
+
+
+================================================================================
+PARTE 1: KERNELS CUDA NECESARIOS (definir en __init__ o método de inicialización)
+================================================================================
+
+--- KERNEL 1: Red-Black Gauss-Seidel SOR ---
+Nombre: self._rb_gs_sor_kernel  (compilar con cp.RawKernel)
+Función CUDA: rb_gs_sor
+
+Parámetros CUDA:
+  const bool* solid, float* p, const float* rhs,
+  const float* d2x_W, const float* d2x_C, const float* d2x_E,
+  const float* d2y_S, const float* d2y_C, const float* d2y_N,
+  float omega, int nx, int ny, int phase
+
+Lógica:
+  - idx = blockDim.x * blockIdx.x + threadIdx.x
+  - j = idx % nx,  i = idx / nx
+  - Saltar si (i+j)&1 != phase  (Red=0, Black=1)
+  - Saltar si borde (i==0||i>=ny-1||j==0||j>=nx-1) o solid[idx]
+  - Coeficientes: aW=d2x_W[j], aC_x=d2x_C[j], aE=d2x_E[j]
+                  aS=d2y_S[i], aC_y=d2y_C[i], aN=d2y_N[i]
+  - diag = aC_x + aC_y
+  - Para cada vecino: si !solid[vecino] → sum_off += coef*p[vecino]
+                      si solid[vecino]  → diag += coef  (condición Neumann implícita)
+  - Si |diag| > 1e-30: p_gs = (rhs[idx] - sum_off) / diag
+                        p[idx] = (1-omega)*p[idx] + omega*p_gs
+
+IMPORTANTE: omega=1.0 es GS puro, >1 es sobre-relajación. Usar omega=1.0 en
+niveles gruesos y omega ~1.1-1.2 solo en el nivel fino.
+
+
+--- KERNEL 2: Restricción 2D (fine → coarse, full-weighting) ---
+Nombre: self._restrict_kernel
+Función CUDA: restrict_2d
+
+Parámetros: const float* fine, float* coarse, int nx_f, int ny_f, int nx_c, int ny_c
+
+Lógica: promedio 2×2 (promediar 4 celdas del fine para obtener 1 coarse)
+  jc=idx%nx_c, ic=idx/nx_c; jf=jc*2, if_=ic*2
+  coarse[idx] = 0.25 * (fine[if_*nx_f+jf] + fine[if_*nx_f+jf+1]
+                       + fine[(if_+1)*nx_f+jf] + fine[(if_+1)*nx_f+jf+1])
+
+
+--- KERNEL 3: Prolongación + suma (coarse → fine, bilineal, +=) ---
+Nombre: self._prolongate_add_kernel
+Función CUDA: prolongate_add_2d
+
+Parámetros: const float* coarse, float* fine,
+            const float* wx_arr, const float* wy_arr,
+            int nx_c, int ny_c, int nx_f, int ny_f
+
+Lógica: interpolación bilineal con pesos pre-computados wx, wy
+  jc=jf>>1, ic=if_>>1 (div entera); jc1=jc+1, ic1=ic+1 (clamped)
+  wx=wx_arr[jf], wy=wy_arr[if_]
+  fine[idx] += (1-wx)*(1-wy)*f00 + wx*(1-wy)*f10 + (1-wx)*wy*f01 + wx*wy*f11
+
+Para malla no-uniforme: wx[jf_impar] = (X_f[jf]-X_f[jf-1]) / (X_f[jf+1]-X_f[jf-1])
+                         wx[jf_par] = 0
+
+
+--- KERNEL 4: Corrección de velocidad ---
+Nombre: self._velocity_correction_kernel
+Función CUDA: velocity_correction
+
+Parámetros:
+  float* u, float* v, const float* p, const bool* solid, float coef,
+  const float* d1x_W, const float* d1x_C, const float* d1x_E,
+  const float* d1y_S, const float* d1y_C, const float* d1y_N,
+  int nx, int ny
+
+Lógica (gradiente centrado con malla no-uniforme):
+  Para cada celda interior no-sólida con vecinos no-sólidos:
+  u[idx] -= coef * (d1x_W[j]*p[E] + d1x_C[j]*p[idx] + d1x_E[j]*p[W])
+  v[idx] -= coef * (d1y_S[i]*p[N] + d1y_C[i]*p[idx] + d1y_N[i]*p[S])
+  (solo donde ambos vecinos en la dirección correspondiente son fluido)
+
+
+--- KERNEL 5: Laplaciano enmascarado (para calcular residuo) ---
+Nombre: self._laplacian_kernel_masked  (puede ser método Python que lanza kernel)
+Devuelve array flat con L*p en cada punto.
+Misma lógica que el smoother pero solo calcula diag*p[idx]+sum_off (sin RHS).
+
+
+================================================================================
+PARTE 2: _init_mg_hierarchy(self, niveles_max=4)
+================================================================================
+
+Pre-computa toda la jerarquía multigrid. Llamar una vez antes de usar project_multigrid.
+Si ya está inicializada (self._mg_initialized == True), no volver a llamar.
+
+Número de niveles efectivos:
+  self._mg_niveles = max(0, min(niveles_max, int(log2(min(ny,nx))) - 2))
+
+Para cada nivel (0=fino, 1=semi-grueso, ..., _mg_niveles=más grueso):
+
+  A) Máscara de sólidos por nivel (_mg_solids):
+     Nivel 0: self.solid
+     Nivel k+1: _coarsen_mask(nivel_k) donde
+       _coarsen_mask: toma cada 2×2 bloque, resultado es True si CUALQUIERA es True
+       (OR lógico conservativo)
+
+  B) Máscara Dirichlet por nivel (_mg_dirichlet):
+     Igual que sólidos pero empezando desde self.fixed_pressure_mask
+
+  C) Coeficientes del Laplaciano por nivel (_mg_d2x_*, _mg_d2y_*):
+     Nivel 0: calcular_metricas_1d(self.X_1d)['d2_*']
+     Nivel k+1: calcular_metricas_1d(X_1d_lvl[::2])  (tomar nodos alternos)
+     IMPORTANTE: NO interpolar los coeficientes. Re-discretizar desde la
+     malla re-muestreada. Esto mantiene consistencia local.
+
+  D) Pesos de prolongación por nivel (_mg_prolong_wx, _mg_prolong_wy):
+     Para nodos de posición impar en la malla fina:
+       wx[jf] = (X_f[jf] - X_f[jf-1]) / (X_f[jf+1] - X_f[jf-1])
+     Para nodos de posición par: wx[jf] = 0 (coinciden con nodo grueso)
+     Pre-computar para cada nivel. Estos pesos respetan la malla no-uniforme.
+
+  E) Buffers pre-alocados (_mg_bufs[lvl]):
+     Para cada nivel: error, res, rhs, prolonged
+     Todos cp.zeros con shape del nivel correspondiente
+
+  F) Dimensiones de kernel pre-computadas (_mg_kdims[lvl]):
+     total = ny*nx del nivel, grid = (total+255)//256
+     nx_i (cp.int32), ny_i (cp.int32), ny, nx
+
+  G) Máscaras de velocidad (_mg_mask_x_f32, _mg_mask_y_f32):
+     free = ~self.solid; free_c = free[1:-1, 1:-1]
+     mask_x = (free_c & free[1:-1, 2:] & free[1:-1, :-2]).astype(float32)
+     mask_y = (free_c & free[2:, 1:-1] & free[:-2, 1:-1]).astype(float32)
+
+  H) Máscaras de fluido y conteo:
+     _mg_free = ~self.solid
+     _mg_free_flat = free.ravel()
+     _mg_n_free = float(cp.sum(free))
+
+Marcar al final: self._mg_initialized = True
+
+
+================================================================================
+PARTE 3: V-CYCLE (función local dentro de project_multigrid)
+================================================================================
+
+PARÁMETRO CRÍTICO: nlvl_use = min(n_levels, 2)
+
+JUSTIFICACIÓN: Con mallas no-uniformes de relación 20:1, la condición de
+consistencia geométrica L_c ≈ R·L_f·P se degrada ~O((h_max/h_min)^2) por
+nivel. Con 7 niveles, la amplificación acumulada es >14×. Con 2 niveles la
+relación local es ~4× y es suficientemente consistente.
+
+coarse_solve_iters = 20  (solo corregir modos bajos, no resolver exactamente)
+
+def _v_cycle(p_arr, rhs, _dbg=False):
+    p_lv   = [None] * (nlvl_use + 1)
+    rhs_lv = [None] * (nlvl_use + 1)
+    p_lv[0]   = p_arr
+    rhs_lv[0] = rhs
+
+    # ---- DESCENSO ----
+    for lvl in range(nlvl_use):
+        _smooth(p_lv[lvl], rhs_lv[lvl], lvl, pre_suavizado)
+        _aplicar_bc_mg(p_lv[lvl], lvl)
+
+        # Calcular residuo: r = rhs - L*p  (usando _laplacian_kernel_masked)
+        res_buf = _mg_bufs[lvl]['res']
+        Lp = _laplacian_kernel_masked(...)
+        res_buf.ravel()[:] = rhs_lv[lvl].ravel() - Lp
+
+        # Restringir residuo al nivel grueso → RHS_grueso
+        rhs_c = _mg_bufs[lvl+1]['rhs']
+        restrict_kernel(res_buf → rhs_c, dims...)
+        rhs_lv[lvl+1] = rhs_c
+
+        # Inicializar error coarse a cero
+        e_c = _mg_bufs[lvl+1]['error']
+        e_c[:] = 0.0
+        p_lv[lvl+1] = e_c
+
+    # ---- NIVEL MÁS GRUESO ----
+    _smooth(p_lv[nlvl_use], rhs_lv[nlvl_use], nlvl_use, coarse_solve_iters)
+    _aplicar_bc_mg(p_lv[nlvl_use], nlvl_use)
+
+    # ---- ASCENSO ----
+    for lvl in range(nlvl_use-1, -1, -1):
+        # Prolongar corrección y SUMAR al nivel fino (+=, no =)
+        prolong_kernel(p_lv[lvl+1] → p_lv[lvl] +=, pesos_wx[lvl], pesos_wy[lvl], ...)
+
+        # Anular sólidos tras prolongación
+        p_lv[lvl][_mg_solids[lvl]] = 0.0
+
+        _smooth(p_lv[lvl], rhs_lv[lvl], lvl, post_suavizado)
+        _aplicar_bc_mg(p_lv[lvl], lvl)
+
+
+================================================================================
+PARTE 4: FUNCIÓN _smooth (local)
+================================================================================
+
+def _smooth(p_arr, rhs, lvl, n_sweeps):
+    kd     = _mg_kdims[lvl]
+    sol    = _mg_solids_flat[lvl]
+    p_flat = p_arr.ravel()
+    rhs_flat = rhs.ravel()
+    d2x* = _mg_d2x_*[lvl]  (coeficientes del nivel)
+    d2y* = _mg_d2y_*[lvl]
+
+    # CRÍTICO: omega=1.0 en niveles gruesos (GS puro, sin SOR)
+    #          omega=valor_param solo en nivel 0 (fino)
+    om = omega_f32 if lvl == 0 else cp.float32(1.0)
+
+    for _ in range(n_sweeps):
+        rb_kernel(... phase=0, om ...)   # Red
+        rb_kernel(... phase=1, om ...)   # Black
+
+
+================================================================================
+PARTE 5: FUNCIÓN _aplicar_bc_mg (local)
+================================================================================
+
+Aplica condiciones de borde a la presión en un nivel dado:
+  - Neumann cero-gradiente por defecto (copia de celda vecina en borde)
+  - Dirichlet donde aplica (fixed_pressure_mask en nivel 0, máscara coarse en otros)
+
+Para bordes Neumann (sin Dirichlet):
+  p[:, 0] = p[:, 1]      # borde Oeste
+  p[:, -1] = p[:, -2]    # borde Este
+  p[0, :] = p[1, :]      # borde Sur
+  p[-1, :] = p[-2, :]    # borde Norte
+
+Con Dirichlet: solo aplicar Neumann a celdas fluido que NO sean Dirichlet.
+En nivel 0: p[dirichlet_mask] = fixed_pressure_value
+En niveles >0: p[dirichlet_coarse] = 0.0  (corrección cero en nodos gruesos Dirichlet)
+
+
+================================================================================
+PARTE 6: BUCLE EXTERNO (defect-correction)
+================================================================================
+
+Antes del bucle:
+  - Llamar apply_ghost_cell_bc()
+  - Calcular divergencia inicial para modo adaptativo
+
+Modo adaptativo (ajusta n_outer y n_cycles según div_mean):
+  div < tol_div*0.5  → n_outer=1, n_cycles=1   (mantenimiento)
+  div < tol_div      → n_outer=2, n_cycles=max(2, cycles//2)
+  div < tol_div*3    → n_outer=max_outer//2, n_cycles=cycles_per_outer
+  else               → n_outer=max_outer, n_cycles=cycles_per_outer
+
+Por cada outer:
+  1. Calcular div(u) usando _compute_divergence_field()
+  2. Si div < tol_div → converged=True, break
+  3. Construir RHS = (rho/dt) * div(u)
+  4. Compatibilidad Neumann: restar media ponderada por volumen del RHS
+     (solo si no hay Dirichlet), para que el sistema sea compatible
+  5. Inicializar p_corr = 0.0  (+ Dirichlet si aplica)
+  6. Medir r_antes = ||rhs - L*p_corr||
+  7. Ejecutar cycles_this V-cycles
+  8. SEGURIDAD: medir r_despues. Si r_despues > r_antes * 1.5:
+       → V-cycle divergió, descartar (p_corr=0) y usar GS puro:
+         gs_sweeps = max(300, cycles_this*(pre+post+50))
+         _smooth(p_corr, rhs, 0, gs_sweeps)
+       NOTA: 300 sweeps dan reducción ~99.8% del residuo inicial
+  9. Eliminar modo constante si no hay Dirichlet:
+     p_corr -= mean(p_corr[fluido])
+  10. Corregir velocidad: u -= (dt/rho)*grad(p_corr) usando _velocity_correction_kernel
+  11. apply_ghost_cell_bc() + reforzar_impermeabilidad()
+  12. Verificar NaN: si hay NaN, revertir a u_initial, v_initial y break
+  13. Guardar p_corr como p_last
+
+Post-bucle:
+  - Si p_last tiene valores != 0: self.p = p_last
+  - Aplicar BC de presión Neumann, Dirichlet final
+  - apply_ghost_cell_bc(), reforzar_impermeabilidad(), apply_boundaries()
+  - Anclar presión (_anchor_pressure) si no hay Dirichlet
+
+
+================================================================================
+ADVERTENCIAS Y PITFALLS CRÍTICOS
+================================================================================
+
+1. NÚMERO DE NIVELES: Usar nlvl_use = min(n_levels, 2), NO todos los niveles
+   disponibles. Con malla no-uniforme 20:1, niveles adicionales amplifican el
+   residuo en vez de reducirlo (L_c ≠ R·L_f·P al re-discretizar).
+
+2. OMEGA EN NIVELES GRUESOS: Usar omega=1.0 (GS puro) en todos los niveles
+   excepto el fino (nivel 0). omega>1 puede hacer diverger el smoother en mallas
+   gruesas donde la relación de aspecto es peor.
+
+3. FALLBACK GS: El fallback debe usar >=300 sweeps. Con 80 sweeps solo se reduce
+   el residuo un 70%, insuficiente. Con 300 sweeps se reduce ~99.8%.
+
+4. PROLONGACIÓN: La prolongación debe SUMAR (+=) al campo actual del nivel fino,
+   no reemplazarlo. Esto es la corrección de error, no el valor absoluto.
+
+5. RESIDUO ANTES DEL DESCENSO: En _smooth se modifica p_lv[lvl] in-place; el
+   residuo para restricción debe calcularse DESPUÉS del presmooth, no antes.
+
+6. COMPATIBILIDAD NEUMANN: Sin Dirichlet, el sistema Poisson tiene kernel no-trivial
+   (modo constante). Restar la media ponderada del RHS garantiza compatibilidad.
+   Además, eliminar el modo constante de p_corr antes de aplicarla.
+
+7. IBM POST-PROCESADO: La divergencia se mide ANTES del post-procesado IBM
+   (apply_ghost_cell_bc). El IBM reintroduce divergencia en la interfaz fluido-sólido
+   y haría rechazar correcciones válidas si se midiera después.
+
+8. MALLA NO-UNIFORME EN COARSENING: Los coeficientes del Laplaciano en niveles
+   gruesos se calculan RE-DISCRETIZANDO (calcular_metricas_1d sobre el grid
+   re-muestreado). NO interpolar los coeficientes del nivel fino.
+
+9. INICIALIZACIÓN LAZY: Verificar self._mg_initialized antes de llamar a
+   _init_mg_hierarchy. Si el grid cambia (añadir sólidos), forzar
+   self._mg_initialized = False para re-inicializar.
+
+
+================================================================================
+ESTRUCTURA MÍNIMA DE ATRIBUTOS NECESARIA
+================================================================================
+
+Inicializar en __init__:
+  self._mg_initialized = False
+
+Atributos que debe tener ya la clase:
+  - self.d1x_W, self.d1x_C, self.d1x_E  (1D, coefs primer derivada en x, malla fina)
+  - self.d1y_S, self.d1y_C, self.d1y_N  (1D, coefs primer derivada en y, malla fina)
+  - self._vol_2d_flat  (flat array de volúmenes de celda para ponderar la media del RHS)
+  - self._compute_divergence_field()  (método que devuelve array 2D con div(u))
+  - self._aplicar_bc_presion_neumann()
+  - self.apply_ghost_cell_bc()
+  - self.reforzar_impermeabilidad()
+  - self.apply_boundaries(after_projection=True)
+  - self._anchor_pressure()
+
+
+================================================================================
+FIN DEL PROMPT
+================================================================================
