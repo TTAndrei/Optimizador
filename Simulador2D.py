@@ -1658,25 +1658,31 @@ class Mesh:
              self.d1y_S, self.d1y_C, self.d1y_N,
              cp.int32(nx), cp.int32(ny)))
 
-    def _compute_divergence_field(self):
+    def _compute_divergence_field(self, out=None):
         """
         Calcula el campo completo de divergencia del^2 u = du/dx + dv/dy.
         Usa stencil adaptativo cerca de sólidos para evitar gradientes explosivos.
         
+        Parámetros:
+            out: buffer opcional (ny,nx) float32 para evitar nuevas alocaciones.
+
         Retorna:
             cp.array: Campo de divergencia (ny, nx)
         """
         # Diferencias centrales estándar:
         # ∂u/∂x ≈ (u_{i,j+1} - u_{i,j-1}) / (2 Δx)
         # ∂v/∂y ≈ (v_{i+1,j} - v_{i-1,j}) / (2 Δy)
-        return self._compute_divergence_field_uv(self.u, self.v)
+        return self._compute_divergence_field_uv(self.u, self.v, out=out)
 
-    def _compute_divergence_field_uv(self, u, v):
+    def _compute_divergence_field_uv(self, u, v, out=None):
         """
         Divergencia ∇·(u,v) usando kernel CUDA fusionado.
         Reemplaza ~20 operaciones CuPy (boolean masks + fancy indexing) con 1 lanzamiento.
         """
-        div = cp.zeros_like(self.p, dtype=cp.float32)
+        if out is None:
+            div = cp.empty_like(self.p, dtype=cp.float32)
+        else:
+            div = out
         ny, nx = div.shape
         total = nx * ny
         block = 256
@@ -2094,7 +2100,12 @@ class Mesh:
                           max_outer=8, cycles_per_outer=5,
                           niveles_max=8, pre_suavizado=3, post_suavizado=3,
                           omega=1.15, verbose=False,
-                          modo_adaptativo=True):
+                          modo_adaptativo=True,
+                          guard_residual_every_outer=True,
+                          adaptive_outer0_cycles=False,
+                          apply_ibm_each_outer=True,
+                          rollback_on_nan=True,
+                          compute_div_after=True):
         """
         Proyección incompresible con defect-correction iterativo + multigrid.
         Smoother: Red-Black Gauss-Seidel SOR (CUDA kernel in-place).
@@ -2116,6 +2127,16 @@ class Mesh:
             pre_suavizado/post_suavizado: iteraciones GS-SOR por nivel
             omega: factor sobre-relajación (1.0-1.5, típico 1.1-1.2)
             modo_adaptativo: ajustar outers y ciclos según div
+            guard_residual_every_outer: valida estabilidad V-cycle en cada outer.
+                                      Si False, solo valida en outer=0 (más rápido).
+            adaptive_outer0_cycles: si True, aplica adaptación de cycles también
+                                    en outer=0 (más rápido en pasos cercanos a tol).
+            apply_ibm_each_outer: aplica Ghost-Cell e impermeabilidad tras cada outer.
+                                  Si False, se aplica solo al final (más rápido).
+            rollback_on_nan: guarda/restaura estado por outer para recuperación NaN.
+                             Si False, elimina copias extra por outer.
+            compute_div_after: calcula div_after exacto al final para reporte.
+                               Si False, usa estimación del último outer.
         """
         # ================================================================
         # Constantes y pre-cómputos
@@ -2321,10 +2342,15 @@ class Mesh:
         # ================================================================
         # Divergencia ANTES
         # ================================================================
-        div_before_field = self._compute_divergence_field()
-        _div_abs_before   = cp.abs(div_before_field[free])
-        div_mean_before   = float(cp.mean(_div_abs_before))        # L1-media (informativo)
-        div_max_before    = float(cp.max(_div_abs_before))          # L∞ (independiente del dominio)
+        div_work = cp.empty((ny, nx), dtype=cp.float32)
+        div_abs_work = cp.empty((ny, nx), dtype=cp.float32)
+        inv_n_free = 1.0 / max(float(n_free), 1.0)
+        div_before_field = self._compute_divergence_field(out=div_work)
+        cp.abs(div_before_field, out=div_abs_work)
+        # Nota: div=0 en sólidos/bordes por kernel; media normalizada por n_free
+        # reproduce la métrica anterior sin fancy indexing.
+        div_mean_before   = float(cp.sum(div_abs_work)) * inv_n_free
+        div_max_before    = float(cp.max(div_abs_work))             # L∞ (independiente del dominio)
         # Métrica efectiva: máxima entre media y valor típico local (percentil grueso).
         # Esto evita que un dominio grande diluya la media y engañe al modo adaptativo.
         div_eff_before    = max(div_mean_before, div_max_before * 0.01)
@@ -2336,7 +2362,7 @@ class Mesh:
         # Modo adaptativo: número de outers y ciclos
         # ================================================================
         if modo_adaptativo:
-            if div_eff_before < tol_div * 0.5:
+            if div_eff_before < tol_div * 0.8:
                 n_outer = 1
                 n_cycles = 1
                 maintenance_mode = True
@@ -2361,21 +2387,41 @@ class Mesh:
         # Bucle externo de defect-correction
         # ================================================================
         p_last = cp.zeros((ny, nx), dtype=cp.float32)   # presión del último outer
+        rhs = cp.zeros((ny, nx), dtype=cp.float32)
+        p_corr = cp.zeros((ny, nx), dtype=cp.float32)
+        rhs_flat_ref = rhs.ravel()
+        coef_eff = cp.float32(float(coef_f))
+        # Evitar alocaciones por outer en la columna de salida
+        u_out_save = cp.empty((ny,), dtype=cp.float32)
+        v_out_save = cp.empty((ny,), dtype=cp.float32)
         total_cycles = 0
         converged = False
         div_mean_current = div_mean_before
+        div_max_current = div_max_before
+        div_eff_current = div_eff_before
 
         # Estado inicial para recuperación ante NaN
-        u_initial = self.u.copy()
-        v_initial = self.v.copy()
+        if rollback_on_nan:
+            u_initial = self.u.copy()
+            v_initial = self.v.copy()
+        else:
+            u_initial = None
+            v_initial = None
 
         for outer in range(n_outer):
             # --- Divergencia del outer actual ---
-            div_field = self._compute_divergence_field()
-            _div_abs_cur     = cp.abs(div_field[free])
-            div_mean_current = float(cp.mean(_div_abs_cur))
-            div_max_current  = float(cp.max(_div_abs_cur))
-            div_eff_current  = max(div_mean_current, div_max_current * 0.01)
+            if outer == 0:
+                # Reutilizar la divergencia ya calculada antes del bucle.
+                div_field = div_before_field
+                div_mean_current = div_mean_before
+                div_max_current = div_max_before
+                div_eff_current = div_eff_before
+            else:
+                div_field = self._compute_divergence_field(out=div_work)
+                cp.abs(div_field, out=div_abs_work)
+                div_mean_current = float(cp.sum(div_abs_work)) * inv_n_free
+                div_max_current  = float(cp.max(div_abs_work))
+                div_eff_current  = max(div_mean_current, div_max_current * 0.01)
 
             # --- Criterio de convergencia (sólo divergencia) ---
             # NOTA: solo romper si ya se aplicó al menos 1 corrección (outer > 0).
@@ -2388,7 +2434,7 @@ class Mesh:
                 break
 
             # --- Ciclos adaptativos intra-outer ---
-            if modo_adaptativo and outer > 0:
+            if modo_adaptativo and (outer > 0 or adaptive_outer0_cycles):
                 ratio = div_mean_current / max(tol_div, 1e-30)
                 if ratio < 1.0:
                     cycles_this = 1
@@ -2400,7 +2446,7 @@ class Mesh:
                 cycles_this = n_cycles
 
             # --- RHS: (rho/dt) * div(u*) ---
-            rhs = cp.zeros((ny, nx), dtype=cp.float32)
+            rhs.fill(cp.float32(0.0))
             rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_field[1:-1, 1:-1]
 
             # Columna de salida (j=nx-2): la BC Neumann u[nx-1]=u[nx-2] hace que
@@ -2413,20 +2459,20 @@ class Mesh:
             # Compatibilidad Neumann: media ponderada por volumen = 0
             if not hay_dirichlet:
                 vol_flat = self._vol_2d_flat
-                rhs_flat = rhs.ravel()
-                vrs = cp.sum(rhs_flat[free_flat] * vol_flat[free_flat])
+                vrs = cp.sum(rhs_flat_ref[free_flat] * vol_flat[free_flat])
                 vt = cp.sum(vol_flat[free_flat])
                 if float(vt) > 0:
-                    rhs_flat[free_flat] -= vrs / vt
+                    rhs_flat_ref[free_flat] -= vrs / vt
 
             # --- Resolver Poisson: L * p_corr = rhs ---
-            p_corr = cp.zeros((ny, nx), dtype=cp.float32)
+            p_corr.fill(cp.float32(0.0))
             if hay_dirichlet:
                 p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
 
-            # Residuo inicial para detectar si el V-cycle diverge
-            rhs_flat_ref = rhs.ravel()
-            r_antes = _residual_norm(p_corr, rhs_flat_ref)
+            # Residuo para detectar inestabilidad del V-cycle
+            do_guard_check = guard_residual_every_outer or (outer == 0)
+            if do_guard_check:
+                r_antes = _residual_norm(p_corr, rhs_flat_ref)
 
             for cyc_i in range(cycles_this):
                 _v_cycle(p_corr, rhs, _dbg=(verbose and outer == 0 and cyc_i < 2))
@@ -2434,17 +2480,18 @@ class Mesh:
 
             # Seguridad: si el V-cycle amplificó el residuo de Poisson,
             # descartamos y usamos GS solo en nivel fino con suficientes sweeps
-            r_despues = _residual_norm(p_corr, rhs_flat_ref)
-            if r_despues > r_antes * 1.5:
-                if verbose:
-                    print(f"  [MG] V-cycle diverge ({r_antes:.3e}→{r_despues:.3e}): usando GS fino")
-                p_corr[:] = 0.0
-                if hay_dirichlet:
-                    p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
-                # 300 sweeps: factor reducción ~0.98^300 ≈ 0.002 (99.8%)
-                gs_sweeps = max(300, cycles_this * (pre_suavizado + post_suavizado + 50))
-                _smooth(p_corr, rhs, 0, gs_sweeps)
-                _aplicar_bc_mg(p_corr, 0)
+            if do_guard_check:
+                r_despues = _residual_norm(p_corr, rhs_flat_ref)
+                if r_despues > r_antes * 1.5:
+                    if verbose:
+                        print(f"  [MG] V-cycle diverge ({r_antes:.3e}→{r_despues:.3e}): usando GS fino")
+                    p_corr[:] = 0.0
+                    if hay_dirichlet:
+                        p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
+                    # 300 sweeps: factor reducción ~0.98^300 ≈ 0.002 (99.8%)
+                    gs_sweeps = max(300, cycles_this * (pre_suavizado + post_suavizado + 50))
+                    _smooth(p_corr, rhs, 0, gs_sweeps)
+                    _aplicar_bc_mg(p_corr, 0)
 
             if hay_dirichlet:
                 p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
@@ -2460,9 +2507,8 @@ class Mesh:
             # post-procesado IBM (que reintroduce divergencia en la interfaz y haría
             # rechazar correcciones válidas). La corrección se aplica siempre.
             # Guardar columna de salida: no aplicamos corrección allí (ver rhs[:,-2]=0)
-            u_out_save = self.u[:, -2].copy()
-            v_out_save = self.v[:, -2].copy()
-            coef_eff = cp.float32(float(coef_f))
+            u_out_save[:] = self.u[:, -2]
+            v_out_save[:] = self.v[:, -2]
             vc_kernel(
                 (grid_k,), (block_sz,),
                 (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
@@ -2474,28 +2520,32 @@ class Mesh:
             self.u[:, -2] = u_out_save
             self.v[:, -2] = v_out_save
 
-            self.apply_ghost_cell_bc()
-            self.reforzar_impermeabilidad()
+            if apply_ibm_each_outer:
+                self.apply_ghost_cell_bc()
+                self.reforzar_impermeabilidad()
 
             # Protección NaN: revertir al estado inicial y salir
             if bool(cp.isnan(self.u).any() or cp.isnan(self.v).any()):
-                self.u[:] = u_initial
-                self.v[:] = v_initial
+                if rollback_on_nan and u_initial is not None:
+                    self.u[:] = u_initial
+                    self.v[:] = v_initial
                 if verbose:
                     print(f"[MG] NaN outer {outer+1}, revertido")
                 break
 
-            p_last = p_corr
+            p_last[:] = p_corr
 
             if verbose:
-                div_log = float(cp.sum(cp.abs(
-                    self._compute_divergence_field()[free]))) / max(n_free, 1.0)
+                div_tmp = self._compute_divergence_field(out=div_work)
+                cp.abs(div_tmp, out=div_abs_work)
+                div_log = float(cp.sum(div_abs_work)) * inv_n_free
                 print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this} V-cyc): "
                       f"div={div_log:.6e}")
 
             # Guardar estado para la siguiente iteración
-            u_initial[:] = self.u
-            v_initial[:] = self.v
+            if rollback_on_nan and u_initial is not None:
+                u_initial[:] = self.u
+                v_initial[:] = self.v
 
         # ================================================================
         # Finalización
@@ -2517,11 +2567,17 @@ class Mesh:
             except Exception:
                 pass
 
-        div_after_field = self._compute_divergence_field()
-        _div_abs_after = cp.abs(div_after_field[free])
-        div_mean_after = float(cp.mean(_div_abs_after))
-        div_max_after  = float(cp.max(_div_abs_after))
-        div_eff_after  = max(div_mean_after, div_max_after * 0.01)
+        if compute_div_after:
+            div_after_field = self._compute_divergence_field(out=div_work)
+            cp.abs(div_after_field, out=div_abs_work)
+            div_mean_after = float(cp.sum(div_abs_work)) * inv_n_free
+            div_max_after  = float(cp.max(div_abs_work))
+            div_eff_after  = max(div_mean_after, div_max_after * 0.01)
+        else:
+            # Estimación rápida con la última divergencia evaluada en el bucle.
+            div_mean_after = div_mean_current
+            div_max_after = div_max_current
+            div_eff_after = div_eff_current
 
         if verbose:
             print(f"[MG] div_media: {div_mean_before:.4e}→{div_mean_after:.4e}  "
@@ -3969,6 +4025,19 @@ def main(
     # Parámetros de simulación
     guardado=50,
     iteraciones=2000,
+
+    # Tuning de proyección multigrid (por defecto conserva comportamiento actual)
+    mg_max_outer=8,
+    mg_cycles_per_outer=5,
+    mg_pre_suavizado=3,
+    mg_post_suavizado=3,
+    mg_guard_residual_every_outer=True,
+    mg_adaptive_outer0_cycles=False,
+    mg_apply_ibm_each_outer=True,
+    mg_rollback_on_nan=True,
+    mg_compute_div_after=True,
+    mg_modo_rapido=False,
+    mg_modo_turbo=False,
     
     # Opciones de visualización y guardado
     save_frames=False,
@@ -3986,7 +4055,10 @@ def main(
     live_view=False,
     
     # Visualización de malla
-    mostrar_malla=False
+    mostrar_malla=False,
+
+    # Diagnóstico detallado de spikes (costoso; usar solo al depurar)
+    debug_spikes=False
 ):
     # Procesar valores por defecto
     if dy_min is None:
@@ -3996,6 +4068,32 @@ def main(
     
     # Calcular viscosidad dinámica
     mu = rho * nu
+
+    # Perfil rápido opcional de MG (sin tocar defaults del solver base)
+    if mg_modo_rapido:
+        mg_max_outer = min(mg_max_outer, 5)
+        mg_cycles_per_outer = min(mg_cycles_per_outer, 4)
+        mg_pre_suavizado = min(mg_pre_suavizado, 2)
+        mg_post_suavizado = min(mg_post_suavizado, 2)
+        mg_guard_residual_every_outer = False
+        mg_adaptive_outer0_cycles = True
+        mg_apply_ibm_each_outer = False
+        mg_rollback_on_nan = False
+        mg_compute_div_after = False
+        print("[MG-fast] activo: max_outer<=5, cycles<=4, pre/post<=2, guard outer0, adaptive outer0 ON, IBM por outer OFF, rollback OFF")
+
+    # Perfil turbo opcional: más agresivo (prioriza rendimiento)
+    if mg_modo_turbo:
+        mg_max_outer = min(mg_max_outer, 4)
+        mg_cycles_per_outer = min(mg_cycles_per_outer, 3)
+        mg_pre_suavizado = min(mg_pre_suavizado, 1)
+        mg_post_suavizado = min(mg_post_suavizado, 1)
+        mg_guard_residual_every_outer = False
+        mg_adaptive_outer0_cycles = True
+        mg_apply_ibm_each_outer = False
+        mg_rollback_on_nan = False
+        mg_compute_div_after = False
+        print("[MG-turbo] activo: max_outer<=4, cycles<=3, pre/post<=1, guard outer0, IBM por outer OFF, rollback OFF")
 
     # ============================================================
     # GENERAR MALLA VARIABLE (stretching 1D)
@@ -4272,62 +4370,67 @@ def main(
     U_ref = float(np.sqrt(v0x**2 + v0y**2))
     vel_clamp_max = 50.0 * max(U_ref, 1.0)
 
-    # ── Diagnóstico de blowup ─────────────────────────────────────────────────
-    # Umbral a partir del cual se activa el diagnóstico detallado (3× libre)
-    _DIAG_THRESHOLD = 3.0 * max(U_ref, 1.0)
-    _diag_triggered = False   # evitar inundación de prints
+    # ── Diagnóstico de blowup (opcional; coste alto en mallas grandes) ──────
+    if debug_spikes:
+        # Umbral a partir del cual se activa el diagnóstico detallado (3× libre)
+        _DIAG_THRESHOLD = 3.0 * max(U_ref, 1.0)
+        _diag_triggered = False   # evitar inundación de prints
 
-    def _diag_check(etapa):
-        """Imprime info detallada si la velocidad supera _DIAG_THRESHOLD."""
-        nonlocal _diag_triggered
-        speed = cp.sqrt(mesh_gruesa.u**2 + mesh_gruesa.v**2)
-        fluid_mask = ~mesh_gruesa.solid
-        if not cp.any(fluid_mask):
+        def _diag_check(etapa):
+            """Imprime info detallada si la velocidad supera _DIAG_THRESHOLD."""
+            nonlocal _diag_triggered
+            speed = cp.sqrt(mesh_gruesa.u**2 + mesh_gruesa.v**2)
+            fluid_mask = ~mesh_gruesa.solid
+            if not cp.any(fluid_mask):
+                return
+            speed_fluid = speed[fluid_mask]
+            vel_max = float(cp.max(speed_fluid))
+            if vel_max <= _DIAG_THRESHOLD:
+                return
+
+            # Localizar celda con velocidad máxima (en toda la malla, no solo fluido)
+            idx_max = int(cp.argmax(speed))
+            j_max = idx_max % mesh_gruesa.nx
+            i_max = idx_max // mesh_gruesa.nx
+            x_phys = float(mesh_gruesa.X_1d[j_max])
+            y_phys = float(mesh_gruesa.Y_1d[i_max])
+            es_solido   = bool(mesh_gruesa.solid[i_max, j_max])
+            es_ghost    = (mesh_gruesa._ghost_cell_ready and
+                           bool(mesh_gruesa._ghost_mask[i_max, j_max]))
+            u_val = float(mesh_gruesa.u[i_max, j_max])
+            v_val = float(mesh_gruesa.v[i_max, j_max])
+
+            # Vecinas de la celda máxima
+            ny_m, nx_m = mesh_gruesa.solid.shape
+            vecinas = ""
+            for di, dj in [(-1,0),(1,0),(0,-1),(0,1)]:
+                ii, jj = i_max+di, j_max+dj
+                if 0 <= ii < ny_m and 0 <= jj < nx_m:
+                    s = "S" if mesh_gruesa.solid[ii,jj] else "F"
+                    g = "G" if (mesh_gruesa._ghost_cell_ready and mesh_gruesa._ghost_mask[ii,jj]) else ""
+                    vecinas += f"({di:+d},{dj:+d}):{s}{g}={mesh_gruesa.u[ii,jj]:.2f} "
+
+            tipo = "SÓLIDO/GHOST" if es_solido else "FLUIDO"
+            if es_ghost:
+                tipo = "GHOST"
+            print(f"\n{'─'*65}")
+            print(f"⚠️  SPIKE detectado tras [{etapa}]  vel_max={vel_max:.2f} m/s  (umbral={_DIAG_THRESHOLD:.1f})")
+            print(f"   Celda ({i_max},{j_max})  físico=({x_phys:.4f},{y_phys:.4f})  tipo={tipo}")
+            print(f"   u={u_val:.4f}  v={v_val:.4f}")
+            print(f"   Vecinas: {vecinas}")
+            if not _diag_triggered:
+                # Primera vez: imprimir estadísticas globales de ghost cells
+                if mesh_gruesa._ghost_cell_ready:
+                    print(f"   Ghost cells totales: {mesh_gruesa._n_ghost}")
+                    if hasattr(mesh_gruesa, '_ghost_direct_zero'):
+                        n_dz = int(cp.sum(mesh_gruesa._ghost_direct_zero))
+                        print(f"   Ghost 'direct-zero': {n_dz}")
+                _diag_triggered = True
+            print(f"{'─'*65}")
+    else:
+        # Sin coste extra por iteración cuando no se está depurando.
+        def _diag_check(_etapa):
             return
-        speed_fluid = speed[fluid_mask]
-        vel_max = float(cp.max(speed_fluid))
-        if vel_max <= _DIAG_THRESHOLD:
-            return
-
-        # Localizar celda con velocidad máxima (en toda la malla, no solo fluido)
-        idx_max = int(cp.argmax(speed))
-        j_max = idx_max % mesh_gruesa.nx
-        i_max = idx_max // mesh_gruesa.nx
-        x_phys = float(mesh_gruesa.X_1d[j_max])
-        y_phys = float(mesh_gruesa.Y_1d[i_max])
-        es_solido   = bool(mesh_gruesa.solid[i_max, j_max])
-        es_ghost    = (mesh_gruesa._ghost_cell_ready and
-                       bool(mesh_gruesa._ghost_mask[i_max, j_max]))
-        u_val = float(mesh_gruesa.u[i_max, j_max])
-        v_val = float(mesh_gruesa.v[i_max, j_max])
-
-        # Vecinas de la celda máxima
-        ny_m, nx_m = mesh_gruesa.solid.shape
-        vecinas = ""
-        for di, dj in [(-1,0),(1,0),(0,-1),(0,1)]:
-            ii, jj = i_max+di, j_max+dj
-            if 0 <= ii < ny_m and 0 <= jj < nx_m:
-                s = "S" if mesh_gruesa.solid[ii,jj] else "F"
-                g = "G" if (mesh_gruesa._ghost_cell_ready and mesh_gruesa._ghost_mask[ii,jj]) else ""
-                vecinas += f"({di:+d},{dj:+d}):{s}{g}={mesh_gruesa.u[ii,jj]:.2f} "
-
-        tipo = "SÓLIDO/GHOST" if es_solido else "FLUIDO"
-        if es_ghost:
-            tipo = "GHOST"
-        print(f"\n{'─'*65}")
-        print(f"⚠️  SPIKE detectado tras [{etapa}]  vel_max={vel_max:.2f} m/s  (umbral={_DIAG_THRESHOLD:.1f})")
-        print(f"   Celda ({i_max},{j_max})  físico=({x_phys:.4f},{y_phys:.4f})  tipo={tipo}")
-        print(f"   u={u_val:.4f}  v={v_val:.4f}")
-        print(f"   Vecinas: {vecinas}")
-        if not _diag_triggered:
-            # Primera vez: imprimir estadísticas globales de ghost cells
-            if mesh_gruesa._ghost_cell_ready:
-                print(f"   Ghost cells totales: {mesh_gruesa._n_ghost}")
-                if hasattr(mesh_gruesa, '_ghost_direct_zero'):
-                    n_dz = int(cp.sum(mesh_gruesa._ghost_direct_zero))
-                    print(f"   Ghost 'direct-zero': {n_dz}")
-            _diag_triggered = True
-        print(f"{'─'*65}")
     
     # ============================================================
     # BUCLE PRINCIPAL: MALLA SIMPLE (SOLO GRUESA)
@@ -4404,7 +4507,20 @@ def main(
         
         # Proyección
         t0 = time.time()
-        mg_info = mesh_gruesa.project_multigrid(rho,dt_use,tol_div=divergencia, verbose=False)
+        mg_info = mesh_gruesa.project_multigrid(
+            rho, dt_use,
+            tol_div=divergencia,
+            max_outer=mg_max_outer,
+            cycles_per_outer=mg_cycles_per_outer,
+            pre_suavizado=mg_pre_suavizado,
+            post_suavizado=mg_post_suavizado,
+            guard_residual_every_outer=mg_guard_residual_every_outer,
+            adaptive_outer0_cycles=mg_adaptive_outer0_cycles,
+            apply_ibm_each_outer=mg_apply_ibm_each_outer,
+            rollback_on_nan=mg_rollback_on_nan,
+            compute_div_after=mg_compute_div_after,
+            verbose=False
+        )
         #mg_info = mesh_gruesa.project_cg(rho,dt_use,tol_div=divergencia, verbose=False)
         
         
@@ -4792,6 +4908,18 @@ def main(
         print(f"   Componente más costoso: {max_nombre}")
         print(f"   Consume: {max_tiempo:.2f} s ({max_pct:.1f}% del tiempo total)")
         print(f"   Tiempo promedio por paso: {max_tiempo/num_pasos:.4f} s")
+
+        # Estadística de ciclos MG realmente usados (útil para tuning)
+        try:
+            cycles_np = cp.asnumpy(mesh_gruesa.mg_cycles_vector[:num_pasos]).astype(np.float32)
+            cycles_np = cycles_np[cycles_np > 0]
+            if cycles_np.size > 0:
+                c_mean = float(np.mean(cycles_np))
+                c_p95  = float(np.percentile(cycles_np, 95))
+                c_max  = float(np.max(cycles_np))
+                print(f"   Ciclos MG por paso: media={c_mean:.2f}  p95={c_p95:.2f}  max={c_max:.0f}")
+        except Exception:
+            pass
     
     print("="*70 + "\n")
     
@@ -4849,7 +4977,7 @@ if __name__ == "__main__":
         Ly=8,  
         cx=2,
         CFL=0.5,
-        alpha_deg=5,
+        alpha_deg=0,
         polar_descarte=0.3,
         iteraciones=10000,
         divergencia=1e-1,
@@ -4869,5 +4997,6 @@ if __name__ == "__main__":
         usar_wale=False,
         stop_on_convergence=False,
         live_view=True,
-        mostrar_malla=True
+        mostrar_malla=True,
+        mg_modo_rapido=True,
     )
