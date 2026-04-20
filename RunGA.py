@@ -85,8 +85,10 @@ CONFIG = {
     'te_espesor_min_absoluto': 3e-4,     # Cota inferior absoluta para espesor TE
     'te_espesor_rel_min': 0.65,          # Cota inferior relativa al espesor TE base
     'te_espesor_rel_max': 3.50,          # Cota superior relativa al espesor TE base
-    'le_radio_factor_min': 0.45,         # Radio LE mínimo relativo al perfil base
+    'te_validacion_tol': 1e-9,           # Tolerancia numérica para validación de TE
+    'le_radio_factor_min': 0.40,         # Radio LE mínimo relativo al perfil base
     'le_radio_min_absoluto': 2e-4,       # Radio LE mínimo absoluto
+    'le_puntos_preservar': 5,            # Puntos por lado del LE a preservar parcialmente
     'reportar_diagnostico_geometria': True,
 
     # --- Simulación CFD ---
@@ -645,6 +647,20 @@ def proyectar_perfil_parametrico(genes, le_idx, restricciones, config, perturbar
     resultado[le_idx:, 1] = y_lo_inc
     resultado[le_idx, 1] = y_le
 
+    # Preserva suavidad/circularidad local del LE mezclando con geometría original.
+    n_preservar = max(1, int(config.get('le_puntos_preservar', 5)))
+    i_ini = max(0, le_idx - n_preservar)
+    i_fin = min(len(resultado) - 1, le_idx + n_preservar)
+    denom = float(max(1, n_preservar))
+    for i in range(i_ini, i_fin + 1):
+        dist = abs(i - le_idx) / denom
+        # Peso 1.0 en LE, decrece suavemente hacia el borde de la ventana.
+        w = (1.0 - min(1.0, dist)) ** 2
+        resultado[i, 1] = (1.0 - w) * resultado[i, 1] + w * genes[i, 1]
+
+    # El punto LE queda exactamente fijo.
+    resultado[le_idx, :] = genes[le_idx, :]
+
     # TE recto/romo con x fijo y camber libre.
     x_te = float(np.clip(resultado[0, 0], x_common[0], x_common[-1]))
     camber_te = float(np.interp(x_te, x_common, camber))
@@ -683,7 +699,9 @@ def validar_geometria_perfil(puntos, le_idx, restricciones, config):
         return False, {'motivo': 'lower_no_monotona'}
 
     te_gap = abs(float(puntos[0, 1] - puntos[-1, 1]))
-    if te_gap < restricciones['te_gap_min'] or te_gap > restricciones['te_gap_max']:
+    te_tol = float(config.get('te_validacion_tol', 1e-9))
+    if (te_gap < (restricciones['te_gap_min'] - te_tol)
+            or te_gap > (restricciones['te_gap_max'] + te_tol)):
         return False, {'motivo': 'te_fuera_rango', 'te_gap': te_gap}
 
     x_common, _, espesor = descomponer_camber_espesor(
@@ -712,6 +730,42 @@ def validar_geometria_perfil(puntos, le_idx, restricciones, config):
         'espesor_min': espesor_min,
         'radio_le': float(radio_le),
     }
+
+
+def reparar_leading_edge_agudo(genes_candidato, genes_referencia, le_idx,
+                               restricciones, config):
+    """
+    Intenta reparar un LE agudo mezclando localmente con una referencia suave.
+    """
+    candidato = genes_candidato.copy()
+    ref = genes_referencia
+    n = len(candidato)
+    n_preservar = max(1, int(config.get('le_puntos_preservar', 5)))
+    i_ini = max(0, le_idx - n_preservar)
+    i_fin = min(n - 1, le_idx + n_preservar)
+    denom = float(max(1, n_preservar))
+
+    # Escala de mezcla creciente para forzar radios LE más suaves.
+    for alpha in (0.20, 0.35, 0.50, 0.65, 0.80):
+        reparado = candidato.copy()
+        for i in range(i_ini, i_fin + 1):
+            dist = abs(i - le_idx) / denom
+            w = alpha * ((1.0 - min(1.0, dist)) ** 2)
+            reparado[i, 1] = (1.0 - w) * reparado[i, 1] + w * ref[i, 1]
+
+        reparado[le_idx, :] = ref[le_idx, :]
+        ok, diag = validar_geometria_perfil(
+            reparado, le_idx, restricciones, config
+        )
+        if ok:
+            return reparado, True, diag
+
+        candidato = reparado
+
+    ok_final, diag_final = validar_geometria_perfil(
+        candidato, le_idx, restricciones, config
+    )
+    return candidato, ok_final, diag_final
 
 
 # ==========================================
@@ -844,6 +898,26 @@ def mutar_y_validar_hijo(genes_hijo, le_idx, te_indices, restricciones, config,
         )
         if valido:
             return genes_param, True, 'parametrica', diag
+
+        if isinstance(diag, dict) and diag.get('motivo') == 'le_agudo':
+            genes_le_rep, ok_le_rep, diag_le_rep = reparar_leading_edge_agudo(
+                genes_param, genes_hijo, le_idx, restricciones, config
+            )
+            if ok_le_rep:
+                return genes_le_rep, True, 'le_reparada', diag_le_rep
+            genes_param = genes_le_rep
+            diag = diag_le_rep
+
+        # Intento de reparación: reproyección sin perturbaciones adicionales.
+        genes_reparado = proyectar_perfil_parametrico(
+            genes_param, le_idx, restricciones, config,
+            perturbar=False
+        )
+        valido_rep, diag_rep = validar_geometria_perfil(
+            genes_reparado, le_idx, restricciones, config
+        )
+        if valido_rep:
+            return genes_reparado, True, 'parametrica_reparada', diag_rep
 
         if config.get('usar_legacy_fallback', False):
             genes_legacy = genes_hijo.copy()
@@ -1376,6 +1450,7 @@ def main():
     poblacion = []
     descartes_geom_ini = 0
     fallback_legacy_ini = 0
+    reparaciones_param_ini = 0
     intentos_ini = 0
     max_intentos_ini = max(
         CONFIG['poblacion_tamano'] * 4,
@@ -1401,6 +1476,8 @@ def main():
 
         if modo_usado == 'legacy_fallback':
             fallback_legacy_ini += 1
+        elif modo_usado in ('parametrica_reparada', 'le_reparada'):
+            reparaciones_param_ini += 1
 
         poblacion.append(Individuo(genes_nuevo, header_base))
 
@@ -1415,6 +1492,8 @@ def main():
     if CONFIG.get('reportar_diagnostico_geometria', True):
         print(f"   Iniciales válidos: {len(poblacion)}")
         print(f"   Iniciales descartados por geometría: {descartes_geom_ini}")
+        if reparaciones_param_ini > 0:
+            print(f"   Iniciales reparados (paramétrica): {reparaciones_param_ini}")
         if fallback_legacy_ini > 0:
             print(f"   Iniciales usando fallback legacy: {fallback_legacy_ini}")
 
@@ -1540,6 +1619,7 @@ def main():
         MAX_INTENTOS = max(80, int(CONFIG.get('max_intentos_geometria', 120)))
         descartes_geom_repro = 0
         fallback_legacy_repro = 0
+        reparaciones_param_repro = 0
 
         while len(nueva_poblacion) < CONFIG['poblacion_tamano']:
             if PARADA_SOLICITADA:
@@ -1585,6 +1665,8 @@ def main():
 
             if modo_usado == 'legacy_fallback':
                 fallback_legacy_repro += 1
+            elif modo_usado in ('parametrica_reparada', 'le_reparada'):
+                reparaciones_param_repro += 1
 
             hijo = Individuo(genes_hijo, header_base)
 
@@ -1601,11 +1683,14 @@ def main():
         if CONFIG.get('reportar_diagnostico_geometria', True):
             if descartes_geom_repro > 0:
                 print(f"   Reproducción - descartes geométricos: {descartes_geom_repro}")
+            if reparaciones_param_repro > 0:
+                print(f"   Reproducción - reparados (paramétrica): {reparaciones_param_repro}")
             if fallback_legacy_repro > 0:
                 print(f"   Reproducción - fallback legacy: {fallback_legacy_repro}")
 
         if historial_fitness:
             historial_fitness[-1]['descartados_geom_repro'] = descartes_geom_repro
+            historial_fitness[-1]['reparados_param_repro'] = reparaciones_param_repro
             historial_fitness[-1]['fallback_legacy_repro'] = fallback_legacy_repro
 
         poblacion = nueva_poblacion
