@@ -69,6 +69,26 @@ CONFIG = {
     'prob_mutar_trailing_edge': 0.3,    # Probabilidad de mover el trailing edge
     'amplitud_trailing_edge': 0.002,    # Desviación estándar del TE en Y
 
+    # --- Mutación Paramétrica (Camber/Espesor) ---
+    #   Muta funciones suaves de camber c(x) y espesor t(x), luego reconstruye
+    #   extrados/intrados con restricciones geométricas físicas.
+    'modo_mutacion': 'parametrica',      # 'parametrica' | 'legacy'
+    'usar_legacy_fallback': True,        # Si falla la vía paramétrica, probar legacy
+    'max_intentos_geometria': 120,       # Reintentos para generar un hijo válido
+    'n_control_mutacion': 7,             # Nodos de control para perturbaciones suaves
+    'camber_mut_std': 0.0035,            # Intensidad de mutación del camber
+    'espesor_mut_std': 0.0045,           # Intensidad de mutación del espesor
+    'te_camber_shift_std': 0.0015,       # Desplazamiento de camber concentrado en TE
+    'te_espesor_shift_std': 0.0012,      # Ajuste extra del espesor en TE
+    'le_proteccion_x': 0.06,             # Zona [0, x] con mutación atenuada en LE
+    'espesor_min_global': 2e-4,          # Espesor mínimo global (excepto LE)
+    'te_espesor_min_absoluto': 3e-4,     # Cota inferior absoluta para espesor TE
+    'te_espesor_rel_min': 0.65,          # Cota inferior relativa al espesor TE base
+    'te_espesor_rel_max': 3.50,          # Cota superior relativa al espesor TE base
+    'le_radio_factor_min': 0.45,         # Radio LE mínimo relativo al perfil base
+    'le_radio_min_absoluto': 2e-4,       # Radio LE mínimo absoluto
+    'reportar_diagnostico_geometria': True,
+
     # --- Simulación CFD ---
     'simulacion_iteraciones': 3000,     # Iteraciones por simulación CFD
     'v0x': 5.0,                         # Velocidad del flujo libre (m/s)
@@ -403,6 +423,297 @@ def suavizar_perfil(puntos, le_idx, n_pasadas=2):
     return resultado
 
 
+def _smoothstep(z):
+    """Interpolación suave en [0, 1] para crear envolventes sin quiebres."""
+    z = np.clip(z, 0.0, 1.0)
+    return z * z * (3.0 - 2.0 * z)
+
+
+def _asegurar_x_estrictamente_creciente(x):
+    """Evita problemas numéricos en interpolación si hay empates de X."""
+    x_out = np.asarray(x, dtype=float).copy()
+    if len(x_out) < 2:
+        return x_out
+
+    eps = 1e-10
+    for i in range(1, len(x_out)):
+        if x_out[i] <= x_out[i - 1]:
+            x_out[i] = x_out[i - 1] + eps
+    return x_out
+
+
+def _suavizar_vector_1d(vec, n_pasadas=2):
+    """Suavizado laplaciano 1D liviano para funciones c(x) y t(x)."""
+    out = np.asarray(vec, dtype=float).copy()
+    if len(out) < 3:
+        return out
+
+    for _ in range(max(1, int(n_pasadas))):
+        nuevo = out.copy()
+        nuevo[1:-1] = (out[:-2] + 2.0 * out[1:-1] + out[2:]) / 4.0
+        out = nuevo
+    return out
+
+
+def descomponer_camber_espesor(puntos, le_idx, n_muestras=None):
+    """
+    Descompone un perfil (orden Selig) en camber c(x) y espesor t(x).
+    """
+    n = len(puntos)
+    if n < 4 or le_idx <= 0 or le_idx >= n - 1:
+        return None, None, None
+
+    upper = puntos[:le_idx + 1]      # TE superior -> LE
+    lower = puntos[le_idx:]          # LE -> TE inferior
+
+    upper_x_inc = _asegurar_x_estrictamente_creciente(upper[::-1, 0])
+    upper_y_inc = np.asarray(upper[::-1, 1], dtype=float)
+    lower_x_inc = _asegurar_x_estrictamente_creciente(lower[:, 0])
+    lower_y_inc = np.asarray(lower[:, 1], dtype=float)
+
+    if n_muestras is None:
+        n_muestras = max(len(upper_x_inc), len(lower_x_inc))
+
+    x_ini = max(float(upper_x_inc[0]), float(lower_x_inc[0]))
+    x_fin = min(float(upper_x_inc[-1]), float(lower_x_inc[-1]))
+    if x_fin <= x_ini + 1e-12:
+        return None, None, None
+
+    x_common = np.linspace(x_ini, x_fin, int(n_muestras))
+    y_up = np.interp(x_common, upper_x_inc, upper_y_inc)
+    y_lo = np.interp(x_common, lower_x_inc, lower_y_inc)
+
+    camber = 0.5 * (y_up + y_lo)
+    espesor = np.maximum(y_up - y_lo, 0.0)
+    espesor[0] = 0.0  # LE cerrado
+
+    return x_common, camber, espesor
+
+
+def estimar_radio_le(puntos, le_idx):
+    """Estima radio local de LE usando el circuncírculo de 3 puntos."""
+    if le_idx <= 0 or le_idx >= len(puntos) - 1:
+        return np.inf
+
+    p0 = np.asarray(puntos[le_idx - 1], dtype=float)
+    p1 = np.asarray(puntos[le_idx], dtype=float)
+    p2 = np.asarray(puntos[le_idx + 1], dtype=float)
+
+    a = np.linalg.norm(p1 - p0)
+    b = np.linalg.norm(p2 - p1)
+    c = np.linalg.norm(p2 - p0)
+    area2 = abs(np.cross(p1 - p0, p2 - p0))  # 2 * área
+
+    if area2 < 1e-12:
+        return np.inf
+
+    return float((a * b * c) / (2.0 * area2))
+
+
+def construir_restricciones_geometricas(perfil_base, le_idx, config):
+    """Deriva umbrales geométricos automáticos a partir del perfil base."""
+    te_base = abs(float(perfil_base[0, 1] - perfil_base[-1, 1]))
+    radio_le_base = estimar_radio_le(perfil_base, le_idx)
+    if not np.isfinite(radio_le_base):
+        radio_le_base = 0.001
+
+    te_min = max(
+        float(config.get('te_espesor_min_absoluto', 0.0)),
+        te_base * float(config.get('te_espesor_rel_min', 1.0))
+    )
+    te_max = max(
+        te_min * 1.25,
+        te_base * float(config.get('te_espesor_rel_max', 1.0))
+    )
+    radio_le_min = max(
+        float(config.get('le_radio_min_absoluto', 0.0)),
+        radio_le_base * float(config.get('le_radio_factor_min', 1.0))
+    )
+
+    n_muestras = max(le_idx + 1, len(perfil_base) - le_idx)
+
+    return {
+        'te_base': te_base,
+        'te_gap_min': float(te_min),
+        'te_gap_max': float(te_max),
+        'le_radio_base': float(radio_le_base),
+        'le_radius_min': float(radio_le_min),
+        'n_muestras': int(n_muestras),
+    }
+
+
+def _perturbacion_suave(x_common, std, n_control, le_proteccion_x):
+    """Genera perturbación suave con nodos de control e interpolación lineal."""
+    x_common = np.asarray(x_common, dtype=float)
+    if len(x_common) < 2 or std <= 0:
+        return np.zeros_like(x_common)
+
+    n_ctrl = max(4, int(n_control))
+    ctrl_x = np.linspace(x_common[0], x_common[-1], n_ctrl)
+    ctrl_y = np.random.normal(0.0, std, size=n_ctrl)
+    ctrl_y[0] = 0.0
+    if n_ctrl > 1:
+        ctrl_y[1] *= 0.35
+
+    perturb = np.interp(x_common, ctrl_x, ctrl_y)
+
+    x_norm = (x_common - x_common[0]) / max(1e-12, x_common[-1] - x_common[0])
+    le_zone = max(0.0, min(float(le_proteccion_x), 0.40))
+    if le_zone > 0:
+        escala = _smoothstep((x_norm - le_zone) / max(1e-12, 1.0 - le_zone))
+        perturb *= escala
+
+    return perturb
+
+
+def proyectar_perfil_parametrico(genes, le_idx, restricciones, config, perturbar=True):
+    """
+    Proyecta un perfil al espacio camber/espesor y aplica restricciones duras.
+    Si perturbar=True, además aplica mutaciones suaves en ese espacio.
+    """
+    x_common, camber, espesor = descomponer_camber_espesor(
+        genes, le_idx, n_muestras=restricciones['n_muestras']
+    )
+    if x_common is None:
+        return genes.copy()
+
+    camber_ref = camber.copy()
+    espesor_ref = espesor.copy()
+    x_norm = (x_common - x_common[0]) / max(1e-12, x_common[-1] - x_common[0])
+
+    if perturbar:
+        camber += _perturbacion_suave(
+            x_common,
+            std=float(config.get('camber_mut_std', 0.0)),
+            n_control=config.get('n_control_mutacion', 6),
+            le_proteccion_x=config.get('le_proteccion_x', 0.05)
+        )
+        espesor += _perturbacion_suave(
+            x_common,
+            std=float(config.get('espesor_mut_std', 0.0)),
+            n_control=config.get('n_control_mutacion', 6),
+            le_proteccion_x=config.get('le_proteccion_x', 0.05)
+        )
+
+        # Permite mover TE fuera de y=0 mediante una variación de camber hacia TE.
+        te_shift = random.gauss(0.0, float(config.get('te_camber_shift_std', 0.0)))
+        camber += te_shift * (x_norm ** 2)
+
+    # Forzar espesor de TE dentro de rango físico configurable.
+    te_obj = float(espesor[-1])
+    if perturbar:
+        te_obj += random.gauss(0.0, float(config.get('te_espesor_shift_std', 0.0)))
+    te_obj = float(np.clip(te_obj, restricciones['te_gap_min'], restricciones['te_gap_max']))
+
+    w_te = _smoothstep((x_norm - 0.82) / 0.18)
+    espesor += (te_obj - espesor[-1]) * w_te
+
+    # Mantener una zona de nariz suave anclada al perfil de referencia local.
+    le_zone = max(1e-6, float(config.get('le_proteccion_x', 0.05)))
+    w_le = 1.0 - _smoothstep(x_norm / le_zone)
+    camber = camber * (1.0 - w_le) + camber_ref * w_le
+    espesor = espesor * (1.0 - w_le) + espesor_ref * w_le
+
+    camber = _suavizar_vector_1d(camber, n_pasadas=2)
+    espesor = _suavizar_vector_1d(espesor, n_pasadas=2)
+
+    # Espesor mínimo global (excepto LE), para evitar cruces extrados/intrados.
+    esp_min = float(config.get('espesor_min_global', 0.0))
+    piso = esp_min * _smoothstep(x_norm / le_zone)
+    piso[0] = 0.0
+    espesor = np.maximum(espesor, piso)
+    espesor[0] = 0.0
+    espesor[-1] = te_obj
+
+    y_up_common = camber + 0.5 * espesor
+    y_lo_common = camber - 0.5 * espesor
+
+    upper = genes[:le_idx + 1]   # TE -> LE
+    lower = genes[le_idx:]       # LE -> TE
+    upper_x_inc = _asegurar_x_estrictamente_creciente(upper[::-1, 0])
+    lower_x_inc = _asegurar_x_estrictamente_creciente(lower[:, 0])
+
+    y_up_inc = np.interp(upper_x_inc, x_common, y_up_common)
+    y_lo_inc = np.interp(lower_x_inc, x_common, y_lo_common)
+
+    y_le = 0.5 * (y_up_inc[0] + y_lo_inc[0])
+    y_up_inc[0] = y_le
+    y_lo_inc[0] = y_le
+
+    resultado = genes.copy()
+    resultado[:le_idx + 1, 1] = y_up_inc[::-1]
+    resultado[le_idx:, 1] = y_lo_inc
+    resultado[le_idx, 1] = y_le
+
+    # TE recto/romo con x fijo y camber libre.
+    x_te = float(np.clip(resultado[0, 0], x_common[0], x_common[-1]))
+    camber_te = float(np.interp(x_te, x_common, camber))
+    resultado[0, 1] = camber_te + 0.5 * te_obj
+    resultado[-1, 1] = camber_te - 0.5 * te_obj
+
+    return resultado
+
+
+def mutar_perfil_parametrico(genes, le_idx, te_indices, restricciones, config):
+    """Mutación principal en espacio camber/espesor con restricciones físicas."""
+    _ = te_indices  # se conserva firma para compatibilidad con el pipeline actual
+    return proyectar_perfil_parametrico(
+        genes, le_idx, restricciones, config, perturbar=True
+    )
+
+
+def validar_geometria_perfil(puntos, le_idx, restricciones, config):
+    """
+    Valida integridad geométrica del perfil antes de IA/CFD.
+    """
+    if puntos is None or len(puntos) < 4:
+        return False, {'motivo': 'perfil_corto'}
+
+    if not np.all(np.isfinite(puntos)):
+        return False, {'motivo': 'nan_inf'}
+
+    if le_idx <= 0 or le_idx >= len(puntos) - 1:
+        return False, {'motivo': 'le_idx_invalido'}
+
+    upper_x = puntos[:le_idx + 1, 0]
+    lower_x = puntos[le_idx:, 0]
+    if np.any(np.diff(upper_x) > 1e-8):
+        return False, {'motivo': 'upper_no_monotona'}
+    if np.any(np.diff(lower_x) < -1e-8):
+        return False, {'motivo': 'lower_no_monotona'}
+
+    te_gap = abs(float(puntos[0, 1] - puntos[-1, 1]))
+    if te_gap < restricciones['te_gap_min'] or te_gap > restricciones['te_gap_max']:
+        return False, {'motivo': 'te_fuera_rango', 'te_gap': te_gap}
+
+    x_common, _, espesor = descomponer_camber_espesor(
+        puntos, le_idx, n_muestras=restricciones['n_muestras']
+    )
+    if x_common is None:
+        return False, {'motivo': 'descomposicion_fallida'}
+
+    x_norm = (x_common - x_common[0]) / max(1e-12, x_common[-1] - x_common[0])
+    mask = x_norm > 0.03
+    if np.any(mask):
+        espesor_min = float(np.min(espesor[mask]))
+    else:
+        espesor_min = float(np.min(espesor[1:])) if len(espesor) > 1 else 0.0
+
+    if espesor_min <= max(1e-8, float(config.get('espesor_min_global', 0.0)) * 0.8):
+        return False, {'motivo': 'cruce_superficies', 'espesor_min': espesor_min}
+
+    radio_le = estimar_radio_le(puntos, le_idx)
+    if (not np.isfinite(radio_le)
+            or radio_le < float(restricciones['le_radius_min'])):
+        return False, {'motivo': 'le_agudo', 'radio_le': float(radio_le)}
+
+    return True, {
+        'te_gap': te_gap,
+        'espesor_min': espesor_min,
+        'radio_le': float(radio_le),
+    }
+
+
 # ==========================================
 # 6. INDIVIDUO
 # ==========================================
@@ -513,6 +824,72 @@ def cruce(padre1, padre2, le_idx):
     return genes_hijo
 
 
+def mutar_y_validar_hijo(genes_hijo, le_idx, te_indices, restricciones, config,
+                         aplicar_mutacion=True):
+    """
+    Aplica mutación según el modo configurado y valida restricciones geométricas.
+
+    Returns:
+        (genes_resultado, valido, modo_usado, diagnostico)
+    """
+    modo = str(config.get('modo_mutacion', 'legacy')).lower()
+
+    if modo == 'parametrica':
+        genes_param = proyectar_perfil_parametrico(
+            genes_hijo, le_idx, restricciones, config,
+            perturbar=aplicar_mutacion
+        )
+        valido, diag = validar_geometria_perfil(
+            genes_param, le_idx, restricciones, config
+        )
+        if valido:
+            return genes_param, True, 'parametrica', diag
+
+        if config.get('usar_legacy_fallback', False):
+            genes_legacy = genes_hijo.copy()
+            if aplicar_mutacion:
+                genes_legacy = mutar_perfil(genes_legacy, le_idx, te_indices)
+            genes_legacy = suavizar_perfil(
+                genes_legacy, le_idx,
+                config.get('suavizado_iteraciones', 2)
+            )
+
+            # Proyección final sin perturbar para reimponer constraints duros.
+            genes_legacy = proyectar_perfil_parametrico(
+                genes_legacy, le_idx, restricciones, config,
+                perturbar=False
+            )
+
+            valido_fb, diag_fb = validar_geometria_perfil(
+                genes_legacy, le_idx, restricciones, config
+            )
+            return genes_legacy, valido_fb, 'legacy_fallback', diag_fb
+
+        return genes_param, False, 'parametrica_invalida', diag
+
+    # Modo legacy puro
+    genes_legacy = genes_hijo.copy()
+    if aplicar_mutacion:
+        genes_legacy = mutar_perfil(genes_legacy, le_idx, te_indices)
+    genes_legacy = suavizar_perfil(
+        genes_legacy, le_idx,
+        config.get('suavizado_iteraciones', 2)
+    )
+
+    # Si hay restricciones definidas, se valida igualmente antes de CFD.
+    if restricciones is not None:
+        genes_legacy = proyectar_perfil_parametrico(
+            genes_legacy, le_idx, restricciones, config,
+            perturbar=False
+        )
+        valido, diag = validar_geometria_perfil(
+            genes_legacy, le_idx, restricciones, config
+        )
+        return genes_legacy, valido, 'legacy', diag
+
+    return genes_legacy, True, 'legacy', {}
+
+
 # ==========================================
 # 8. EVALUACIÓN CFD
 # ==========================================
@@ -617,7 +994,8 @@ def calcular_fitness(resultados, config):
         return float(np.mean(list(lds.values())))
 
 
-def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condiciones):
+def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condiciones,
+                     le_idx=None, restricciones=None):
     """
     Evalúa todos los individuos no evaluados de la población.
 
@@ -636,6 +1014,7 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
 
     n_evaluados = 0
     n_descartados_ia = 0
+    n_descartados_geom = 0
 
     for i, ind in enumerate(poblacion):
         if PARADA_SOLICITADA:
@@ -643,6 +1022,16 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
 
         if ind.fitness != 0:
             continue  # Ya evaluado (elite de generación anterior)
+
+        # Filtro geométrico duro (previo a IA y CFD)
+        if le_idx is not None and restricciones is not None:
+            valido_geom, _ = validar_geometria_perfil(
+                ind.genes, le_idx, restricciones, config
+            )
+            if not valido_geom:
+                ind.fitness = 0.0
+                n_descartados_geom += 1
+                continue
 
         # Filtro IA
         if oraculo.entrenado and config['usar_ia']:
@@ -697,10 +1086,11 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
                 }
             )
 
-    print(f"\n Evaluación: {n_evaluados} simulados, "
-          f"{n_descartados_ia} descartados por IA")
+        print(f"\n Evaluación: {n_evaluados} simulados, "
+            f"{n_descartados_ia} descartados por IA, "
+            f"{n_descartados_geom} descartados por geometría")
 
-    return n_evaluados, n_descartados_ia
+        return n_evaluados, n_descartados_ia, n_descartados_geom
 
 
 # ==========================================
@@ -926,6 +1316,16 @@ def main():
         print("\nERROR CRÍTICO: No se encontró el archivo de perfil base.")
         return
 
+    restricciones_geom = construir_restricciones_geometricas(
+        coords_base, le_idx, CONFIG
+    )
+    print("\n Restricciones geométricas activas:")
+    print(f"   TE espesor base: {restricciones_geom['te_base']:.6f}")
+    print(f"   TE espesor rango: [{restricciones_geom['te_gap_min']:.6f}, "
+          f"{restricciones_geom['te_gap_max']:.6f}]")
+    print(f"   LE radio base: {restricciones_geom['le_radio_base']:.6f}")
+    print(f"   LE radio mínimo: {restricciones_geom['le_radius_min']:.6f}")
+
     # =====================
     # PASO 2: Determinar ángulos de simulación
     # =====================
@@ -974,10 +1374,49 @@ def main():
     print(f"\n Generando población inicial "
           f"({CONFIG['poblacion_tamano']} individuos)...")
     poblacion = []
-    for _ in range(CONFIG['poblacion_tamano']):
-        genes = mutar_perfil(coords_base.copy(), le_idx, te_indices)
-        genes = suavizar_perfil(genes, le_idx, CONFIG['suavizado_iteraciones'])
-        poblacion.append(Individuo(genes, header_base))
+    descartes_geom_ini = 0
+    fallback_legacy_ini = 0
+    intentos_ini = 0
+    max_intentos_ini = max(
+        CONFIG['poblacion_tamano'] * 4,
+        CONFIG.get('max_intentos_geometria', 120)
+    )
+
+    while (len(poblacion) < CONFIG['poblacion_tamano']
+           and intentos_ini < max_intentos_ini):
+        genes_semilla = coords_base.copy()
+        genes_nuevo, valido, modo_usado, _ = mutar_y_validar_hijo(
+            genes_semilla,
+            le_idx,
+            te_indices,
+            restricciones_geom,
+            CONFIG,
+            aplicar_mutacion=True
+        )
+        intentos_ini += 1
+
+        if not valido:
+            descartes_geom_ini += 1
+            continue
+
+        if modo_usado == 'legacy_fallback':
+            fallback_legacy_ini += 1
+
+        poblacion.append(Individuo(genes_nuevo, header_base))
+
+    # En caso extremo, completar con perfil base proyectado para no abortar la corrida.
+    while len(poblacion) < CONFIG['poblacion_tamano']:
+        genes_base_valido = proyectar_perfil_parametrico(
+            coords_base.copy(), le_idx, restricciones_geom, CONFIG,
+            perturbar=False
+        )
+        poblacion.append(Individuo(genes_base_valido, header_base))
+
+    if CONFIG.get('reportar_diagnostico_geometria', True):
+        print(f"   Iniciales válidos: {len(poblacion)}")
+        print(f"   Iniciales descartados por geometría: {descartes_geom_ini}")
+        if fallback_legacy_ini > 0:
+            print(f"   Iniciales usando fallback legacy: {fallback_legacy_ini}")
 
     mejor_global = None
     historial_fitness = []
@@ -1006,8 +1445,10 @@ def main():
         print(f"{'=' * 55}")
 
         # --- A. EVALUACIÓN CFD ---
-        n_eval, n_desc = evaluar_poblacion(
-            poblacion, gen, angulos, CONFIG, oraculo, logger, condiciones
+        n_eval, n_desc, n_desc_geom_eval = evaluar_poblacion(
+            poblacion, gen, angulos, CONFIG, oraculo, logger, condiciones,
+            le_idx=le_idx,
+            restricciones=restricciones_geom
         )
 
         # --- B. APRENDIZAJE IA ---
@@ -1032,6 +1473,8 @@ def main():
 
         if n_desc > 0:
             print(f"   IA descartes:  {n_desc}")
+        if n_desc_geom_eval > 0:
+            print(f"   Geometría descartes (pre-CFD): {n_desc_geom_eval}")
         oraculo.conteo_descartes = 0
 
         # Detalle por ángulo del mejor individuo
@@ -1050,6 +1493,7 @@ def main():
                      if fitness_validos else 0.0),
             'evaluados': len(fitness_validos),
             'descartados_ia': n_desc,
+            'descartados_geom_eval': n_desc_geom_eval,
             'tiempo_seg': round(t_gen, 1),
         })
 
@@ -1093,11 +1537,22 @@ def main():
             candidatos = poblacion  # Fallback
 
         intentos_fallidos = 0
-        MAX_INTENTOS = 80
+        MAX_INTENTOS = max(80, int(CONFIG.get('max_intentos_geometria', 120)))
+        descartes_geom_repro = 0
+        fallback_legacy_repro = 0
 
         while len(nueva_poblacion) < CONFIG['poblacion_tamano']:
             if PARADA_SOLICITADA:
                 break
+
+            if intentos_fallidos >= MAX_INTENTOS:
+                # Evita bloqueo si el espacio de búsqueda queda demasiado restringido.
+                clon = copy.deepcopy(poblacion[0])
+                clon.fitness = 0.0
+                clon.resultados = {}
+                nueva_poblacion.append(clon)
+                intentos_fallidos = 0
+                continue
 
             # Selección por torneo
             tam_torneo = min(CONFIG['torneo_tamano'], len(candidatos))
@@ -1113,14 +1568,23 @@ def main():
             # Cruce
             genes_hijo = cruce(padre1, padre2, le_idx)
 
-            # Mutación
-            if random.random() < CONFIG['prob_mutacion']:
-                genes_hijo = mutar_perfil(genes_hijo, le_idx, te_indices)
-
-            # Suavizado post-mutación
-            genes_hijo = suavizar_perfil(
-                genes_hijo, le_idx, CONFIG['suavizado_iteraciones']
+            aplicar_mutacion = random.random() < CONFIG['prob_mutacion']
+            genes_hijo, valido_geom, modo_usado, _ = mutar_y_validar_hijo(
+                genes_hijo,
+                le_idx,
+                te_indices,
+                restricciones_geom,
+                CONFIG,
+                aplicar_mutacion=aplicar_mutacion
             )
+
+            if not valido_geom:
+                descartes_geom_repro += 1
+                intentos_fallidos += 1
+                continue
+
+            if modo_usado == 'legacy_fallback':
+                fallback_legacy_repro += 1
 
             hijo = Individuo(genes_hijo, header_base)
 
@@ -1133,6 +1597,16 @@ def main():
 
             nueva_poblacion.append(hijo)
             intentos_fallidos = 0
+
+        if CONFIG.get('reportar_diagnostico_geometria', True):
+            if descartes_geom_repro > 0:
+                print(f"   Reproducción - descartes geométricos: {descartes_geom_repro}")
+            if fallback_legacy_repro > 0:
+                print(f"   Reproducción - fallback legacy: {fallback_legacy_repro}")
+
+        if historial_fitness:
+            historial_fitness[-1]['descartados_geom_repro'] = descartes_geom_repro
+            historial_fitness[-1]['fallback_legacy_repro'] = fallback_legacy_repro
 
         poblacion = nueva_poblacion
 

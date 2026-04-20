@@ -2201,15 +2201,18 @@ class Mesh:
             d2yS = self._mg_d2y_S[lvl]; d2yC = self._mg_d2y_C[lvl]; d2yN = self._mg_d2y_N[lvl]
             # Usar omega solo en nivel fino; GS puro (omega=1) en niveles gruesos
             om = omega_f32 if lvl == 0 else omega_coarse_f32
-            for _ in range(n_sweeps):
+            for s in range(n_sweeps):
+                # Alternar el color inicial reduce sesgos direccionales sistematicos.
+                first = p0_i32 if (s % 2 == 0) else p1_i32
+                second = p1_i32 if (s % 2 == 0) else p0_i32
                 rb_kernel(grid_l, (256,),
                           (sol, p_flat, rhs_flat,
                            d2xW, d2xC, d2xE, d2yS, d2yC, d2yN,
-                           om, nx_l, ny_l, p0_i32))
+                           om, nx_l, ny_l, first))
                 rb_kernel(grid_l, (256,),
                           (sol, p_flat, rhs_flat,
                            d2xW, d2xC, d2xE, d2yS, d2yC, d2yN,
-                           om, nx_l, ny_l, p1_i32))
+                           om, nx_l, ny_l, second))
 
         def _aplicar_bc_mg(p_nivel, lvl):
             """Fuerza Neumann cero-gradiente en bordes (copiando celda vecina),
@@ -2879,6 +2882,104 @@ class Mesh:
         else:
             plt.close()
 
+    def visualize_velocity_vectors(self, cmap="rainbow", title="Velocidad y dirección del flujo",
+                                   max_arrows=2500, u_ref=None,
+                                   show=True, save_path=None, return_fig=False):
+        """
+        Visualiza la magnitud de velocidad y superpone flechas (quiver)
+        con dirección y módulo del campo de velocidades.
+
+        Parámetros:
+            cmap: mapa de color para |u|.
+            title: título de la figura.
+            max_arrows: máximo aproximado de flechas a dibujar (submuestreo automático).
+            u_ref: velocidad de referencia para escalar/etiquetar flechas (ej. U_inf).
+                   Si None, usa referencia automática basada en el campo actual.
+            show: si True muestra la figura.
+            save_path: si se indica, guarda la imagen en esa ruta.
+            return_fig: si True retorna la figura.
+        """
+        # Campos en GPU
+        speed = cp.sqrt(self.u**2 + self.v**2)
+
+        # Pasar a CPU para Matplotlib
+        speed_np = cp.asnumpy(speed)
+        u_np = cp.asnumpy(self.u)
+        v_np = cp.asnumpy(self.v)
+        X_np = cp.asnumpy(self.XX)
+        Y_np = cp.asnumpy(self.YY)
+        solid_np = cp.asnumpy(self.solid)
+
+        ar = self.Ly / self.Lx
+        fig = plt.figure(figsize=(12, 12 * ar))
+        ax = plt.gca()
+
+        # Fondo: magnitud de velocidad
+        im = ax.pcolormesh(X_np, Y_np, speed_np, cmap=cmap, shading='auto')
+        vmax = float(np.max(speed_np)) if speed_np.size else 0.0
+        im.set_clim(0.0, vmax if vmax > 0 else 1.0)
+        plt.colorbar(im, label="|u|")
+
+        # Submuestreo uniforme para quiver
+        ny, nx = u_np.shape
+        n_total = max(1, nx * ny)
+        stride = 1
+        if max_arrows is not None and max_arrows > 0:
+            stride = max(1, int(np.ceil(np.sqrt(n_total / float(max_arrows)))))
+
+        Xq = X_np[::stride, ::stride]
+        Yq = Y_np[::stride, ::stride]
+        Uq = u_np[::stride, ::stride]
+        Vq = v_np[::stride, ::stride]
+        solid_q = solid_np[::stride, ::stride]
+
+        # Escala de flechas: usar referencia fija (u_ref) o automática.
+        vmag_max = float(np.max(speed_np)) if speed_np.size else 0.0
+        u_scale = float(u_ref) if (u_ref is not None and float(u_ref) > 1e-12) else vmag_max
+        ref_len = 0.04 * min(self.Lx, self.Ly)
+        quiver_scale = (u_scale / ref_len) if (u_scale > 1e-12 and ref_len > 0) else 1.0
+
+        # No dibujar flechas dentro del sólido
+        Uq = np.where(solid_q, np.nan, Uq)
+        Vq = np.where(solid_q, np.nan, Vq)
+
+        q = ax.quiver(
+            Xq, Yq, Uq, Vq,
+            color='black', alpha=0.7,
+            angles='xy', scale_units='xy', scale=quiver_scale,
+            width=0.0018
+        )
+
+        if u_scale > 1e-12:
+            ref_speed = u_scale
+            ax.quiverkey(q, 0.88, 1.02, ref_speed, f"{ref_speed:.3f} m/s",
+                         labelpos='E', coordinates='axes')
+
+        # Contorno del sólido para referencia visual
+        try:
+            ax.contour(X_np, Y_np, solid_np.astype(np.int32), levels=[0.5], colors='white', linewidths=1.0)
+        except Exception:
+            pass
+
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_xlim(0, self.Lx)
+        ax.set_ylim(0, self.Ly)
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title(title)
+        ax.grid(True, alpha=0.15)
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=600, bbox_inches="tight")
+
+        if return_fig:
+            return fig
+        elif show:
+            plt.show()
+        else:
+            plt.close()
+
     def visualize_surface_traction(self, mu, rho=1.0, max_arrows=100, arrow_scale=0.02, 
                                    show_annotations=True, annotation_step=5, 
                                    show=True, save_path=None):
@@ -3198,6 +3299,48 @@ class Mesh:
         free = ~self.solid
         return float(cp.mean(cp.abs(div[free])))
 
+    def remove_vertical_drift(self, target_v_mean=0.0, relax=0.1, max_abs_correction=None):
+        """
+        Elimina deriva global de la componente vertical en celdas de fluido.
+
+        Util para casos simetricos (v_in=0) donde pequenos sesgos numericos
+        pueden disparar lift espurio al acoplarse con inestabilidades del wake.
+
+        Retorna:
+            float: correccion aplicada (v_mean_actual - target_v_mean)
+        """
+        fluid = ~self.solid
+        if getattr(self, '_mask_interfaz', None) is not None:
+            fluid = fluid & (~self._mask_interfaz)
+
+        # Evitar fronteras del dominio para no pelear con BC impuestas.
+        fluid[0, :] = False
+        fluid[-1, :] = False
+        fluid[:, 0] = False
+        fluid[:, -1] = False
+
+        if not cp.any(fluid):
+            return 0.0
+
+        v_mean = cp.mean(self.v[fluid]).astype(cp.float32)
+        corr = v_mean - cp.float32(target_v_mean)
+
+        corr_eff = cp.float32(max(0.0, min(1.0, float(relax)))) * corr
+        if max_abs_correction is not None:
+            max_abs = cp.float32(abs(float(max_abs_correction)))
+            corr_eff = cp.clip(corr_eff, -max_abs, max_abs)
+
+        # Solo corrige fluido; mantiene celdas solidas sin modificar.
+        self.v[fluid] = self.v[fluid] - corr_eff
+
+        # Seguridad: interior del solido permanece en cero.
+        if getattr(self, '_ghost_cell_ready', False):
+            self.v[self._solid_interior] = cp.float32(0.0)
+        else:
+            self.v[self.solid] = cp.float32(0.0)
+
+        return float(corr_eff)
+
     def plot_multigrid_cycles_history(self, show=True, return_fig=False):
         """
         Grafica el número de ciclos multigrid usados en cada paso temporal.
@@ -3484,7 +3627,8 @@ class Mesh:
             "Drag_v": Drag_v, "Lift_v": Lift_v,
             "Fx": Fx, "Fy": Fy
         }
-    def compute_surface_forces_definitive(self, mu, rho=1.0, return_per_face=False, return_cp=True, n_extrap_layers=5):
+    def compute_surface_forces_definitive(self, mu, rho=1.0, return_per_face=False, return_cp=True, n_extrap_layers=5,
+                                          correct_pressure_offset=True):
         """
         Versión definitiva de la integral de esfuerzos sobre el perfil.
         - Usa extrapolación de presión y viscosidad desde múltiples capas para capturar gradientes lejanos en flujos turbulentos.
@@ -3497,6 +3641,8 @@ class Mesh:
             return_per_face: si True devuelve arrays por-cara
             return_cp: si True calcula Cp
             n_extrap_layers: capas para extrapolación (2-10 recomendado)
+            correct_pressure_offset: si True aplica de-bias de presión para fuerzas
+                                    (plano afín de fondo + offset residual sobre contorno)
 
         Retorna diccionario con Fx,Fy, etc.
         """
@@ -3504,23 +3650,19 @@ class Mesh:
         boundary = self._solid_boundary_mask(use_diagonals=True)
         _, nx_all, ny_all = self._signed_distance_and_normals()
 
-        # 2) elementos y corrección para diagonales
-        solid = self.solid
-        dx = self.dx; dy = self.dy
-        dx_f = cp.float32(dx)
-        # diag mask: detecta celdas frontera que tocan el sólido por esquina
-        diag_mask = (
-            (cp.roll(cp.roll(solid, 1, axis=0), 1, axis=1)) |
-            (cp.roll(cp.roll(solid, 1, axis=0), -1, axis=1)) |
-            (cp.roll(cp.roll(solid, -1, axis=0), 1, axis=1)) |
-            (cp.roll(cp.roll(solid, -1, axis=0), -1, axis=1))
-        ) & boundary
-        ds = cp.where(diag_mask, cp.float32(dx * np.sqrt(2.0)), dx_f)
+        # 2) elemento de arco local ds usando métrica física local
+        # t = (-ny, nx); escalar por espaciamiento local de celda para malla estirada
+        eps = cp.float32(1e-12)
+        dx_loc = self.vol_x[cp.newaxis, :]  # (1, nx)
+        dy_loc = self.vol_y[:, cp.newaxis]  # (ny, 1)
+        ds = cp.sqrt((ny_all * dx_loc) ** 2 + (nx_all * dy_loc) ** 2) + eps
 
         # 3) construir coordenadas indices para muestreo en caras
         JJ, II = self.JJ, self.II
         j_face = JJ + 0.5 * nx_all
         i_face = II + 0.5 * ny_all
+        x_face = self._bilinear_interpolate(self.XX, j_face, i_face)
+        y_face = self._bilinear_interpolate(self.YY, j_face, i_face)
 
         # 4) interpolar en múltiples capas para extrapolación
         positions = cp.array([0.5 + i * 1.0 for i in range(n_extrap_layers)], dtype=cp.float32)
@@ -3531,12 +3673,28 @@ class Mesh:
             p_k = self._bilinear_interpolate(self.p, j_face_k, i_face_k)
             p_layers.append(p_k)
 
-        # Extrapolación de p_wall usando gradiente de las capas extremas (simple y robusto)
-        p1 = p_layers[0]
-        pN = p_layers[-1]
-        dist = positions[-1] - positions[0]
-        grad_p = (pN - p1) / dist
-        p_wall = p1 - grad_p * 0.5  # extrapolar a pos=0
+        # Extrapolación robusta de p_wall (x=0) mediante ajuste lineal por mínimos cuadrados
+        # sobre todas las capas disponibles. Reduce ruido del TE frente al esquema de 2 puntos.
+        if n_extrap_layers >= 2:
+            n_layers_f = cp.float32(len(p_layers))
+            sum_x = cp.sum(positions)
+            sum_x2 = cp.sum(positions * positions)
+
+            sum_y = cp.zeros_like(p_layers[0], dtype=cp.float32)
+            sum_xy = cp.zeros_like(p_layers[0], dtype=cp.float32)
+            for k, pos in enumerate(positions):
+                p_k = p_layers[k]
+                sum_y += p_k
+                sum_xy += pos * p_k
+
+            denom = n_layers_f * sum_x2 - sum_x * sum_x
+            denom = cp.where(cp.abs(denom) < cp.float32(1e-12), cp.float32(1e-12), denom)
+
+            slope = (n_layers_f * sum_xy - sum_x * sum_y) / denom
+            # Intercepto en x=0: p_wall = a = (sum_y - slope*sum_x)/n
+            p_wall = (sum_y - slope * sum_x) / n_layers_f
+        else:
+            p_wall = p_layers[0]
 
         # mu_eff en la cara: molecular + turbulenta (si WALE activo)
         if self.usar_wale:
@@ -3546,15 +3704,30 @@ class Mesh:
         else:
             mu_eff_face = cp.float32(mu)
 
-        # 5) gradientes en centros y muestreo en caras (usando capa 1)
+        # 5) gradientes en centros y muestreo en caras (malla no uniforme)
         u = self.u; v = self.v
-        inv_dx = cp.float32(1.0 / dx); inv_dy = cp.float32(1.0 / dy)
         du_dx = cp.zeros_like(u, dtype=cp.float32); du_dy = cp.zeros_like(u, dtype=cp.float32)
         dv_dx = cp.zeros_like(v, dtype=cp.float32); dv_dy = cp.zeros_like(v, dtype=cp.float32)
-        du_dx[:, 1:-1] = (u[:, 2:] - u[:, :-2]) * (0.5 * inv_dx)
-        du_dy[1:-1, :] = (u[2:, :] - u[:-2, :]) * (0.5 * inv_dy)
-        dv_dx[:, 1:-1] = (v[:, 2:] - v[:, :-2]) * (0.5 * inv_dx)
-        dv_dy[1:-1, :] = (v[2:, :] - v[:-2, :]) * (0.5 * inv_dy)
+        du_dx[:, 1:-1] = (
+            self.d1x_W[1:-1][cp.newaxis, :] * u[:, :-2]
+            + self.d1x_C[1:-1][cp.newaxis, :] * u[:, 1:-1]
+            + self.d1x_E[1:-1][cp.newaxis, :] * u[:, 2:]
+        )
+        du_dy[1:-1, :] = (
+            self.d1y_S[1:-1][:, cp.newaxis] * u[:-2, :]
+            + self.d1y_C[1:-1][:, cp.newaxis] * u[1:-1, :]
+            + self.d1y_N[1:-1][:, cp.newaxis] * u[2:, :]
+        )
+        dv_dx[:, 1:-1] = (
+            self.d1x_W[1:-1][cp.newaxis, :] * v[:, :-2]
+            + self.d1x_C[1:-1][cp.newaxis, :] * v[:, 1:-1]
+            + self.d1x_E[1:-1][cp.newaxis, :] * v[:, 2:]
+        )
+        dv_dy[1:-1, :] = (
+            self.d1y_S[1:-1][:, cp.newaxis] * v[:-2, :]
+            + self.d1y_C[1:-1][:, cp.newaxis] * v[1:-1, :]
+            + self.d1y_N[1:-1][:, cp.newaxis] * v[2:, :]
+        )
 
         # muestrear gradientes en caras
         du_dx_f = self._bilinear_interpolate(du_dx, j_face, i_face)
@@ -3574,10 +3747,56 @@ class Mesh:
 
         # 7) enmascarar e integrar solo sobre boundary (primera capa)
         w = boundary.astype(cp.float32)
-        # ⭐ CORRECCIÓN: Fuerza de presión sobre sólido = -∫ p·n dS
-        # Ambas componentes deben tener signo negativo (n apunta hacia fluido)
-        Tx_p = -p_wall * nx_face
-        Ty_p = -p_wall * ny_face
+        # Corrección opcional de presión de fondo para reducir sesgo espurio:
+        # 1) quitar plano afín p_bg=a+b*x+c*y estimado en bordes (far-field)
+        # 2) quitar offset residual medio ponderado en el contorno discreto
+        p_wall_force = p_wall
+        p_bg_face = cp.zeros_like(p_wall, dtype=cp.float32)
+        debias_model = "none"
+        debias_a = 0.0
+        debias_b = 0.0
+        debias_c = 0.0
+        if correct_pressure_offset:
+            # Ajuste de presión de fondo con muestras de borde
+            try:
+                band_bg = max(1, int(min(self.nx, self.ny) * 0.05))
+                mask_edges_bg = cp.zeros_like(self.p, dtype=cp.bool_)
+                mask_edges_bg[:band_bg, :] = True
+                mask_edges_bg[-band_bg:, :] = True
+                mask_edges_bg[:, :band_bg] = True
+                mask_edges_bg[:, -band_bg:] = True
+                mask_edges_bg = mask_edges_bg & (~self.solid)
+
+                p_edge = cp.asnumpy(self.p[mask_edges_bg]).astype(np.float64)
+                x_edge = cp.asnumpy(self.XX[mask_edges_bg]).astype(np.float64)
+                y_edge = cp.asnumpy(self.YY[mask_edges_bg]).astype(np.float64)
+
+                if p_edge.size >= 8:
+                    A = np.column_stack((np.ones_like(p_edge), x_edge, y_edge))
+                    coef, _, _, _ = np.linalg.lstsq(A, p_edge, rcond=None)
+                    debias_a, debias_b, debias_c = float(coef[0]), float(coef[1]), float(coef[2])
+                    p_bg_face = (
+                        cp.float32(debias_a)
+                        + cp.float32(debias_b) * x_face
+                        + cp.float32(debias_c) * y_face
+                    )
+                    p_wall_force = p_wall - p_bg_face
+                    debias_model = "affine+mean"
+                else:
+                    debias_model = "mean_only"
+            except Exception:
+                debias_model = "mean_only"
+
+            # Offset residual sobre el contorno discreto (cerrado de fuerza)
+            wds = w * ds
+            wds_sum = cp.sum(wds)
+            if float(wds_sum) > 0.0:
+                p_mean_resid = cp.sum(p_wall_force * wds) / (wds_sum + cp.float32(1e-30))
+                p_wall_force = p_wall_force - p_mean_resid
+
+        # Fuerza de presión sobre sólido = -∫ p·n dS
+        Tx_p = -p_wall_force * nx_face
+        Ty_p = -p_wall_force * ny_face
         Fx_p = cp.sum(Tx_p * w * ds)
         Fy_p = cp.sum(Ty_p * w * ds)
         Fx_v = cp.sum(Tx_v * w * ds)
@@ -3590,6 +3809,11 @@ class Mesh:
             "Fx": float(Fx), "Fy": float(Fy),
             "Fx_p": float(Fx_p), "Fy_p": float(Fy_p),
             "Fx_v": float(Fx_v), "Fy_v": float(Fy_v),
+            "pressure_offset_correction": bool(correct_pressure_offset),
+            "pressure_debias_model": debias_model,
+            "pressure_debias_a": float(debias_a),
+            "pressure_debias_b": float(debias_b),
+            "pressure_debias_c": float(debias_c),
         }
 
         # 8) Calcular Cp si solicitado (usando p_wall extrapolado)
@@ -3610,9 +3834,6 @@ class Mesh:
             denom = 0.5 * cp.float32(rho) * (U_ref**2) + eps
             cp_face = (p_wall - p_ref) / denom
 
-            x_face = j_face * cp.float32(dx)
-            y_face = i_face * cp.float32(dy)
-
             Xb = x_face[boundary]; Yb = y_face[boundary]
             Cp_b = cp_face[boundary]
             extr_mask = (ny_face > 0) & boundary
@@ -3631,9 +3852,188 @@ class Mesh:
                 result.update({
                     "Tx_p_face": Tx_p[boundary], "Ty_p_face": Ty_p[boundary],
                     "Tx_v_face": Tx_v[boundary], "Ty_v_face": Ty_v[boundary],
+                    "ds_face": ds[boundary],
+                    "nx_face": nx_face[boundary], "ny_face": ny_face[boundary],
+                    "p_wall_face": p_wall[boundary],
+                    "p_wall_force_face": p_wall_force[boundary],
+                    "p_bg_face": p_bg_face[boundary],
                 })
 
         return result
+
+    def diagnose_surface_force_balance(self, mu, rho=1.0, n_extrap_layers=5,
+                                       nbins=30, te_start=0.85,
+                                       verbose=True, plot=True, save_path=None):
+        """
+        Diagnóstico de balance de fuerzas por zona de cuerda.
+
+        Objetivo:
+        - Cuantificar cuánto aporta cada tramo x/c al Lift (Fy), separado en
+          presión y viscoso.
+        - Detectar si el trailing edge concentra el sesgo de Cl.
+        """
+        data = self.compute_surface_forces_definitive(
+            mu=mu, rho=rho,
+            return_per_face=True, return_cp=True,
+            n_extrap_layers=n_extrap_layers
+        )
+
+        Xb = data.get("Xb", None)
+        if Xb is None or Xb.size == 0:
+            return {"ok": False, "reason": "No hay caras de frontera"}
+
+        Ty_p = data["Ty_p_face"]
+        Ty_v = data["Ty_v_face"]
+        ds_f = data["ds_face"]
+        nx_f = data["nx_face"]
+        ny_f = data["ny_face"]
+        p_wall_f = data.get("p_wall_face", None)
+
+        # Contribución elemental de fuerza vertical por cara: dFy = Ty * ds
+        dFy_p = Ty_p * ds_f
+        dFy_v = Ty_v * ds_f
+        dFy_t = dFy_p + dFy_v
+
+        x_min = float(cp.min(Xb))
+        x_max = float(cp.max(Xb))
+        chord = max(x_max - x_min, 1e-12)
+        xc = (Xb - cp.float32(x_min)) / cp.float32(chord)
+        xc = cp.clip(xc, cp.float32(0.0), cp.float32(1.0))
+
+        # Pasar a CPU para binning robusto y barato (solo caras frontera)
+        xc_np = cp.asnumpy(xc)
+        ny_np = cp.asnumpy(ny_f)
+        dFy_p_np = cp.asnumpy(dFy_p)
+        dFy_v_np = cp.asnumpy(dFy_v)
+        dFy_t_np = cp.asnumpy(dFy_t)
+
+        nbins = int(max(5, nbins))
+        bins = np.linspace(0.0, 1.0, nbins + 1)
+        centers = 0.5 * (bins[:-1] + bins[1:])
+        idx = np.clip(np.digitize(xc_np, bins) - 1, 0, nbins - 1)
+
+        fy_p_bin = np.zeros(nbins, dtype=np.float64)
+        fy_v_bin = np.zeros(nbins, dtype=np.float64)
+        fy_t_bin = np.zeros(nbins, dtype=np.float64)
+
+        fy_t_upper = np.zeros(nbins, dtype=np.float64)
+        fy_t_lower = np.zeros(nbins, dtype=np.float64)
+
+        np.add.at(fy_p_bin, idx, dFy_p_np)
+        np.add.at(fy_v_bin, idx, dFy_v_np)
+        np.add.at(fy_t_bin, idx, dFy_t_np)
+        np.add.at(fy_t_upper, idx, np.where(ny_np > 0.0, dFy_t_np, 0.0))
+        np.add.at(fy_t_lower, idx, np.where(ny_np <= 0.0, dFy_t_np, 0.0))
+
+        fy_total = float(np.sum(dFy_t_np))
+        fy_p_total = float(np.sum(dFy_p_np))
+        fy_v_total = float(np.sum(dFy_v_np))
+
+        # Diagnóstico geométrico de cierre del contorno discreto
+        ds_np = cp.asnumpy(ds_f)
+        nx_np = cp.asnumpy(nx_f)
+        perimetro_total = float(np.sum(ds_np)) + 1e-30
+        sum_nx_ds = float(np.sum(nx_np * ds_np))
+        sum_ny_ds = float(np.sum(ny_np * ds_np))
+        cierre_nx_rel = abs(sum_nx_ds) / perimetro_total
+        cierre_ny_rel = abs(sum_ny_ds) / perimetro_total
+        perimetro_upper = float(np.sum(ds_np[ny_np > 0.0]))
+        perimetro_lower = float(np.sum(ds_np[ny_np <= 0.0]))
+        perimetro_diff_rel = abs(perimetro_upper - perimetro_lower) / perimetro_total
+
+        # Si p_wall tiene offset medio y el contorno no cierra en ny, aparece lift espurio
+        if p_wall_f is not None:
+            p_wall_mean = float(cp.mean(p_wall_f))
+            fy_bias_pmean = float(-p_wall_mean * sum_ny_ds)
+        else:
+            p_wall_mean = float('nan')
+            fy_bias_pmean = float('nan')
+
+        te_start = float(np.clip(te_start, 0.0, 1.0))
+        te_mask = centers >= te_start
+        fy_te = float(np.sum(fy_t_bin[te_mask]))
+        fy_te_abs = float(np.sum(np.abs(fy_t_bin[te_mask])))
+        fy_abs_total = float(np.sum(np.abs(fy_t_bin))) + 1e-30
+        te_share_abs = 100.0 * fy_te_abs / fy_abs_total
+
+        if verbose:
+            print("\n" + "=" * 70)
+            print("🔎 DIAGNÓSTICO FUERZA VERTICAL POR CUERDA")
+            print("=" * 70)
+            print(f"  Fy total      = {fy_total:+.6e} N/m")
+            print(f"    Fy presión  = {fy_p_total:+.6e} N/m")
+            print(f"    Fy viscosa  = {fy_v_total:+.6e} N/m")
+            print(f"  Aporte TE (x/c>={te_start:.2f}): {fy_te:+.6e} N/m")
+            print(f"  Peso TE en |Fy| por bins: {te_share_abs:5.1f}%")
+            print("  Cierre geométrico (contorno discreto):")
+            print(f"    Σ(nx·ds) = {sum_nx_ds:+.6e} m   |rel|={cierre_nx_rel:.3e}")
+            print(f"    Σ(ny·ds) = {sum_ny_ds:+.6e} m   |rel|={cierre_ny_rel:.3e}")
+            print(f"    L_upper={perimetro_upper:.6e}  L_lower={perimetro_lower:.6e}  ΔL/L={perimetro_diff_rel:.3e}")
+            if np.isfinite(p_wall_mean):
+                print(f"    p_wall media={p_wall_mean:+.6e} Pa  => Fy_bias≈{-p_wall_mean:+.3e}*Σ(ny·ds)={fy_bias_pmean:+.6e} N/m")
+
+            # Top bins por contribución absoluta
+            top_k = min(6, nbins)
+            order = np.argsort(np.abs(fy_t_bin))[::-1][:top_k]
+            print("  Top bins por |dFy|:")
+            for k in order:
+                print(f"    x/c~{centers[k]:.3f}: dFy={fy_t_bin[k]:+9.3e} "
+                      f"(P={fy_p_bin[k]:+9.3e}, V={fy_v_bin[k]:+9.3e})")
+            print("=" * 70)
+
+        if plot:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
+
+            width = 1.0 / nbins * 0.9
+            ax1.bar(centers, fy_t_bin, width=width, color='black', alpha=0.8, label='dFy total/bin')
+            ax1.bar(centers, fy_p_bin, width=width, color='red', alpha=0.35, label='dFy presión/bin')
+            ax1.bar(centers, fy_v_bin, width=width, color='blue', alpha=0.35, label='dFy viscosa/bin')
+            ax1.axvline(te_start, color='orange', linestyle='--', linewidth=1.2, label=f'TE start={te_start:.2f}')
+            ax1.axhline(0.0, color='gray', linewidth=1.0)
+            ax1.set_ylabel('dFy por bin [N/m]')
+            ax1.set_title('Contribución de Lift por posición en cuerda')
+            ax1.grid(True, alpha=0.25)
+            ax1.legend(loc='best')
+
+            ax2.plot(centers, fy_t_upper, '-g', linewidth=1.8, label='dFy upper (ny>0)')
+            ax2.plot(centers, fy_t_lower, '-m', linewidth=1.8, label='dFy lower (ny<=0)')
+            ax2.axvline(te_start, color='orange', linestyle='--', linewidth=1.2)
+            ax2.axhline(0.0, color='gray', linewidth=1.0)
+            ax2.set_xlabel('x/c')
+            ax2.set_ylabel('dFy por bin [N/m]')
+            ax2.grid(True, alpha=0.25)
+            ax2.legend(loc='best')
+
+            plt.tight_layout()
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.show()
+
+        return {
+            "ok": True,
+            "x_centers": centers,
+            "dFy_total_bin": fy_t_bin,
+            "dFy_pressure_bin": fy_p_bin,
+            "dFy_viscous_bin": fy_v_bin,
+            "dFy_upper_bin": fy_t_upper,
+            "dFy_lower_bin": fy_t_lower,
+            "Fy_total": fy_total,
+            "Fy_pressure": fy_p_total,
+            "Fy_viscous": fy_v_total,
+            "Fy_te": fy_te,
+            "te_share_abs_percent": te_share_abs,
+            "sum_nx_ds": sum_nx_ds,
+            "sum_ny_ds": sum_ny_ds,
+            "closure_nx_rel": cierre_nx_rel,
+            "closure_ny_rel": cierre_ny_rel,
+            "perimeter_upper": perimetro_upper,
+            "perimeter_lower": perimetro_lower,
+            "perimeter_diff_rel": perimetro_diff_rel,
+            "p_wall_mean": p_wall_mean,
+            "Fy_bias_from_pmean": fy_bias_pmean,
+            "te_start": te_start,
+            "nbins": nbins,
+        }
 
     def update_cp_profile(self, mu=1.0, rho=1.0):
         """
@@ -3844,16 +4244,12 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     
     if graficos:    
         mesh_gruesa.visualize_velocity()
+        mesh_gruesa.visualize_velocity_vectors(u_ref=U_inf)
         mesh_gruesa.plot_forces_over_time()
         mesh_gruesa.visualize_surface_traction(mu)
         mesh_gruesa.plot_convergence_history()
         mesh_gruesa.plot_cp_vs_chord(mu, rho, normalize=True, show=True)
         mesh_gruesa.plot_divergence_history()
-        mesh_gruesa.plot_multigrid_cycles_history()
-
-
-
-        mesh_gruesa.plot_multigrid_cycles_history()
 
 
 def _generar_graficos_polar(polar_data, filepath, carpeta_salida="."):
@@ -3995,8 +4391,9 @@ def main(
     factor_expansion=1.05,  # Factor geométrico de crecimiento
     ancho_zona_fina_x=None,  # Ancho de zona fina en X (None → 0.1*Lx)
     ancho_zona_fina_y=None,  # Ancho de zona fina en Y (None → 0.1*Ly)
-    dx_max=None,       # Espaciado máximo (None → 20*dx_min)
-    dy_max=None,       # Espaciado máximo Y (None → 20*dy_min)
+    ratio_max_malla=20,  # Ratio máximo de celda gruesa respecto a dx_min/dy_min
+    dx_max=None,       # Espaciado máximo absoluto en X (si se define, pisa ratio_max_malla)
+    dy_max=None,       # Espaciado máximo absoluto en Y (si se define, pisa ratio_max_malla)
     usar_wale=False,   # Si True, activa modelo de turbulencia WALE
     
     # Posición del perfil
@@ -4057,14 +4454,34 @@ def main(
     # Visualización de malla
     mostrar_malla=False,
 
+    # Correccion de deriva vertical (casos simetricos)
+    corregir_deriva_vertical=True,
+    umbral_deriva_vertical=1e-8,
+    corregir_deriva_cada=1,
+    factor_deriva_vertical=0.1,
+
     # Diagnóstico detallado de spikes (costoso; usar solo al depurar)
-    debug_spikes=False
+    debug_spikes=False,
+
+    # Diagnóstico de fuerzas por cuerda (para investigar Cl espurio en TE)
+    diagnostico_fuerzas=False,
+    diagnostico_fuerzas_bins=30,
+    diagnostico_fuerzas_te_start=0.85,
+    diagnostico_fuerzas_cada=500,
+    diagnostico_fuerzas_plot=False
 ):
     # Procesar valores por defecto
     if dy_min is None:
         dy_min = dx_min
     if cy is None:
         cy = Ly / 2.0
+
+    # Control del tamaño máximo de celda: por ratio (preferido) o absoluto (override)
+    ratio_max_malla = float(ratio_max_malla)
+    if ratio_max_malla <= 1.0:
+        raise ValueError(f"ratio_max_malla debe ser > 1.0, recibido: {ratio_max_malla}")
+    dx_max_eff = float(dx_max) if dx_max is not None else float(ratio_max_malla * dx_min)
+    dy_max_eff = float(dy_max) if dy_max is not None else float(ratio_max_malla * dy_min)
     
     # Calcular viscosidad dinámica
     mu = rho * nu
@@ -4101,13 +4518,13 @@ def main(
     X_1d = generar_malla_estirada(
         L=Lx, x_centro=cx + chord * 0.5,
         dx_min=dx_min, factor_expansion=factor_expansion,
-        ancho_zona_fina=ancho_zona_fina_x, dx_max=dx_max
+        ancho_zona_fina=ancho_zona_fina_x, dx_max=dx_max_eff
     )
     Y_1d = generar_malla_estirada(
         L=Ly, x_centro=cy,
         dx_min=dy_min if dy_min else dx_min,
         factor_expansion=factor_expansion,
-        ancho_zona_fina=ancho_zona_fina_y, dx_max=dy_max
+        ancho_zona_fina=ancho_zona_fina_y, dx_max=dy_max_eff
     )
     
     print(f"Malla variable: {len(X_1d)} x {len(Y_1d)} nodos")
@@ -4123,8 +4540,10 @@ def main(
     
     # Espesor mínimo del TE
     min_te = 2.0 * dx_min
-    
+    '''
     # Añadir sólido a malla
+    mesh_gruesa.add_solid_circle(cx+0.5*chord,cy,0.25*chord)  # círculo de colisión para evitar celdas vacías
+    '''
     mesh_gruesa.load_solids_from_file(
         filepath=filepath,
         chord=chord,
@@ -4150,6 +4569,16 @@ def main(
     mesh_gruesa.set_boundary("top", boundary_type_top, value=boundary_val_top)
     mesh_gruesa.set_boundary("bottom", boundary_type_bottom, value=boundary_val_bottom)
     mesh_gruesa.set_boundary("right", boundary_type_right, value=boundary_val_right)
+
+    # Solo aplicar correccion de deriva en configuraciones verticalmente simetricas.
+    cfg_vertical_simetrica = (
+        abs(float(v0y)) < 1e-12
+        and boundary_type_top == "slip"
+        and boundary_type_bottom == "slip"
+    )
+    corregir_deriva_cada = max(1, int(corregir_deriva_cada))
+    umbral_deriva_vertical = float(max(0.0, umbral_deriva_vertical))
+    factor_deriva_vertical = float(max(0.0, min(1.0, factor_deriva_vertical)))
     
     # Parámetros físicos
     CFL = CFL
@@ -4313,6 +4742,8 @@ def main(
     print(f"  • Crea '{trigger_plot}' para generar gráficos sin detener")
     print(f"  • Crea '{trigger_stop}' para detener limpiamente")
     print(f"  • Crea '{trigger_alpha}' con el nuevo ángulo (ej: '8.0') para cambiar alpha")
+    if diagnostico_fuerzas:
+        print(f"  • Diagnóstico fuerzas: ON (cada {diagnostico_fuerzas_cada} iters, bins={diagnostico_fuerzas_bins}, TE>={diagnostico_fuerzas_te_start:.2f})")
     print("="*70 + "\n")
     
     # ============================================================
@@ -4527,6 +4958,19 @@ def main(
         # Almacenar ciclos usados
         mesh_gruesa.mg_cycles_vector[it] = mg_info['cycles']
         mesh_gruesa.apply_boundaries(after_projection=True)
+
+        # Evitar sesgo de momento vertical en casos simetricos (v_in=0, slip arriba/abajo).
+        if (corregir_deriva_vertical and cfg_vertical_simetrica
+            and (it % corregir_deriva_cada == 0)):
+            v_bias = mesh_gruesa.remove_vertical_drift(
+                target_v_mean=0.0,
+                relax=factor_deriva_vertical,
+                max_abs_correction=0.02 * U_ref
+            )
+            if abs(v_bias) > umbral_deriva_vertical:
+                # Mantener BC tras la correccion suave del campo interior.
+                mesh_gruesa.apply_boundaries(after_projection=True)
+
         _diag_check("PROYECCIÓN")
         timing_stats['proyeccion'] += time.time() - t0
         
@@ -4702,6 +5146,19 @@ def main(
             mesh_gruesa.clcdvector[it // guardado] = ratio
             mesh_gruesa.divvector[it // guardado] = mesh_gruesa.compute_divergence_mean()
             mesh_gruesa.update_cp_profile(mu, rho)
+
+            # Diagnóstico local de balance de Lift por zonas de cuerda
+            if diagnostico_fuerzas and (it % max(1, int(diagnostico_fuerzas_cada)) == 0):
+                try:
+                    mesh_gruesa.diagnose_surface_force_balance(
+                        mu=mu, rho=rho, n_extrap_layers=5,
+                        nbins=diagnostico_fuerzas_bins,
+                        te_start=diagnostico_fuerzas_te_start,
+                        verbose=True,
+                        plot=diagnostico_fuerzas_plot
+                    )
+                except Exception as _e_diag:
+                    print(f"⚠️  Diagnóstico de fuerzas falló en iter {it}: {_e_diag}")
             
             # Publicar en memoria compartida (coste: ~1ms)
             if live_view and shm_data is not None:
@@ -4977,9 +5434,9 @@ if __name__ == "__main__":
         Ly=8,  
         cx=2,
         CFL=0.5,
-        alpha_deg=0,
+        alpha_deg=6,
         polar_descarte=0.3,
-        iteraciones=10000,
+        iteraciones=2000,
         divergencia=1e-1,
         v0x=1,
         v0y=0,
@@ -4998,5 +5455,7 @@ if __name__ == "__main__":
         stop_on_convergence=False,
         live_view=True,
         mostrar_malla=True,
-        mg_modo_rapido=True,
+        mg_modo_turbo=True,
+        
+        
     )
