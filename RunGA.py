@@ -41,6 +41,16 @@ from sklearn.ensemble import RandomForestRegressor
 
 import Simulador2D
 
+# Parámetros óptimos determinados para generación de hijos (barrido extendido).
+PARAMETROS_OPTIMOS_HIJOS = {
+    'modo_mutacion': 'parametrica',
+    'prob_mutacion': 0.85,
+    'camber_mut_std': 0.0035,
+    'espesor_mut_std': 0.0045,
+    'te_camber_shift_std': 0.0015,
+    'te_espesor_shift_std': 0.0012,
+}
+
 # ==========================================
 # 1. CONFIGURACIÓN DEL SISTEMA
 # ==========================================
@@ -60,7 +70,8 @@ CONFIG = {
     # --- Mutación (Bumps Gaussianos) ---
     #   Cada bump es una campana de Gauss centrada en un punto aleatorio
     #   que desplaza Y de los puntos cercanos. Produce deformaciones suaves.
-    'prob_mutacion': 0.85,              # Probabilidad de mutar un hijo
+    'prob_mutacion': PARAMETROS_OPTIMOS_HIJOS['prob_mutacion'],
+                                         # Probabilidad óptima de mutar un hijo
     'n_bumps_min': 1,                   # Mínimo de bumps por mutación
     'n_bumps_max': 4,                   # Máximo de bumps por mutación
     'sigma_bump_min': 0.03,             # Anchura mín del bump (fracción de nº puntos)
@@ -72,14 +83,19 @@ CONFIG = {
     # --- Mutación Paramétrica (Camber/Espesor) ---
     #   Muta funciones suaves de camber c(x) y espesor t(x), luego reconstruye
     #   extrados/intrados con restricciones geométricas físicas.
-    'modo_mutacion': 'parametrica',      # 'parametrica' | 'legacy'
+    'modo_mutacion': PARAMETROS_OPTIMOS_HIJOS['modo_mutacion'],
+                                         # 'parametrica' | 'legacy' (óptimo: parametrica)
     'usar_legacy_fallback': True,        # Si falla la vía paramétrica, probar legacy
     'max_intentos_geometria': 120,       # Reintentos para generar un hijo válido
     'n_control_mutacion': 7,             # Nodos de control para perturbaciones suaves
-    'camber_mut_std': 0.0035,            # Intensidad de mutación del camber
-    'espesor_mut_std': 0.0045,           # Intensidad de mutación del espesor
-    'te_camber_shift_std': 0.0015,       # Desplazamiento de camber concentrado en TE
-    'te_espesor_shift_std': 0.0012,      # Ajuste extra del espesor en TE
+    'camber_mut_std': PARAMETROS_OPTIMOS_HIJOS['camber_mut_std'],
+                                         # Intensidad óptima de mutación del camber
+    'espesor_mut_std': PARAMETROS_OPTIMOS_HIJOS['espesor_mut_std'],
+                                         # Intensidad óptima de mutación del espesor
+    'te_camber_shift_std': PARAMETROS_OPTIMOS_HIJOS['te_camber_shift_std'],
+                                         # Desplazamiento óptimo de camber concentrado en TE
+    'te_espesor_shift_std': PARAMETROS_OPTIMOS_HIJOS['te_espesor_shift_std'],
+                                         # Ajuste óptimo extra del espesor en TE
     'le_proteccion_x': 0.06,             # Zona [0, x] con mutación atenuada en LE
     'espesor_min_global': 2e-4,          # Espesor mínimo global (excepto LE)
     'te_espesor_min_absoluto': 3e-4,     # Cota inferior absoluta para espesor TE

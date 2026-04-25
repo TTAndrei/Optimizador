@@ -26,7 +26,7 @@ COMMON = dict(
     cx=2,
     cy=4,
     CFL=0.5,
-    iteraciones=4000,
+    iteraciones=2000,
     guardado=50,
     polar_descarte=0.3,
     divergencia=1e-1,
@@ -34,7 +34,7 @@ COMMON = dict(
     v0y=0.0,
     rho=1.0,
     nu=1 / 100000,
-    filepath="NACA_0012",
+    filepath="AG24",
     chord=1.0,
     dx_min=0.001,
     factor_expansion=1.10,
@@ -44,7 +44,7 @@ COMMON = dict(
     graficos=False,
     save_frames=False,
     frames_dir_grueso="",
-    usar_wale=False,
+    usar_wale=True,
     stop_on_convergence=False,
     live_view=False,
     mostrar_malla=False,
@@ -52,7 +52,7 @@ COMMON = dict(
 )
 
 # Barrido de alpha: 0 a 10 cada 2 grados
-ALPHAS = list(range(0, 11, 1))
+ALPHAS = list(range(0, 21, 1))
 DESCARTE_FRAC = 0.30
 
 OUT_CSV = "barrido_alpha_resultados.csv"
