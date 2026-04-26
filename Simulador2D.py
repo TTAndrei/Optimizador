@@ -4391,7 +4391,7 @@ def main(
     factor_expansion=1.05,  # Factor geométrico de crecimiento
     ancho_zona_fina_x=None,  # Ancho de zona fina en X (None → 0.1*Lx)
     ancho_zona_fina_y=None,  # Ancho de zona fina en Y (None → 0.1*Ly)
-    ratio_max_malla=20,  # Ratio máximo de celda gruesa respecto a dx_min/dy_min
+    ratio_max_malla=50,  # Ratio máximo de celda gruesa respecto a dx_min/dy_min
     dx_max=None,       # Espaciado máximo absoluto en X (si se define, pisa ratio_max_malla)
     dy_max=None,       # Espaciado máximo absoluto en Y (si se define, pisa ratio_max_malla)
     usar_wale=False,   # Si True, activa modelo de turbulencia WALE

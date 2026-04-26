@@ -35,6 +35,7 @@ import gc
 from datetime import datetime
 
 import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import cupy as cp
 from sklearn.ensemble import RandomForestRegressor
@@ -56,14 +57,14 @@ PARAMETROS_OPTIMOS_HIJOS = {
 # ==========================================
 CONFIG = {
     # --- Archivos ---
-    'archivo_base': 'AG24',                             # Perfil base (formato Selig)
+    'archivo_base': 'OPTIMO_PARCIAL_2604_2.dat',                             # Perfil base (formato Selig)
     'archivo_memoria_ia': 'cerebro_aerodinamico.pkl',   # Memoria persistente del filtro IA
     'archivo_datos_ml': 'aprendizaje_ML.jsonl',         # Datos acumulados para ML futuro
     'directorio_resultados': 'resultados_ga',           # Carpeta de salida
 
     # --- Parámetros Evolutivos ---
-    'poblacion_tamano': 10,        # Individuos por generación
-    'generaciones': 5,            # Máximo de generaciones (parable con Ctrl+C)
+    'poblacion_tamano': 12,        # Individuos por generación
+    'generaciones': 10,            # Máximo de generaciones (parable con Ctrl+C)
     'elites': 4,                   # Individuos preservados intactos por elitismo
     'torneo_tamano': 4,            # Tamaño del torneo de selección de padres
 
@@ -108,14 +109,14 @@ CONFIG = {
     'reportar_diagnostico_geometria': True,
 
     # --- Simulación CFD ---
-    'simulacion_iteraciones': 3000,     # Iteraciones por simulación CFD
-    'v0x': 5.0,                         # Velocidad del flujo libre (m/s)
-    'alpha_deg': 5.0,                   # Ángulo de ataque base (grados)
+    'simulacion_iteraciones': 2000,     # Iteraciones por simulación CFD
+    'v0x': 1,                         # Velocidad del flujo libre (m/s)
+    'alpha_deg': 4.0,                   # Ángulo de ataque base (grados)
     'chord': 1.0,                       # Longitud de cuerda (m)
-    'dx_min': 0.004,                    # Espaciado mínimo malla variable (m)
-    'CFL': 0.8,                         # Número de Courant
-    'rho': 1.225,                       # Densidad del aire (kg/m³)
-    'nu': 1.5e-5,                       # Viscosidad cinemática (m²/s)
+    'dx_min': 0.001,                    # Espaciado mínimo malla variable (m)
+    'CFL': 0.5,                         # Número de Courant
+    'rho': 1,                       # Densidad del aire (kg/m³)
+    'nu': 1/100000,                       # Viscosidad cinemática (m²/s)
 
     # --- Multi-ángulo (opcional) ---
     #   Si activo, cada perfil se simula a alpha-delta, alpha, alpha+delta.
@@ -127,7 +128,7 @@ CONFIG = {
     'peso_angulo_base': 2.0,            # Peso extra para ángulo base (modo 'weighted')
 
     # --- IA (Filtro predictivo) ---
-    'usar_ia': True,                    # Activar filtro IA (Random Forest)
+    'usar_ia': False,                    # Activar filtro IA (Random Forest)
     'umbral_calidad': 0.7,              # Umbral dinámico (fracción del top histórico)
 
     # --- Suavizado ---
@@ -136,7 +137,9 @@ CONFIG = {
     # --- Parámetros extra del simulador (opcionales) ---
     #   Dict con parámetros adicionales para Simulador2D.main()
     #   Ej: {'Lx': 12, 'Ly': 8, 'usar_wale': True}
-    'sim_extra_params': {'divergencia': 1e-1},
+    'sim_extra_params': {'Lx': 12, 'Ly': 8, 'usar_wale': True,'divergencia': 1e-1, 'ancho_zona_fina_x':1.2,'ancho_zona_fina_y':1,'factor_expansion':1.1, 'mg_modo_turbo':True},
+        
+        
 }
 
 
@@ -520,7 +523,9 @@ def estimar_radio_le(puntos, le_idx):
     a = np.linalg.norm(p1 - p0)
     b = np.linalg.norm(p2 - p1)
     c = np.linalg.norm(p2 - p0)
-    area2 = abs(np.cross(p1 - p0, p2 - p0))  # 2 * área
+    v1 = p1 - p0
+    v2 = p2 - p0
+    area2 = abs(v1[0] * v2[1] - v1[1] * v2[0])  # 2 * area en 2D
 
     if area2 < 1e-12:
         return np.inf
@@ -1176,11 +1181,11 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
                 }
             )
 
-        print(f"\n Evaluación: {n_evaluados} simulados, "
-            f"{n_descartados_ia} descartados por IA, "
-            f"{n_descartados_geom} descartados por geometría")
+    print(f"\n Evaluación: {n_evaluados} simulados, "
+        f"{n_descartados_ia} descartados por IA, "
+        f"{n_descartados_geom} descartados por geometría")
 
-        return n_evaluados, n_descartados_ia, n_descartados_geom
+    return n_evaluados, n_descartados_ia, n_descartados_geom
 
 
 # ==========================================
@@ -1296,11 +1301,6 @@ def visualizar_comparativa(original, optimizado, fitness, resultados, save_path=
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f" Gráfico guardado: {save_path}")
 
-    try:
-        plt.show()
-    except Exception:
-        pass
-
     plt.close(fig)
 
 
@@ -1329,11 +1329,6 @@ def plot_convergencia(historial, save_path=None):
 
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-
-    try:
-        plt.show()
-    except Exception:
-        pass
 
     plt.close(fig)
 
