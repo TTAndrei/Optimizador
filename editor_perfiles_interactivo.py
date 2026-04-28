@@ -82,21 +82,21 @@ class EditorPerfiles:
                             coords.append([x, y])
                         except ValueError:
                             skipped += 1
-                            print(f"  ⚠ Línea {i} omitida (formato inválido): {line[:30]}")
+                            print(f"  [ADVERTENCIA] Línea {i} omitida (formato inválido): {line[:30]}")
                             continue
             
             if coords:
                 self.points = np.array(coords, dtype=float)
                 self.original_points = self.points.copy()
-                print(f"\n✓ Perfil cargado exitosamente: {filepath}")
-                print(f"  📊 Total de puntos cargados: {len(self.points)}")
+                print(f"\n[OK] Perfil cargado exitosamente: {filepath}")
+                print(f"  [INFO] Total de puntos cargados: {len(self.points)}")
                 print(f"  📌 Rango X: [{self.points[:, 0].min():.4f}, {self.points[:, 0].max():.4f}]")
                 print(f"  📌 Rango Y: [{self.points[:, 1].min():.4f}, {self.points[:, 1].max():.4f}]")
                 if skipped > 0:
-                    print(f"  ⚠ Líneas omitidas: {skipped}")
-                print(f"  ✅ Todos los puntos son editables\n")
+                    print(f"  [ADVERTENCIA] Líneas omitidas: {skipped}")
+                print(f"  [OK] Todos los puntos son editables\n")
             else:
-                print(f"⚠ No se encontraron coordenadas válidas en {filepath}")
+                print(f"[ADVERTENCIA] No se encontraron coordenadas válidas en {filepath}")
                 
         except Exception as e:
             print(f"✗ Error al cargar archivo: {e}")
@@ -236,7 +236,7 @@ class EditorPerfiles:
                 self.points = np.insert(self.points, insert_index, new_point, axis=0)
                 insert_pos = insert_index
             
-            print(f"✓ Punto añadido en posición {insert_pos}: ({x:.4f}, {y:.4f}) - Proyectado sobre línea")
+            print(f"[OK] Punto añadido en posición {insert_pos}: ({x:.4f}, {y:.4f}) - Proyectado sobre línea")
             self.update_plot()
     
     def _project_point_to_segment(self, point, seg_start, seg_end):
@@ -315,7 +315,7 @@ class EditorPerfiles:
             self.points = self.original_points.copy()
             self.selected_point = None
             self.selected_scatter.set_offsets(np.empty((0, 2)))
-            print("✓ Perfil reseteado al original")
+            print("[OK] Perfil reseteado al original")
             self.update_plot()
         
         # Toggle cuadrícula fina
@@ -325,12 +325,12 @@ class EditorPerfiles:
                 self.grid_spacing = 0.0005
                 self.ax.grid(True, which='both', alpha=0.2, linewidth=0.3)
                 self.ax.minorticks_on()
-                print(f"✓ Cuadrícula ultra-fina activada (spacing: {self.grid_spacing:.5f})")
+                print(f"[OK] Cuadrícula ultra-fina activada (spacing: {self.grid_spacing:.5f})")
             else:
                 self.grid_spacing = 0.001
                 self.ax.grid(True, alpha=0.3, linewidth=0.5)
                 self.ax.minorticks_off()
-                print(f"✓ Cuadrícula fina (spacing: {self.grid_spacing:.5f})")
+                print(f"[OK] Cuadrícula fina (spacing: {self.grid_spacing:.5f})")
             self.update_title()
             self.fig.canvas.draw_idle()
         
@@ -338,7 +338,7 @@ class EditorPerfiles:
         elif event.key == 'n':
             self.snap_to_grid = not self.snap_to_grid
             status = "activado" if self.snap_to_grid else "desactivado"
-            print(f"✓ Ajuste a cuadrícula {status}")
+            print(f"[OK] Ajuste a cuadrícula {status}")
             self.update_title()
             self.fig.canvas.draw_idle()
         
@@ -349,10 +349,10 @@ class EditorPerfiles:
                 self.points = np.delete(self.points, self.selected_point, axis=0)
                 self.selected_point = None
                 self.selected_scatter.set_offsets(np.empty((0, 2)))
-                print(f"✓ Punto eliminado: ({deleted_point[0]:.4f}, {deleted_point[1]:.4f})")
+                print(f"[OK] Punto eliminado: ({deleted_point[0]:.4f}, {deleted_point[1]:.4f})")
                 self.update_plot()
             elif len(self.points) <= 3:
-                print("⚠ No se puede eliminar: mínimo 3 puntos requeridos")
+                print("[ADVERTENCIA] No se puede eliminar: mínimo 3 puntos requeridos")
         
         # Mostrar ayuda
         elif event.key == 'h':
@@ -365,14 +365,14 @@ class EditorPerfiles:
         # Ordenar puntos por x
         elif event.key == 'o':
             self.points = self.points[np.argsort(self.points[:, 0])]
-            print("✓ Puntos ordenados por coordenada X")
+            print("[OK] Puntos ordenados por coordenada X")
             self.update_plot()
         
         # Cerrar perfil (conectar primer y último punto)
         elif event.key == 'c':
             if not np.allclose(self.points[0], self.points[-1]):
                 self.points = np.vstack([self.points, self.points[0]])
-                print("✓ Perfil cerrado")
+                print("[OK] Perfil cerrado")
                 self.update_plot()
     
     def update_plot(self):
@@ -426,7 +426,7 @@ class EditorPerfiles:
                 for point in self.points:
                     f.write(f"{point[0]:10.6f}{point[1]:10.6f}\n")
             
-            print(f"✓ Perfil guardado en: {filename}")
+            print(f"[OK] Perfil guardado en: {filename}")
             print(f"  {len(self.points)} puntos")
             
         except Exception as e:
@@ -447,9 +447,9 @@ class EditorPerfiles:
     def show_help(self):
         """Mostrar ayuda en consola"""
         print("\n" + "="*70)
-        print(" 🎨 EDITOR DE PERFILES AERODINÁMICOS - AYUDA")
+        print(" [EDITOR] EDITOR DE PERFILES AERODINÁMICOS - AYUDA")
         print("="*70)
-        print("\n ✅ CARGA COMPLETA:")
+        print("\n [OK] CARGA COMPLETA:")
         print(f"  • Se han cargado TODOS los {len(self.points)} puntos del archivo")
         print(f"  • TODOS los puntos son editables mediante click+arrastrar")
         print(f"  • Use zoom/pan (toolbar) para ver detalles")
@@ -481,7 +481,7 @@ class EditorPerfiles:
 def main():
     """Función principal"""
     print("\n" + "="*70)
-    print(" 🎨 EDITOR INTERACTIVO DE PERFILES AERODINÁMICOS")
+    print(" [EDITOR] EDITOR INTERACTIVO DE PERFILES AERODINÁMICOS")
     print("="*70)
     
     # Obtener directorio del script actual
@@ -490,14 +490,14 @@ def main():
     
     # Carga automática si existe NACA_0012 en la misma carpeta
     if os.path.exists(naca_file):
-        print(f"\n ✓ Cargando automáticamente: {naca_file}")
+        print(f"\n [INFO] Cargando automáticamente: {naca_file}")
         editor = EditorPerfiles(naca_file)
-        print("\n ✓ Editor iniciado. Presiona 'H' en la ventana para ver ayuda.\n")
+        print("\n [OK] Editor iniciado. Presiona 'H' en la ventana para ver ayuda.\n")
         editor.run()
         return
     
     # Si no existe NACA_0012, usar modo interactivo
-    print("\n ⚠ No se encontró NACA_0012 en el directorio del editor")
+    print("\n [ADVERTENCIA] No se encontró NACA_0012 en el directorio del editor")
     print("\n Opciones:")
     print("  1. Cargar perfil existente")
     print("  2. Crear perfil nuevo desde cero")
@@ -522,7 +522,7 @@ def main():
                 if 0 <= idx < len(files):
                     filepath = os.path.join(script_dir, files[idx])
                 else:
-                    print("⚠ Índice inválido, usando nombre como ruta")
+                    print("[ADVERTENCIA] Índice inválido, usando nombre como ruta")
                     filepath = file_choice if os.path.isabs(file_choice) else os.path.join(script_dir, file_choice)
             except ValueError:
                 filepath = file_choice if os.path.isabs(file_choice) else os.path.join(script_dir, file_choice)
@@ -532,7 +532,7 @@ def main():
                 filepath = os.path.join(script_dir, filepath)
         
         if not os.path.exists(filepath):
-            print(f"⚠ Archivo no encontrado: {filepath}")
+            print(f"[ADVERTENCIA] Archivo no encontrado: {filepath}")
             print("  Creando perfil nuevo...")
             filepath = None
         
@@ -541,7 +541,7 @@ def main():
         print("\n Creando perfil nuevo desde cero...")
         editor = EditorPerfiles()
     
-    print("\n ✓ Editor iniciado. Presiona 'H' en la ventana para ver ayuda.\n")
+    print("\n [OK] Editor iniciado. Presiona 'H' en la ventana para ver ayuda.\n")
     editor.run()
 
 

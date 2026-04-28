@@ -1454,6 +1454,33 @@ def main():
     }
 
     # =====================
+    # PASO 2b: Evaluar perfil base (referencia para comparativas)
+    # =====================
+    print("\n Evaluando perfil base (referencia)...")
+    _resultados_base = {}
+    _nombre_base_tmp = "_temp_base_eval.dat"
+    guardar_perfil(_nombre_base_tmp, coords_base, header_base)
+    try:
+        for _alpha in angulos:
+            _res = simular_perfil(_nombre_base_tmp, _alpha, CONFIG)
+            if _res is not None:
+                _resultados_base[f"{_alpha:.1f}"] = _res
+                print(f"   @{_alpha:.1f}°: Cl={_res['cl']:.4f}  "
+                      f"Cd={_res['cd']:.5f}  L/D={_res['ld']:.2f}")
+            else:
+                print(f"   @{_alpha:.1f}°: FALLO")
+    finally:
+        if os.path.exists(_nombre_base_tmp):
+            os.remove(_nombre_base_tmp)
+
+    fitness_base = calcular_fitness(_resultados_base, CONFIG)
+    if fitness_base > 0:
+        print(f" Fitness BASE: L/D = {fitness_base:.4f}")
+    else:
+        print(" AVISO: No se pudo evaluar el perfil base. Comparativa desactivada.")
+        fitness_base = None
+
+    # =====================
     # PASO 4: Crear población inicial
     # =====================
     print(f"\n Generando población inicial "
@@ -1567,6 +1594,16 @@ def main():
             print(f"   Geometría descartes (pre-CFD): {n_desc_geom_eval}")
         oraculo.conteo_descartes = 0
 
+        # Comparativa con perfil base
+        _delta_base = None
+        if fitness_base is not None:
+            _delta_base = mejor_gen.fitness - fitness_base
+            _pct_base = (_delta_base / fitness_base) * 100
+            _signo = "+" if _delta_base >= 0 else ""
+            _tag = "MEJOR" if _delta_base >= 0 else "PEOR ⚠"
+            print(f"   vs BASE:       {_signo}{_delta_base:.4f} "
+                  f"({_signo}{_pct_base:.1f}%) [{_tag}]")
+
         # Detalle por ángulo del mejor individuo
         if mejor_gen.resultados:
             for ang in sorted(mejor_gen.resultados.keys(), key=float):
@@ -1585,6 +1622,7 @@ def main():
             'descartados_ia': n_desc,
             'descartados_geom_eval': n_desc_geom_eval,
             'tiempo_seg': round(t_gen, 1),
+            'vs_base': round(_delta_base, 6) if _delta_base is not None else None,
         })
 
         # --- Guardar imágenes de los 2 mejores perfiles ---
@@ -1727,6 +1765,22 @@ def main():
                 res = mejor_global.resultados[ang]
                 print(f"   @{ang}°: Cl={res['cl']:.4f}  "
                       f"Cd={res['cd']:.5f}  L/D={res['ld']:.2f}")
+
+        # Comparativa final vs perfil base
+        if fitness_base is not None:
+            _delta_fin = mejor_global.fitness - fitness_base
+            _pct_fin = (_delta_fin / fitness_base) * 100
+            if _delta_fin < 0:
+                print(f"\n{'!' * 60}")
+                print(f"  ADVERTENCIA: EL ÓPTIMO ES PEOR QUE EL PERFIL INICIAL")
+                print(f"{'!' * 60}")
+                print(f"  Fitness BASE:   {fitness_base:.4f}")
+                print(f"  Fitness ÓPTIMO: {mejor_global.fitness:.4f}")
+                print(f"  Diferencia:     {_delta_fin:.4f} ({_pct_fin:.1f}%)")
+                print(f"  → La evolución no mejoró el perfil de entrada.")
+                print(f"{'!' * 60}")
+            else:
+                print(f"\n  Mejora sobre BASE: +{_delta_fin:.4f} (+{_pct_fin:.1f}%)")
 
         # Guardar perfil final
         nombre_final = os.path.join(

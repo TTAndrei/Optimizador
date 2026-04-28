@@ -1219,7 +1219,14 @@ class Mesh:
         """Obtiene el ángulo del flujo libre desde las condiciones inflow."""
         for side, bc in self.boundaries.items():
             if bc is not None and bc[0] == "inflow":
-                vx, vy = bc[1]
+                value = bc[1]
+                if value is None:
+                    return 0.0
+                if isinstance(value, (tuple, list)):
+                    vx, vy = value[0], value[1]
+                else:
+                    vx = float(value)
+                    vy = 0.0
                 return float(np.arctan2(vy, vx))
         return 0.0
 
@@ -1318,9 +1325,19 @@ class Mesh:
 
             elif bc_type == "inflow":
                 # ⭐ SIEMPRE aplicar inflow (incluso después de proyección)
-                # value = (u_in, v_in)
-                self.u[u_slice] = value[0]
-                self.v[v_slice] = value[1]
+                # value puede ser:
+                #   - tupla: (u_in, v_in)
+                #   - número: u_in (v_in = 0)
+                #   - None: se ignora
+                if value is not None:
+                    if isinstance(value, (tuple, list)):
+                        u_in, v_in = value[0], value[1]
+                    else:
+                        # Si es un float simple, usarlo como vx y vy=0
+                        u_in = float(value)
+                        v_in = 0.0
+                    self.u[u_slice] = u_in
+                    self.v[v_slice] = v_in
 
             elif bc_type == "outflow":
                 # Presión Dirichlet en la salida (p = value, típicamente 0).
@@ -3360,7 +3377,7 @@ class Mesh:
             # Filtrar valores válidos (>0)
             valid_mask = cycles > 0
             if not valid_mask.any():
-                print("⚠️ No hay datos de ciclos multigrid para plotear")
+                print("[ADVERTENCIA] No hay datos de ciclos multigrid para plotear")
                 return None
             
             cycles = cycles[valid_mask]
@@ -4258,7 +4275,7 @@ def _generar_graficos_polar(polar_data, filepath, carpeta_salida="."):
     Los guarda como PNG con nombre: {perfil}_{fecha}_{hora}_polar_{tipo}.png
     """
     if len(polar_data) < 2:
-        print("⚠ Polar con menos de 2 puntos, no se generan gráficos polares.")
+        print("[ADVERTENCIA] Polar con menos de 2 puntos, no se generan gráficos polares.")
         return
 
     nombre_perfil = os.path.basename(filepath).replace(" ", "_")
@@ -4308,7 +4325,7 @@ def _generar_graficos_polar(polar_data, filepath, carpeta_salida="."):
     fig.savefig(ruta_ef, dpi=150)
     plt.close(fig)
 
-    print(f"📊 Gráficos polares guardados:")
+    print(f"[GRAFICOS] Gráficos polares guardados:")
     print(f"   CL vs α:        {ruta_cl}")
     print(f"   CD vs α:        {ruta_cd}")
     print(f"   CL/CD vs α:     {ruta_ef}")
@@ -4561,6 +4578,22 @@ def main(
     # Usar valores por defecto si no se especifican
     if boundary_val_left is None:
         boundary_val_left = (v0x, v0y)
+    elif boundary_type_left == "inflow" and not isinstance(boundary_val_left, (tuple, list)):
+        # Si inflow recibe un escalar, convertir a tupla (vx, 0)
+        boundary_val_left = (float(boundary_val_left), 0.0)
+    
+    if boundary_val_top is None:
+        boundary_val_top = None
+    elif boundary_type_top == "inflow" and not isinstance(boundary_val_top, (tuple, list)):
+        # Si inflow recibe un escalar, convertir a tupla (vx, vy)
+        boundary_val_top = (float(boundary_val_top), 0.0)
+    
+    if boundary_val_bottom is None:
+        boundary_val_bottom = None
+    elif boundary_type_bottom == "inflow" and not isinstance(boundary_val_bottom, (tuple, list)):
+        # Si inflow recibe un escalar, convertir a tupla (vx, vy)
+        boundary_val_bottom = (float(boundary_val_bottom), 0.0)
+    
     # Derecha: outflow con presión fija p0 por defecto (Dirichlet), ahora soportado por CG
     if boundary_val_right is None:
         boundary_val_right = p0
@@ -4669,7 +4702,7 @@ def main(
         """Manejador para Ctrl+C: finaliza limpiamente con todos los outputs"""
         nonlocal interrupcion_solicitada
         print("\n\n" + "="*70)
-        print("⚠️  INTERRUPCIÓN DETECTADA (Ctrl+C)")
+        print("[INTERRUPCION] INTERRUPCIÓN DETECTADA (Ctrl+C)")
         print("="*70)
         print("Finalizando simulación limpiamente...")
         print("Se generarán todos los outputs y gráficos con los datos actuales.")
@@ -4736,7 +4769,7 @@ def main(
                 pass
     
     print("\n" + "="*70)
-    print("🎮 CONTROLES INTERACTIVOS ACTIVOS:")
+    print("[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:")
     print("="*70)
     print(f"  • Presiona Ctrl+C para finalizar limpiamente con outputs completos")
     print(f"  • Crea '{trigger_plot}' para generar gráficos sin detener")
@@ -4767,35 +4800,52 @@ def main(
     # ============================================================
     shm_meta = None
     shm_data = None
-    if live_view:
-        try:
-            ny_g, nx_g = mesh_gruesa.ny, mesh_gruesa.nx
-            n_cells = ny_g * nx_g
-            # Layout: speed(float32) + solid(uint8) + vorticity(float32)
-            data_size = n_cells * 4 + n_cells + n_cells * 4
-            meta_size = 40  # ny(4)+nx(4)+iter(4)+cd(4)+cl(4)+alpha(4)+timestamp(8)+v0x(4)+v0y(4)
-            
-            # Limpiar bloques previos si existen
-            for name in ["sim2d_meta", "sim2d_live"]:
-                try:
-                    old = shared_memory.SharedMemory(name=name, create=False)
-                    old.close()
-                    old.unlink()
-                except:
-                    pass
-            
-            shm_meta = shared_memory.SharedMemory(name="sim2d_meta", create=True, size=meta_size)
-            shm_data = shared_memory.SharedMemory(name="sim2d_live", create=True, size=data_size)
-            
-            # Escribir dimensiones iniciales
-            struct.pack_into('ii', shm_meta.buf, 0, ny_g, nx_g)
-            print(f"\n\U0001f4fa Live view activado: ejecuta 'python viewer_live.py' en otra terminal")
-            print(f"   Memoria compartida: {(data_size + meta_size) / 1024:.1f} KB")
-        except Exception as e:
-            print(f"\n\u26a0 No se pudo activar live view: {e}")
-            live_view = False
-            shm_meta = None
-            shm_data = None
+    shm_coords = None
+    # Siempre crear memoria compartida para progreso (aunque no haya live_view)
+    try:
+        ny_g, nx_g = mesh_gruesa.ny, mesh_gruesa.nx
+        n_cells = ny_g * nx_g
+        # Publicar siempre speed+solid para la GUI interna.
+        # Layout base: speed(float32) + solid(uint8)
+        # Con live_view=True se agrega vorticity(float32) para viewer externo.
+        base_size = n_cells * 4 + n_cells
+        if live_view:
+            data_size = base_size + n_cells * 4
+        else:
+            data_size = base_size
+        
+        meta_size = 40  # ny(4)+nx(4)+iter(4)+cd(4)+cl(4)+alpha(4)+timestamp(8)+v0x(4)+v0y(4)
+        
+        # Limpiar bloques previos si existen
+        for name in ["sim2d_meta", "sim2d_live", "sim2d_coords"]:
+            try:
+                old = shared_memory.SharedMemory(name=name, create=False)
+                old.close()
+                old.unlink()
+            except:
+                pass
+
+        shm_meta = shared_memory.SharedMemory(name="sim2d_meta", create=True, size=meta_size)
+        shm_data = shared_memory.SharedMemory(name="sim2d_live", create=True, size=data_size)
+
+        # Publicar coordenadas físicas para remapeo correcto en GUI
+        x_1d_np = cp.asnumpy(mesh_gruesa.X_1d).astype(np.float32)
+        y_1d_np = cp.asnumpy(mesh_gruesa.Y_1d).astype(np.float32)
+        coords_size = (nx_g + ny_g) * 4
+        shm_coords = shared_memory.SharedMemory(name="sim2d_coords", create=True, size=coords_size)
+        shm_coords.buf[:nx_g * 4] = x_1d_np.tobytes()
+        shm_coords.buf[nx_g * 4:coords_size] = y_1d_np.tobytes()
+
+        # Escribir dimensiones iniciales
+        struct.pack_into('ii', shm_meta.buf, 0, ny_g, nx_g)
+        if live_view:
+            print(f"\n[LIVE] Live view activado: ejecuta 'python viewer_live.py' en otra terminal")
+        print(f"   Progreso en memoria compartida: {meta_size} bytes (iteraciones sincronizadas)")
+    except Exception as e:
+        print(f"\n[ADVERTENCIA] No se pudo crear memoria compartida: {e}")
+        live_view = False
+        shm_meta = None
+        shm_data = None
     
     # Velocidad máxima permitida (red de seguridad contra blowup)
     U_ref = float(np.sqrt(v0x**2 + v0y**2))
@@ -4845,7 +4895,7 @@ def main(
             if es_ghost:
                 tipo = "GHOST"
             print(f"\n{'─'*65}")
-            print(f"⚠️  SPIKE detectado tras [{etapa}]  vel_max={vel_max:.2f} m/s  (umbral={_DIAG_THRESHOLD:.1f})")
+            print(f"[ADVERTENCIA] SPIKE detectado tras [{etapa}]  vel_max={vel_max:.2f} m/s  (umbral={_DIAG_THRESHOLD:.1f})")
             print(f"   Celda ({i_max},{j_max})  físico=({x_phys:.4f},{y_phys:.4f})  tipo={tipo}")
             print(f"   u={u_val:.4f}  v={v_val:.4f}")
             print(f"   Vecinas: {vecinas}")
@@ -4897,10 +4947,10 @@ def main(
             else:
                 nu_eff_max = float(nu)
             
-            # ⚠️ Advertencia si nu_eff es anormalmente alto
+            # Advertencia si nu_eff es anormalmente alto
             if nu_eff_max > 10.0 * nu and it % (guardado * 10) == 0:
                 ratio_nu = nu_eff_max / nu
-                print(f"\n⚠️  [Iter {it}] nu_efectiva muy alta: {nu_eff_max:.2e} ({ratio_nu:.1f}× nu molecular)")
+                print(f"\n[ADVERTENCIA] [Iter {it}] nu_efectiva muy alta: {nu_eff_max:.2e} ({ratio_nu:.1f}x nu molecular)")
                 print(f"    Esto puede reducir dt significativamente")
             
             C_visc = 0.25
@@ -5000,7 +5050,7 @@ def main(
             if tiene_nan or blowup:
                 motivo = "NaN detectado" if tiene_nan else f"Blowup de velocidad ({vel_max_actual:.1f} m/s)"
                 print(f"\n{'='*70}")
-                print(f"❌ {motivo} en iteración {it} — simulación inestable")
+                print(f"[ERROR] {motivo} en iteración {it} — simulación inestable")
                 print(f"{'='*70}")
                 print(f"   |u|_max={vel_max_actual:.2f}, umbral={vel_clamp_max:.2f}")
                 print(f"   dt_use={dt_use:.2e}")
@@ -5010,6 +5060,9 @@ def main(
                         shm_meta.close(); shm_meta.unlink()
                     except Exception:
                         pass
+                if shm_coords is not None:
+                    try: shm_coords.close(); shm_coords.unlink()
+                    except Exception: pass
                 raise RuntimeError(f"Simulación abortada: {motivo} en iteración {it}")
         
         # ⭐ ACUMULAR TIEMPO FÍSICO después de completar el paso temporal
@@ -5022,7 +5075,7 @@ def main(
         if it % 10 == 0:  # Verificar cada 10 iteraciones
             if os.path.exists(trigger_plot):
                 print("\n" + "="*70)
-                print(f"🎨 TRIGGER DETECTADO: Generando gráficos (iter {it})")
+                print(f"[GRÁFICOS] Generando gráficos (iter {it})")
                 print("="*70)
                 try:
                     generar_graficos_y_outputs(
@@ -5032,9 +5085,9 @@ def main(
                     )
                     # Eliminar archivo trigger
                     os.remove(trigger_plot)
-                    print(f"✓ Gráficos generados. Continuando simulación...\n")
+                    print(f"[OK] Gráficos generados. Continuando simulación...\n")
                 except Exception as e:
-                    print(f"⚠ Error al generar gráficos: {e}")
+                    print(f"[ERROR] Error al generar gráficos: {e}")
                     try:
                         os.remove(trigger_plot)
                     except:
@@ -5043,7 +5096,7 @@ def main(
             # Chequear trigger de stop
             if os.path.exists(trigger_stop):
                 print("\n" + "="*70)
-                print(f"🛑 TRIGGER DE STOP DETECTADO (iter {it})")
+                print(f"[STOP] TRIGGER DE STOP DETECTADO (iter {it})")
                 print("="*70)
                 print("Deteniendo simulación limpiamente...")
                 interrupcion_solicitada = True
@@ -5059,8 +5112,8 @@ def main(
                         contenido = f.read().strip()
                     nuevo_alpha = float(contenido)
                     print("\n" + "="*70)
-                    print(f"✈ CAMBIO DE ÁNGULO DE ATAQUE (iter {it})")
-                    print(f"   α: {alpha_actual:.2f}° → {nuevo_alpha:.2f}°")
+                    print(f"[ALPHA] CAMBIO DE ÁNGULO DE ATAQUE (iter {it})")
+                    print(f"   alfa: {alpha_actual:.2f}deg -> {nuevo_alpha:.2f}deg")
                     print("="*70)
                     
                     # Guardar resultado del alpha que termina (media temporal)
@@ -5081,7 +5134,7 @@ def main(
                     print(f"   Continuando simulación...\n")
                     os.remove(trigger_alpha)
                 except Exception as e:
-                    print(f"⚠ Error al cambiar alpha: {e}")
+                    print(f"[ADVERTENCIA] Error al cambiar alpha: {e}")
                     try:
                         os.remove(trigger_alpha)
                     except:
@@ -5103,14 +5156,14 @@ def main(
                     except Exception:
                         pass
                 
-                print(f"\n✈ [PLAN POLAR] α: {alpha_actual:.2f}° → {nuevo_alpha:.2f}° (iter {it})")
+                print(f"\n[ALPHA] [PLAN POLAR] alfa: {alpha_actual:.2f}deg -> {nuevo_alpha:.2f}deg (iter {it})")
                 v0x, v0y = mesh_gruesa.cambiar_angulo_ataque(nuevo_alpha, U_inf)
                 alpha_actual = nuevo_alpha
                 iter_inicio_alpha = it
         
         # Si hay interrupción solicitada, salir del bucle
         if interrupcion_solicitada:
-            print(f"\n⚠️  Simulación interrumpida en iteración {it}/{iteraciones}")
+            print(f"\n[ADVERTENCIA] Simulación interrumpida en iteración {it}/{iteraciones}")
             print(f"   Tiempo físico simulado: {tiempo_fisico_acumulado:.4f} s")
             # Ajustar iteraciones efectivas para reportes
             iteraciones_efectivas = it
@@ -5126,7 +5179,7 @@ def main(
             # Chequear NaN en coeficientes aerodinámicos
             if np.isnan(cd_val) or np.isnan(cl_val):
                 print(f"\n{'='*70}")
-                print(f"❌ NaN DETECTADO en Cd/Cl en iteración {it} — simulación inestable")
+                print(f"[ERROR] NaN DETECTADO en Cd/Cl en iteración {it} — simulación inestable")
                 print(f"{'='*70}")
                 print(f"   Cd={cd_val}, Cl={cl_val}")
                 if live_view and shm_data is not None:
@@ -5135,6 +5188,9 @@ def main(
                         shm_meta.close(); shm_meta.unlink()
                     except Exception:
                         pass
+                if shm_coords is not None:
+                    try: shm_coords.close(); shm_coords.unlink()
+                    except Exception: pass
                 raise RuntimeError(f"Simulación abortada: NaN en Cd/Cl en iteración {it}")
             
             mesh_gruesa.cdvector[it // guardado] = cd_val
@@ -5158,19 +5214,28 @@ def main(
                         plot=diagnostico_fuerzas_plot
                     )
                 except Exception as _e_diag:
-                    print(f"⚠️  Diagnóstico de fuerzas falló en iter {it}: {_e_diag}")
+                    print(f"[ADVERTENCIA] Diagnóstico de fuerzas falló en iter {it}: {_e_diag}")
             
-            # Publicar en memoria compartida (coste: ~1ms)
-            if live_view and shm_data is not None:
+            # Publicar en memoria compartida (SIEMPRE metadatos para progreso)
+            if shm_meta is not None:
+                try:
+                    # Escribir metadatos SIEMPRE (cada iteración)
+                    struct.pack_into('i', shm_meta.buf, 8, it)
+                    struct.pack_into('f', shm_meta.buf, 12, float(cd_val))
+                    struct.pack_into('f', shm_meta.buf, 16, float(cl_val))
+                    struct.pack_into('f', shm_meta.buf, 20, float(alpha_actual))
+                    struct.pack_into('d', shm_meta.buf, 24, time.time())
+                    struct.pack_into('f', shm_meta.buf, 32, float(v0x))
+                    struct.pack_into('f', shm_meta.buf, 36, float(v0y))
+                except Exception:
+                    pass  # No interrumpir simulación por error de memoria compartida
+            
+            # Publicar speed+solid siempre para la GUI interna.
+            # Vorticidad solo cuando live_view está activo.
+            if shm_data is not None:
                 try:
                     speed_np = cp.asnumpy(cp.sqrt(mesh_gruesa.u**2 + mesh_gruesa.v**2))
                     solid_np = cp.asnumpy(mesh_gruesa.solid).astype(np.uint8)
-                    # Vorticidad
-                    dvdx = cp.zeros_like(mesh_gruesa.u)
-                    dudy = cp.zeros_like(mesh_gruesa.u)
-                    dvdx[:, 1:-1] = (mesh_gruesa.v[:, 2:] - mesh_gruesa.v[:, :-2]) / (2*mesh_gruesa.dx)
-                    dudy[1:-1, :] = (mesh_gruesa.u[2:, :] - mesh_gruesa.u[:-2, :]) / (2*mesh_gruesa.dy)
-                    vort_np = cp.asnumpy(dvdx - dudy).astype(np.float32)
                     
                     n_cells = mesh_gruesa.ny * mesh_gruesa.nx
                     off_s = 0
@@ -5179,17 +5244,14 @@ def main(
                     
                     shm_data.buf[off_s:off_s + n_cells*4] = speed_np.tobytes()
                     shm_data.buf[off_solid:off_solid + n_cells] = solid_np.tobytes()
-                    shm_data.buf[off_vort:off_vort + n_cells*4] = vort_np.tobytes()
-                    
-                    # Metadata
-                    struct.pack_into('ii', shm_meta.buf, 0, mesh_gruesa.ny, mesh_gruesa.nx)
-                    struct.pack_into('i', shm_meta.buf, 8, it)
-                    struct.pack_into('f', shm_meta.buf, 12, float(cd_val))
-                    struct.pack_into('f', shm_meta.buf, 16, float(cl_val))
-                    struct.pack_into('f', shm_meta.buf, 20, float(alpha_actual))
-                    struct.pack_into('d', shm_meta.buf, 24, time.time())
-                    struct.pack_into('f', shm_meta.buf, 32, float(v0x))
-                    struct.pack_into('f', shm_meta.buf, 36, float(v0y))
+
+                    if live_view:
+                        dvdx = cp.zeros_like(mesh_gruesa.u)
+                        dudy = cp.zeros_like(mesh_gruesa.u)
+                        dvdx[:, 1:-1] = (mesh_gruesa.v[:, 2:] - mesh_gruesa.v[:, :-2]) / (2*mesh_gruesa.dx)
+                        dudy[1:-1, :] = (mesh_gruesa.u[2:, :] - mesh_gruesa.u[:-2, :]) / (2*mesh_gruesa.dy)
+                        vort_np = cp.asnumpy(dvdx - dudy).astype(np.float32)
+                        shm_data.buf[off_vort:off_vort + n_cells*4] = vort_np.tobytes()
                 except Exception:
                     pass  # No interrumpir simulación por error de viewer
             
@@ -5234,14 +5296,14 @@ def main(
                     # Solo imprimir el mensaje la primera vez que se detecta convergencia
                     if not converged_to_steady:
                         print(f"\\n{'='*70}")
-                        print(f"✓ ESTADO ESTACIONARIO ALCANZADO en iteración {it}")
+                        print(f"[OK] ESTADO ESTACIONARIO ALCANZADO en iteracion {it}")
                         print(f"{'='*70}")
                         print(f"  Cambio relativo u: {change_u:.2e} < {tol_u:.2e}")
                         print(f"  Cambio relativo v: {change_v:.2e} < {tol_v:.2e}")
                         print(f"  Cambio relativo p: {change_p:.2e} < {tol_p:.2e}")
                         print(f"  Tiempo simulado: {tiempo_fisico_acumulado:.4f} s")
                         if not stop_on_convergence:
-                            print(f"  ⚠ Continuando hasta completar iteraciones (stop_on_convergence=False)")
+                            print(f"  [INFO] Continuando hasta completar iteraciones (stop_on_convergence=False)")
                         print(f"{'='*70}\\n")
                         converged_to_steady = True
                         
@@ -5290,7 +5352,7 @@ def main(
     # ============================================================
     if interrupcion_solicitada:
         print("\n" + "="*70)
-        print("⚠️  SIMULACIÓN INTERRUMPIDA POR USUARIO")
+        print("[ADVERTENCIA] SIMULACION INTERRUMPIDA POR USUARIO")
         print("="*70)
         print(f"  Se ejecutaron {it} de {iteraciones} iteraciones programadas.")
         print(f"  Tiempo físico simulado: {tiempo_fisico_acumulado:.4f} s")
@@ -5298,7 +5360,7 @@ def main(
         print("="*70)
     elif converged_to_steady:
         print("\n" + "="*70)
-        print("✓ SIMULACIÓN CONVERGIÓ A ESTADO ESTACIONARIO")
+        print("[OK] SIMULACIÓN CONVERGIÓ A ESTADO ESTACIONARIO")
         print("="*70)
         print(f"  La simulación alcanzó convergencia antes de completar")
         print(f"  todas las iteraciones programadas.")
@@ -5306,7 +5368,7 @@ def main(
         print("="*70)
     else:
         print("\n" + "="*70)
-        print("✓ SIMULACIÓN COMPLETADA")
+        print("[OK] SIMULACIÓN COMPLETADA")
         print("="*70)
         print(f"  Se ejecutaron todas las {iteraciones} iteraciones programadas.")
         if not stop_on_convergence:
@@ -5356,7 +5418,7 @@ def main(
         print("-" * 70)
         
         # Identificar cuellos de botella
-        print("\n🔍 ANÁLISIS:")
+        print("\n[ANALISIS]:")
         max_componente = max(componentes, key=lambda x: timing_stats[x[1]])
         max_nombre, max_clave = max_componente
         max_tiempo = timing_stats[max_clave]
@@ -5386,7 +5448,7 @@ def main(
     try:
         with open(archivo_polar, 'w') as fp:
             json.dump(polar_data, fp, indent=2)
-        print(f"\n✅ Polar completa guardada: {len(polar_data)} puntos en {archivo_polar}")
+        print(f"\n[OK] Polar completa guardada: {len(polar_data)} puntos en {archivo_polar}")
         # Resumen tabla
         print(f"\n{'alpha':>8s} {'Cd':>10s} {'Cl':>10s} {'Cl/Cd':>10s}")
         print("-"*42)
@@ -5394,14 +5456,14 @@ def main(
             clcd = p['Cl']/p['Cd'] if abs(p['Cd']) > 1e-12 else float('nan')
             print(f"{p['alpha']:>8.2f} {p['Cd']:>10.6f} {p['Cl']:>10.6f} {clcd:>10.3f}")
     except Exception as e:
-        print(f"\n⚠ Error guardando polar: {e}")
+        print(f"\n[ADVERTENCIA] Error guardando polar: {e}")
 
     # Generar gráficos polares si hay plan polar con suficientes puntos
     if plan_polar is not None and len(polar_data) >= 2:
         try:
             _generar_graficos_polar(polar_data, filepath)
         except Exception as e:
-            print(f"⚠ Error generando gráficos polares: {e}")
+            print(f"[ADVERTENCIA] Error generando gráficos polares: {e}")
 
     # ============================================================
     # GENERACIÓN DE GRÁFICOS Y REPORTES FINALES
@@ -5425,6 +5487,12 @@ def main(
             shm_meta.unlink()
         except:
             pass
+    if shm_coords is not None:
+        try:
+            shm_coords.close()
+            shm_coords.unlink()
+        except:
+            pass
 
     return mesh_gruesa
 
@@ -5434,7 +5502,7 @@ if __name__ == "__main__":
         Ly=8,  
         cx=2,
         CFL=0.5,
-        alpha_deg=6,
+        alpha_deg=4,
         polar_descarte=0.3,
         iteraciones=2000,
         divergencia=1e-1,
@@ -5442,7 +5510,7 @@ if __name__ == "__main__":
         v0y=0,
         rho=1.0,
         nu=1/100000,
-        filepath="NACA_0012",
+        filepath="AG24",
         chord=1.0,
         dx_min=0.001,
         ancho_zona_fina_x=1.2,

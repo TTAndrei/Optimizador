@@ -35,7 +35,7 @@ def conectar_shm(timeout=60):
             nx = struct.unpack('i', meta_buf[4:8])[0]
             if ny > 0 and nx > 0:
                 shm_data = shared_memory.SharedMemory(name=SHM_NAME, create=False)
-                print(f"✓ Conectado. Malla: {ny}x{nx}")
+                print(f"[OK] Conectado. Malla: {ny}x{nx}")
                 return shm_meta, shm_data, ny, nx
             shm_meta.close()
         except FileNotFoundError:

@@ -1371,7 +1371,7 @@ class Mesh:
                 if div_mean_after < tol_div:
                     converged = True
                     if verbose:
-                        print(f"[Proyección] ✓ Convergencia alcanzada en iter {it+1}: div={div_mean_after:.6e}")
+                        print(f"[Proyección] [OK] Convergencia alcanzada en iter {it+1}: div={div_mean_after:.6e}")
                     break
                 
                 # Criterio secundario: residuo Poisson (opcional)
@@ -1386,7 +1386,7 @@ class Mesh:
                 if res < tol_poisson:
                     converged = True
                     if verbose:
-                        print(f"[Proyección] ✓ Convergencia Poisson en iter {it+1}: res={float(res):.6e}")
+                        print(f"[Proyección] [OK] Convergencia Poisson en iter {it+1}: res={float(res):.6e}")
                     break
             
             # Imprimir progreso cada print_every iteraciones
@@ -1399,7 +1399,7 @@ class Mesh:
         
         # Advertencia si no convergió
         if not converged and verbose:
-            print(f"[Proyección] ⚠ ADVERTENCIA: Alcanzado max_iter={adaptive_max_iter} sin convergencia completa")
+            print(f"[Proyección] [ADVERTENCIA] Alcanzado max_iter={adaptive_max_iter} sin convergencia completa")
             print(f"              div_final={div_mean_after:.6e} (objetivo: {tol_div:.6e})")
         
         # ============================================================
@@ -1927,7 +1927,7 @@ class Mesh:
                     # Estancamiento si no cambia al 4º decimal (abs o relativo)
                     if (div_range < stall_tol_abs) or (cambio_relativo < stall_tol_rel):
                         if verbose:
-                            print(f"[CG] ⚠ ESTANCAMIENTO detectado en iter {it+1}")
+                            print(f"[CG] [ADVERTENCIA] ESTANCAMIENTO detectado en iter {it+1}")
                             print(f"     Divergencia estancada en {div_mean_after:.6e}")
                             print(f"     Rango abs últimas {stall_window} iters: {div_range:.6e} < {stall_tol_abs:.6e}")
                             print(f"     Cambio relativo últimas {stall_window} iters: {cambio_relativo:.6e} < {stall_tol_rel:.6e}")
@@ -1959,7 +1959,7 @@ class Mesh:
                         if oscilaciones >= 3:
                             oscilacion_detectada = True
                             if verbose and not converged:
-                                print(f"[CG] 🔄 Oscilación detectada cerca de tolerancia en iter {it+1}")
+                                print(f"[CG] [INFO] Oscilación detectada cerca de tolerancia en iter {it+1}")
                                 print(f"     div_promedio={div_promedio:.6e}, oscilaciones={oscilaciones}")
                                 print(f"     → Continuando hasta max_iter para reducir más la divergencia")
                 
@@ -1969,13 +1969,13 @@ class Mesh:
                     if not oscilacion_detectada:
                         converged = True
                         if verbose:
-                            print(f"[CG] ✓ Convergencia alcanzada en iter {it+1}: div={div_mean_after:.6e}")
+                            print(f"[CG] [OK] Convergencia alcanzada en iter {it+1}: div={div_mean_after:.6e}")
                         break
                     else:
                         # Oscilando: marcar como convergido pero seguir iterando
                         converged = True
                         if verbose and it == min_iter + check_every:
-                            print(f"[CG] ⚙️  Convergencia con oscilación: continuando hasta max_iter")
+                            print(f"[CG] [INFO] Convergencia con oscilación: continuando hasta max_iter")
 
             
             # z = M^-1 r (precondicionador)
@@ -1993,7 +1993,7 @@ class Mesh:
         if not converged and verbose:
             print(f"[CG] No convergió en {adaptive_max_iter} iters: div={div_mean_after:.6e}")
         elif converged and oscilacion_detectada and verbose:
-            print(f"[CG] ✓ Completó {adaptive_max_iter} iters por oscilación: div_final={div_mean_after:.6e}")
+            print(f"[CG] [OK] Completó {adaptive_max_iter} iters por oscilación: div_final={div_mean_after:.6e}")
         
         # ============================================================
         # PASO 4: Escribir presion y corregir velocidad
@@ -2953,7 +2953,7 @@ class Mesh:
             # Filtrar valores válidos (>0)
             valid_mask = cycles > 0
             if not valid_mask.any():
-                print("⚠️ No hay datos de ciclos multigrid para plotear")
+                print("[ADVERTENCIA] No hay datos de ciclos multigrid para plotear")
                 return None
             
             cycles = cycles[valid_mask]
@@ -3906,7 +3906,7 @@ class Mesh:
         }
         
         np.savez_compressed(filepath, **state)
-        print(f"✓ Estado guardado en: {filepath}")
+        print(f"[OK] Estado guardado en: {filepath}")
     
     def load_state(self, filepath, allow_geometry_change=False):
         """
@@ -3960,7 +3960,7 @@ class Mesh:
             cambios_geometria = cp.sum(self.solid != solid_cargado)
             porcentaje_cambio = 100 * float(cambios_geometria) / (self.nx * self.ny)
             
-            print(f"⚠ Cambio de geometría detectado: {cambios_geometria} celdas ({porcentaje_cambio:.2f}%)")
+            print(f"[ADVERTENCIA] Cambio de geometría detectado: {cambios_geometria} celdas ({porcentaje_cambio:.2f}%)")
             
             # Aplicar campos de flujo solo donde NO hay sólido en la nueva geometría
             # En zonas con nuevo sólido, mantener las condiciones iniciales (ya establecidas)
@@ -3995,7 +3995,7 @@ class Mesh:
                     else:
                         self.p = cp.where(zona_nuevo_fluido, vecinos, self.p)
             
-            print(f"✓ Estado adaptado a nueva geometría")
+            print(f"[OK] Estado adaptado a nueva geometría")
         else:
             # Modo estricto: restaurar tal cual (incluyendo sólido)
             self.u = u_cargado
@@ -4003,7 +4003,7 @@ class Mesh:
             self.p = p_cargado
             self.solid = cp.array(data['solid'], dtype=cp.bool_)
         
-        print(f"✓ Estado cargado desde: {filepath}")
+        print(f"[OK] Estado cargado desde: {filepath}")
         print(f"  Históricos: {len(self.cdvector)} iteraciones guardadas")
 
 
@@ -4078,7 +4078,7 @@ def save_complete_checkpoint(filepath, mesh_fina, mesh_gruesa, metadata):
             state[f'meta_{key}'] = value
     
     np.savez_compressed(filepath, **state)
-    print(f"✓ Checkpoint completo guardado en: {filepath}")
+    print(f"[OK] Checkpoint completo guardado en: {filepath}")
 
 
 def load_complete_checkpoint(filepath, mesh_fina, mesh_gruesa, allow_geometry_change=False):
@@ -4182,7 +4182,7 @@ def load_complete_checkpoint(filepath, mesh_fina, mesh_gruesa, allow_geometry_ch
         porcentaje_fina = 100 * float(cambios_fina) / (mesh_fina.nx * mesh_fina.ny)
         
         if cambios_fina > 0:
-            print(f"⚠ Cambio de geometría en malla fina: {cambios_fina} celdas ({porcentaje_fina:.2f}%)")
+            print(f"[ADVERTENCIA] Cambio de geometría en malla fina: {cambios_fina} celdas ({porcentaje_fina:.2f}%)")
             mesh_fina.u = cp.where(~mesh_fina.solid, u_fina, mesh_fina.u)
             mesh_fina.v = cp.where(~mesh_fina.solid, v_fina, mesh_fina.v)
             mesh_fina.p = cp.where(~mesh_fina.solid, p_fina, mesh_fina.p)
@@ -4197,7 +4197,7 @@ def load_complete_checkpoint(filepath, mesh_fina, mesh_gruesa, allow_geometry_ch
         porcentaje_gruesa = 100 * float(cambios_gruesa) / (mesh_gruesa.nx * mesh_gruesa.ny)
         
         if cambios_gruesa > 0:
-            print(f"⚠ Cambio de geometría en malla gruesa: {cambios_gruesa} celdas ({porcentaje_gruesa:.2f}%)")
+            print(f"[ADVERTENCIA] Cambio de geometría en malla gruesa: {cambios_gruesa} celdas ({porcentaje_gruesa:.2f}%)")
             mesh_gruesa.u = cp.where(~mesh_gruesa.solid, u_gruesa, mesh_gruesa.u)
             mesh_gruesa.v = cp.where(~mesh_gruesa.solid, v_gruesa, mesh_gruesa.v)
             mesh_gruesa.p = cp.where(~mesh_gruesa.solid, p_gruesa, mesh_gruesa.p)
@@ -4236,7 +4236,7 @@ def load_complete_checkpoint(filepath, mesh_fina, mesh_gruesa, allow_geometry_ch
             except Exception:
                 metadata[key[5:]] = data[key]
     
-    print(f"✓ Checkpoint completo cargado desde: {filepath}")
+    print(f"[OK] Checkpoint completo cargado desde: {filepath}")
     print(f"  Históricos: {len(mesh_fina.cdvector)} iteraciones guardadas")
     
     return metadata
@@ -4317,7 +4317,7 @@ def _generar_graficos_polar(polar_data, filepath, carpeta_salida="."):
     Los guarda como PNG con nombre: {perfil}_{fecha}_{hora}_polar_{tipo}.png
     """
     if len(polar_data) < 2:
-        print("⚠ Polar con menos de 2 puntos, no se generan gráficos polares.")
+        print("[ADVERTENCIA] Polar con menos de 2 puntos, no se generan gráficos polares.")
         return
 
     nombre_perfil = os.path.basename(filepath).replace(" ", "_")
@@ -4367,7 +4367,7 @@ def _generar_graficos_polar(polar_data, filepath, carpeta_salida="."):
     fig.savefig(ruta_ef, dpi=150)
     plt.close(fig)
 
-    print(f"📊 Gráficos polares guardados:")
+    print(f"[INFO] Gráficos polares guardados:")
     print(f"   CL vs α:        {ruta_cl}")
     print(f"   CD vs α:        {ruta_cd}")
     print(f"   CL/CD vs α:     {ruta_ef}")
@@ -4555,7 +4555,7 @@ def main(
             print(f"  dx_grueso={dx_grueso}, dy_grueso={dy_grueso}")
             print(f"  Lx={Lx}, Ly={Ly}")
         except Exception as e:
-            print(f"⚠ No se pudieron leer parámetros del checkpoint: {e}")
+            print(f"[ADVERTENCIA] No se pudieron leer parámetros del checkpoint: {e}")
             checkpoint_meta = None
 
     # Crear geometría de mallas
@@ -4642,12 +4642,12 @@ def main(
         if 'guardado' in checkpoint_meta:
             guardado_ckpt = int(checkpoint_meta['guardado'])
             if guardado_ckpt != guardado:
-                print(f"⚠ guardado cambiado por checkpoint: {guardado} → {guardado_ckpt}")
+                print(f"[ADVERTENCIA] guardado cambiado por checkpoint: {guardado} → {guardado_ckpt}")
                 guardado = guardado_ckpt
         if 'dt' in checkpoint_meta:
             dt_ckpt = float(checkpoint_meta['dt'])
             if abs(dt_ckpt - dt) > 1e-12:
-                print(f"⚠ dt cambiado por checkpoint: {dt} → {dt_ckpt}")
+                print(f"[ADVERTENCIA] dt cambiado por checkpoint: {dt} → {dt_ckpt}")
                 dt = dt_ckpt
 
     guardado = guardado  # guardar cada N iteraciones
@@ -4710,11 +4710,11 @@ def main(
             if allow_geometry_change and 'alpha_deg' in metadata:
                 alpha_prev = float(metadata['alpha_deg'])
                 if abs(alpha_prev - alpha_deg) > 0.01:
-                    print(f"  ⚠ Cambio de ángulo: {alpha_prev:.1f}° → {alpha_deg:.1f}°")
+                    print(f"  [ADVERTENCIA] Cambio de ángulo: {alpha_prev:.1f}° → {alpha_deg:.1f}°")
             
-            print("✓ Checkpoint cargado exitosamente")
+            print("[OK] Checkpoint cargado exitosamente")
         except Exception as e:
-            print(f"⚠ Error al cargar checkpoint: {e}")
+            print(f"[ADVERTENCIA] Error al cargar checkpoint: {e}")
             print("  Iniciando simulación desde cero")
             iteracion_inicial = 0
             tiempo_simulado_previo = 0.0
@@ -4722,7 +4722,7 @@ def main(
     # Crear directorio de checkpoints si se requiere guardar
     if save_checkpoint_every:
         os.makedirs(checkpoint_dir, exist_ok=True)
-        print(f"\n✓ Checkpoints se guardarán cada {save_checkpoint_every} iteraciones en: {checkpoint_dir}")
+        print(f"\n[OK] Checkpoints se guardarán cada {save_checkpoint_every} iteraciones en: {checkpoint_dir}")
 
 ################################################################################################################################################################################################################################################################################################################################################################################################################################
 
@@ -4753,7 +4753,7 @@ def main(
         """Manejador para Ctrl+C: finaliza limpiamente con todos los outputs"""
         nonlocal interrupcion_solicitada
         print("\n\n" + "="*70)
-        print("⚠️  INTERRUPCIÓN DETECTADA (Ctrl+C)")
+        print("[ADVERTENCIA] INTERRUPCIÓN DETECTADA (Ctrl+C)")
         print("="*70)
         print("Finalizando simulación limpiamente...")
         print("Se generarán todos los outputs y gráficos con los datos actuales.")
@@ -4927,7 +4927,7 @@ def main(
             # ⚠️ Advertencia si nu_eff es anormalmente alto
             if nu_eff_max > 10.0 * nu and it % (guardado * 10) == 0:
                 ratio_nu = nu_eff_max / nu
-                print(f"\n⚠️  [Iter {it}] nu_efectiva muy alta: {nu_eff_max:.2e} ({ratio_nu:.1f}× nu molecular)")
+                print(f"\n[ADVERTENCIA] [Iter {it}] nu_efectiva muy alta: {nu_eff_max:.2e} ({ratio_nu:.1f}× nu molecular)")
                 print(f"    Esto puede reducir dt significativamente")
             
             C_visc = 0.25
@@ -5049,7 +5049,7 @@ def main(
             if tiene_nan or blowup:
                 motivo = "NaN detectado" if tiene_nan else f"Blowup de velocidad ({vel_max_actual:.1f} m/s)"
                 print(f"\n{'='*70}")
-                print(f"❌ {motivo} en iteración {it} — simulación inestable")
+                print(f"[ERROR] {motivo} en iteración {it} — simulación inestable")
                 print(f"{'='*70}")
                 print(f"   |u|_max={vel_max_actual:.2f}, umbral={vel_clamp_max:.2f}")
                 print(f"   dt_use={dt_use:.2e}")
@@ -5071,7 +5071,7 @@ def main(
         if it % 10 == 0:  # Verificar cada 10 iteraciones
             if os.path.exists(trigger_plot):
                 print("\n" + "="*70)
-                print(f"🎨 TRIGGER DETECTADO: Generando gráficos (iter {it})")
+                print(f"[GRÁFICOS] Generando gráficos (iter {it})")
                 print("="*70)
                 try:
                     generar_graficos_y_outputs(
@@ -5081,9 +5081,9 @@ def main(
                     )
                     # Eliminar archivo trigger
                     os.remove(trigger_plot)
-                    print(f"✓ Gráficos generados. Continuando simulación...\n")
+                    print(f"[OK] Gráficos generados. Continuando simulación...\n")
                 except Exception as e:
-                    print(f"⚠ Error al generar gráficos: {e}")
+                    print(f"[ADVERTENCIA] Error al generar gráficos: {e}")
                     try:
                         os.remove(trigger_plot)
                     except:
@@ -5130,7 +5130,7 @@ def main(
                     print(f"   Continuando simulación...\n")
                     os.remove(trigger_alpha)
                 except Exception as e:
-                    print(f"⚠ Error al cambiar alpha: {e}")
+                    print(f"[ADVERTENCIA] Error al cambiar alpha: {e}")
                     try:
                         os.remove(trigger_alpha)
                     except:
@@ -5159,7 +5159,7 @@ def main(
         
         # Si hay interrupción solicitada, salir del bucle
         if interrupcion_solicitada:
-            print(f"\n⚠️  Simulación interrumpida en iteración {it}/{iteraciones}")
+            print(f"\n[ADVERTENCIA] Simulación interrumpida en iteración {it}/{iteraciones}")
             print(f"   Tiempo físico simulado: {tiempo_fisico_acumulado:.4f} s")
             # Ajustar iteraciones efectivas para reportes
             iteraciones_efectivas = it
@@ -5175,7 +5175,7 @@ def main(
             # Chequear NaN en coeficientes aerodinámicos
             if np.isnan(cd_val) or np.isnan(cl_val):
                 print(f"\n{'='*70}")
-                print(f"❌ NaN DETECTADO en Cd/Cl en iteración {it} — simulación inestable")
+                print(f"[ERROR] NaN DETECTADO en Cd/Cl en iteración {it} — simulación inestable")
                 print(f"{'='*70}")
                 print(f"   Cd={cd_val}, Cl={cl_val}")
                 if live_view and shm_data is not None:
@@ -5288,14 +5288,14 @@ def main(
                     # Solo imprimir el mensaje la primera vez que se detecta convergencia
                     if not converged_to_steady:
                         print(f"\\n{'='*70}")
-                        print(f"✓ ESTADO ESTACIONARIO ALCANZADO en iteración {it}")
+                        print(f"[OK] ESTADO ESTACIONARIO ALCANZADO en iteración {it}")
                         print(f"{'='*70}")
                         print(f"  Cambio relativo u: {change_u:.2e} < {tol_u:.2e}")
                         print(f"  Cambio relativo v: {change_v:.2e} < {tol_v:.2e}")
                         print(f"  Cambio relativo p: {change_p:.2e} < {tol_p:.2e}")
                         print(f"  Tiempo simulado: {tiempo_fisico_acumulado:.4f} s")
                         if not stop_on_convergence:
-                            print(f"  ⚠ Continuando hasta completar iteraciones (stop_on_convergence=False)")
+                            print(f"  [INFO] Continuando hasta completar iteraciones (stop_on_convergence=False)")
                         print(f"{'='*70}\\n")
                         converged_to_steady = True
                         
@@ -5344,7 +5344,7 @@ def main(
     # ============================================================
     if interrupcion_solicitada:
         print("\n" + "="*70)
-        print("⚠️  SIMULACIÓN INTERRUMPIDA POR USUARIO")
+        print("[ADVERTENCIA] SIMULACIÓN INTERRUMPIDA POR USUARIO")
         print("="*70)
         print(f"  Se ejecutaron {it} de {iteraciones} iteraciones programadas.")
         print(f"  Tiempo físico simulado: {tiempo_fisico_acumulado:.4f} s")
@@ -5352,7 +5352,7 @@ def main(
         print("="*70)
     elif converged_to_steady:
         print("\n" + "="*70)
-        print("✓ SIMULACIÓN CONVERGIÓ A ESTADO ESTACIONARIO")
+        print("[OK] SIMULACIÓN CONVERGIÓ A ESTADO ESTACIONARIO")
         print("="*70)
         print(f"  La simulación alcanzó convergencia antes de completar")
         print(f"  todas las iteraciones programadas.")
@@ -5360,7 +5360,7 @@ def main(
         print("="*70)
     else:
         print("\n" + "="*70)
-        print("✓ SIMULACIÓN COMPLETADA")
+        print("[OK] SIMULACIÓN COMPLETADA")
         print("="*70)
         print(f"  Se ejecutaron todas las {iteraciones} iteraciones programadas.")
         if not stop_on_convergence:
@@ -5428,7 +5428,7 @@ def main(
     try:
         with open(archivo_polar, 'w') as fp:
             json.dump(polar_data, fp, indent=2)
-        print(f"\n✅ Polar completa guardada: {len(polar_data)} puntos en {archivo_polar}")
+        print(f"\n[OK] Polar completa guardada: {len(polar_data)} puntos en {archivo_polar}")
         # Resumen tabla
         print(f"\n{'alpha':>8s} {'Cd':>10s} {'Cl':>10s} {'Cl/Cd':>10s}")
         print("-"*42)
@@ -5436,14 +5436,14 @@ def main(
             clcd = p['Cl']/p['Cd'] if abs(p['Cd']) > 1e-12 else float('nan')
             print(f"{p['alpha']:>8.2f} {p['Cd']:>10.6f} {p['Cl']:>10.6f} {clcd:>10.3f}")
     except Exception as e:
-        print(f"\n⚠ Error guardando polar: {e}")
+        print(f"\n[ADVERTENCIA] Error guardando polar: {e}")
 
     # Generar gráficos polares si hay plan polar con suficientes puntos
     if plan_polar is not None and len(polar_data) >= 2:
         try:
             _generar_graficos_polar(polar_data, filepath)
         except Exception as e:
-            print(f"⚠ Error generando gráficos polares: {e}")
+            print(f"[ADVERTENCIA] Error generando gráficos polares: {e}")
 
     # ============================================================
     # GENERACIÓN DE GRÁFICOS Y REPORTES FINALES

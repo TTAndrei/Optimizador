@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -c \"from PyQt6.QtWidgets import QApplication; print\\('PyQt6 OK'\\)\")",
+      "Bash('C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe' -c ' *)",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import ast, sys; ast.parse\\(open\\('c:/Users/andre/Desktop/Optimizador/simulator_gui.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import ast; ast.parse\\(open\\('c:/Users/andre/Desktop/Optimizador/simulator_gui.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+    ]
+  }
+}
