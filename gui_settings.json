@@ -1,12 +1,12 @@
 {
   "sim": {
     "CFL": 0.5,
-    "alpha_deg": 5.0,
+    "alpha_deg": 0.0,
     "chord": 1.0,
-    "filepath": "AG24",
+    "filepath": "NACA_0012",
     "Lx": 12.0,
     "Ly": 8.0,
-    "dx_min": 0.001,
+    "dx_min": 0.0004,
     "dy_min": null,
     "factor_expansion": 1.05,
     "ancho_zona_fina_x": 1.2,
@@ -18,10 +18,10 @@
     "cx": 2.0,
     "cy": null,
     "p0": 0.0,
-    "v0x": 5.0,
+    "v0x": 52.08,
     "v0y": 0.0,
     "rho": 1.225,
-    "nu": 1.5e-05,
+    "nu": 8.68e-06,
     "divergencia": 0.1,
     "boundary_left": [
       "inflow",

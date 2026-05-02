@@ -13,43 +13,75 @@ import csv
 import json
 import math
 import time
+from typing import TypedDict
 
 import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
 
 
+class CommonParams(TypedDict):
+    Lx: int
+    Ly: int
+    cx: int
+    cy: int
+    CFL: float
+    iteraciones: int
+    guardado: int
+    polar_descarte: float
+    divergencia: float
+    v0x: int
+    v0y: float
+    rho: float
+    nu: float
+    filepath: str
+    chord: float
+    dx_min: float
+    factor_expansion: float
+    ancho_zona_fina_x: float
+    ancho_zona_fina_y: float
+    ratio_max_malla: int
+    graficos: bool
+    save_frames: bool
+    frames_dir_grueso: str
+    usar_wale: bool
+    stop_on_convergence: bool
+    live_view: bool
+    mostrar_malla: bool
+    mg_modo_turbo: bool
+
+
 # Parametros comunes para todas las corridas
-COMMON = dict(
-    Lx=12,
-    Ly=8,
-    cx=2,
-    cy=4,
-    CFL=0.5,
-    iteraciones=2000,
-    guardado=50,
-    polar_descarte=0.3,
-    divergencia=1e-1,
-    v0x=1.0,
-    v0y=0.0,
-    rho=1.0,
-    nu=1 / 100000,
-    filepath="AG24",
-    chord=1.0,
-    dx_min=0.001,
-    factor_expansion=1.10,
-    ancho_zona_fina_x=1.2,
-    ancho_zona_fina_y=1.0,
-    ratio_max_malla=100.0,
-    graficos=False,
-    save_frames=False,
-    frames_dir_grueso="",
-    usar_wale=True,
-    stop_on_convergence=False,
-    live_view=False,
-    mostrar_malla=False,
-    mg_modo_turbo=True,
-)
+COMMON: CommonParams = {
+    "Lx": 12,
+    "Ly": 8,
+    "cx": 2,
+    "cy": 4,
+    "CFL": 0.5,
+    "iteraciones": 2000,
+    "guardado": 50,
+    "polar_descarte": 0.3,
+    "divergencia": 1e-1,
+    "v0x": 1,
+    "v0y": 0.0,
+    "rho": 1.0,
+    "nu": 1 / 100000,
+    "filepath": "AG24",
+    "chord": 1.0,
+    "dx_min": 0.001,
+    "factor_expansion": 1.10,
+    "ancho_zona_fina_x": 1.2,
+    "ancho_zona_fina_y": 1.0,
+    "ratio_max_malla": 100,
+    "graficos": False,
+    "save_frames": False,
+    "frames_dir_grueso": "",
+    "usar_wale": True,
+    "stop_on_convergence": False,
+    "live_view": False,
+    "mostrar_malla": False,
+    "mg_modo_turbo": True,
+}
 
 # Barrido de alpha: 0 a 10 cada 2 grados
 ALPHAS = list(range(0, 21, 1))
@@ -162,7 +194,9 @@ def main():
     from Simulador2D import main as sim_main
 
     results = []
-    U_inf = float(np.sqrt(COMMON["v0x"] ** 2 + COMMON["v0y"] ** 2))
+    v0x = float(COMMON["v0x"])
+    v0y = float(COMMON["v0y"])
+    U_inf = float(np.sqrt(v0x ** 2 + v0y ** 2))
 
     for alpha in ALPHAS:
         print("\n" + "=" * 70)
@@ -170,7 +204,7 @@ def main():
         print("=" * 70)
 
         t0 = time.time()
-        mesh = sim_main(**COMMON, alpha_deg=float(alpha))
+        mesh = sim_main(**COMMON, alpha_deg=int(alpha))
         elapsed = time.time() - t0
 
         mu = COMMON["rho"] * COMMON["nu"]

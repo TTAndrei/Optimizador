@@ -5,7 +5,18 @@
       "Bash(python -c \"from PyQt6.QtWidgets import QApplication; print\\('PyQt6 OK'\\)\")",
       "Bash('C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe' -c ' *)",
       "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import ast, sys; ast.parse\\(open\\('c:/Users/andre/Desktop/Optimizador/simulator_gui.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import ast; ast.parse\\(open\\('c:/Users/andre/Desktop/Optimizador/simulator_gui.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import ast; ast.parse\\(open\\('c:/Users/andre/Desktop/Optimizador/simulator_gui.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(xargs grep *)",
+      "Bash(grep -E \"\\\\.py$|^d\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(conda run *)",
+      "Bash(python -m pip show pandas)",
+      "Bash(where python *)",
+      "Read(//c/Users/andre/anaconda3/**)",
+      "Read(//c/Users/andre/miniconda3/**)",
+      "Read(//c/ProgramData/anaconda3/**)",
+      "PowerShell(conda env list 2>&1)"
     ]
   }
 }

@@ -5510,7 +5510,7 @@ if __name__ == "__main__":
         v0y=0,
         rho=1.0,
         nu=1/100000,
-        filepath="AG24",
+        filepath="NACA_0012",
         chord=1.0,
         dx_min=0.001,
         ancho_zona_fina_x=1.2,
