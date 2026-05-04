@@ -161,19 +161,23 @@ class Mesh:
         # ================================================================
         if X_1d is not None:
             self.X_1d = cp.asarray(X_1d, dtype=cp.float32)
+            self.X_1d_f64 = np.asarray(X_1d, dtype=np.float64)
             self.nx = len(self.X_1d)
             self.malla_variable = True
         else:
             self.nx = int(Lx / dx)
             self.X_1d = cp.arange(self.nx, dtype=cp.float32) * cp.float32(dx)
+            self.X_1d_f64 = np.arange(self.nx, dtype=np.float64) * float(dx)
             self.malla_variable = False
 
         if Y_1d is not None:
             self.Y_1d = cp.asarray(Y_1d, dtype=cp.float32)
+            self.Y_1d_f64 = np.asarray(Y_1d, dtype=np.float64)
             self.ny = len(self.Y_1d)
         else:
             self.ny = int(Ly / dy)
             self.Y_1d = cp.arange(self.ny, dtype=cp.float32) * cp.float32(dy)
+            self.Y_1d_f64 = np.arange(self.ny, dtype=np.float64) * float(dy)
 
         # dx, dy escalar = espaciado MÍNIMO (para CFL, estabilidad viscosa)
         if self.malla_variable:
@@ -2699,7 +2703,8 @@ class Mesh:
         if len(pts) < 1:
             raise ValueError("No se pudieron leer puntos suficientes del perfil.")
 
-        pts = np.array(pts, dtype=np.float32)  # en CPU
+        pts = np.array(pts, dtype=np.float64)  # en CPU. float64 para preservar simetria exacta
+        # del polygon en rasterizacion (perfiles simetricos a alpha=0).
 
         # Normalizar suponiendo x ya en [0,1]; escalado por cuerda
         x_raw = pts[:, 0] * chord
@@ -2797,19 +2802,31 @@ class Mesh:
 
         # Rasterizar sobre la malla
         from matplotlib.path import Path
-        poly = Path(np.column_stack((x_final, y_final)))
 
-        # Coordenadas de centros de celdas (físicas, compatibles con malla variable)
+        # Coordenadas de centros de celdas en float64 (rasterizacion exacta-simetrica
+        # para perfiles simetricos; evita ruido float32 que daba asimetrias en solid mask).
         if self.malla_variable:
-            x_centers = cp.asnumpy(self.X_1d)
-            y_centers = cp.asnumpy(self.Y_1d)
+            x_centers = self.X_1d_f64
+            y_centers = self.Y_1d_f64
         else:
-            x_centers = (np.arange(self.nx, dtype=np.float32) + 0.5) * self.dx
-            y_centers = (np.arange(self.ny, dtype=np.float32) + 0.5) * self.dy
+            x_centers = (np.arange(self.nx, dtype=np.float64) + 0.5) * float(self.dx)
+            y_centers = (np.arange(self.ny, dtype=np.float64) + 0.5) * float(self.dy)
+        # Tambien float64 para el polygon (alineacion exacta de simetria).
+        x_final_f64 = np.asarray(x_final, dtype=np.float64)
+        y_final_f64 = np.asarray(y_final, dtype=np.float64)
+        poly = Path(np.column_stack((x_final_f64, y_final_f64)))
         XXc, YYc = np.meshgrid(x_centers, y_centers, indexing='xy')
         pts_grid = np.column_stack((XXc.ravel(), YYc.ravel()))
 
-        inside = poly.contains_points(pts_grid)
+        # FIX simetria: cuando un cell center coincide EXACTAMENTE con un vertice del
+        # polygon, contains_points decide en/out de manera asimetrica (winding rule).
+        # Para perfiles simetricos (NACA0012 a alpha=0) esto produce 1+ celdas espurias.
+        # Solucion: usar radius pequeno negativo para encoger el polygon ~1e-9 en
+        # coords. Cells exactamente sobre boundary -> clasificadas FUERA simetricamente.
+        try:
+            inside = poly.contains_points(pts_grid, radius=-1e-9)
+        except TypeError:
+            inside = poly.contains_points(pts_grid)
         inside = inside.reshape(self.ny, self.nx)
 
         # Borde (celdas tocando polígono) usando distancia (opcional simple: dilate)
@@ -3576,14 +3593,42 @@ class Mesh:
 
         return boundary
 
-    def _signed_distance_and_normals(self):
+    def _signed_distance_and_normals(self, smooth_passes: int = None,
+                                     smooth_band_cells: float = 5.0):
+        if smooth_passes is None:
+            env_val = os.environ.get('SDF_SMOOTH_PASSES')
+            if env_val is not None:
+                smooth_passes = int(env_val)
+            else:
+                smooth_passes = int(getattr(self, '_sdf_smooth_passes', 2))
         """
         Calcula distancia signed del sólido y normales unitarias hacia el fluido.
+
+        Suavizado opcional de la SDF en banda cercana (|phi| < smooth_band_cells)
+        antes de calcular gradientes. Reduce el ruido staircase de la rasterización
+        booleana, lo que da normales más estables y simétricas para IBM ghost-cell
+        y para la integración de fuerzas. La geometría del sólido NO cambia: sólo
+        se suaviza la función distancia en la banda fluida adyacente.
         """
         # distance_transform_edt espera booleanos en CPU o GPU (cupyx soporta GPU)
         d_out = distance_transform_edt(~self.solid)  # distancia al fluido
         d_in  = distance_transform_edt(self.solid)   # distancia al sólido
-        sd = d_out - d_in  # positivo fuera del sólido
+        sd = (d_out - d_in).astype(cp.float32)  # positivo fuera del sólido
+
+        # Suavizado Jacobi limitado a banda cercana (one-shot, no afecta lejos)
+        if smooth_passes > 0:
+            band = cp.abs(sd) < cp.float32(smooth_band_cells)
+            for _ in range(int(smooth_passes)):
+                sd_avg = cp.empty_like(sd)
+                sd_avg[1:-1, 1:-1] = 0.25 * (
+                    sd[1:-1, 2:] + sd[1:-1, :-2]
+                    + sd[2:, 1:-1] + sd[:-2, 1:-1]
+                )
+                sd_avg[0, :] = sd[0, :]
+                sd_avg[-1, :] = sd[-1, :]
+                sd_avg[:, 0] = sd[:, 0]
+                sd_avg[:, -1] = sd[:, -1]
+                sd = cp.where(band, sd_avg, sd)
 
         # Gradiente central en 2D (dx=dy)
         dx = self.dx; dy = self.dy
@@ -5494,6 +5539,13 @@ def main(
         except:
             pass
 
+    mesh_gruesa._timing_stats = timing_stats
+    mesh_gruesa._chord = float(chord)
+    mesh_gruesa._U_ref = float(U_inf)
+    mesh_gruesa._iteraciones_realizadas = int(iteraciones)
+    mesh_gruesa._nu_molecular = float(nu)
+    mesh_gruesa._usar_wale_run = bool(usar_wale)
+
     return mesh_gruesa
 
 if __name__ == "__main__":
@@ -5502,7 +5554,7 @@ if __name__ == "__main__":
         Ly=8,  
         cx=2,
         CFL=0.5,
-        alpha_deg=4,
+        alpha_deg=0,
         polar_descarte=0.3,
         iteraciones=2000,
         divergencia=1e-1,

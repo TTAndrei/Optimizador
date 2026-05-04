@@ -1,0 +1,56 @@
+{
+  "task_summary": "Corregir Cl espurio NACA0012 alpha=0 + acoplar Re en Simulador2D.py (LES 2D GPU)",
+  "complexity": "high",
+  "steps": [
+    {
+      "id": 1,
+      "description": "Crear validacion_simetria.py con baseline de NACA0012 alpha=0 a Re=100k y Re=1M. Mide it/s, Cl, Cd, ratio nu_t/nu, div_max, ciclos MG promedio. Sirve para comparar antes/despues de cada paso.",
+      "files_involved": ["validacion_simetria.py"],
+      "aider_instruction": "Create validacion_simetria.py that imports main from Simulador2D and runs short simulations (e.g. 500 iterations) for NACA0012 at alpha=0 with Re=100k and Re=1M. Capture iterations-per-second, final Cl/Cd, max ratio of nu_t/nu, final div_max/U_inf, average MG cycles per step, and write a comparison table to stdout and a JSON report. Also accept a --baseline flag that tags the run for later diff comparison.",
+      "use_local_model": false
+    },
+    {
+      "id": 2,
+      "description": "Anadir logging instrumentado al loop de simulacion: div_max/div_mean (antes y despues de proyeccion), ratio nu_t/nu, Cl(t)/Cd(t), asimetria Fy_extrados+Fy_intrados. Solo se ejecuta cada `guardado` iteraciones para no impactar perf.",
+      "files_involved": ["Simulador2D.py"],
+      "aider_instruction": "In the main simulation loop (function `main` around line 4920 onwards), add a periodic diagnostic block that runs every `guardado` iterations. It must log: max and mean of |div(u)| before and after projection (using the existing mg_info dict), max and mean of nu_t / nu (only if usar_wale is True), running Cl and Cd from the latest force computation, and the residual Fy_extrados + Fy_intrados (asymmetry indicator). All accumulation must stay on GPU; only the final scalar values are transferred to host for printing.",
+      "use_local_model": false
+    },
+    {
+      "id": 3,
+      "description": "Tunear modelo WALE: bajar Cw default 0.325->0.1, cap relativo nu_t_max = K*nu (default K=50) reemplazando 100*Delta absoluto, Van Driest damping usando SDF ya disponible, mask ghost+solid en nu_t.",
+      "files_involved": ["Simulador2D.py"],
+      "aider_instruction": "Modify the method `compute_wale_viscosity` in class Mesh (around line 1716): (a) change default Cw from 0.325 to 0.1, expose as parameter; (b) replace the absolute cap nu_t_max_fisica = 100.0 * Delta (line 1797) with a relative cap nu_t_max = K_nu_max * nu_molecular where K_nu_max defaults to 50 and is exposed as parameter; (c) implement Van Driest damping using the signed-distance field already computed by `_signed_distance_and_normals()`: f_d = 1 - exp(-y_plus / 26) with y_plus = phi * u_tau / nu and u_tau = sqrt(nu * |grad(u_tangencial)|_wall) estimated from velocity gradients adjacent to the boundary; if u_tau cannot be estimated robustly fall back to u_tau = 0.05 * U_inf. Apply f_d**2 multiplicatively to nu_t only in cells where phi < 5*Delta. (d) Force nu_t = 0 in both solid and ghost cells (extend line 1801 which currently only zeros solid). (e) Also remove the redundant cap at line 4942 (already in same scale via point b). Expose `wale_Cw`, `wale_K_nu_max` as kwargs of main() with defaults 0.1 and 50.",
+      "use_local_model": false
+    },
+    {
+      "id": 4,
+      "description": "Tolerancia divergencia adimensional + busqueda speed-aware. Cambiar metrica a div*L_ref/U_ref. Barrer tol y elegir el mas alto que cumple Cl<0.005 e it/s>=3. Anadir log de div/U y it/s.",
+      "files_involved": ["Simulador2D.py", "validacion_simetria.py"],
+      "aider_instruction": "In `project_multigrid` (line 2116) and the divergence convergence check (around line 2376), normalize the divergence residual to dimensionless form: div_adim = div * L_ref / U_ref where L_ref is mesh.chord (or fall back to min(dx,dy)) and U_ref is sqrt(v0x^2 + v0y^2) (stored on Mesh as self._U_ref, set at simulation start). The user-supplied `divergencia` parameter is interpreted as the dimensionless tolerance. If a legacy value > 0.05 is passed, print a one-time warning. In validacion_simetria.py add a `sweep_tol()` function that runs the NACA0012 case at Re=100k for tol_div in [2e-2, 1e-2, 5e-3, 2e-3, 1e-3], records Cl, it/s, average MG cycles, and writes a CSV. The chosen default for `divergencia` will be the largest value that satisfies Cl<0.005 AND it/s>=3 in that sweep; update the default in main() signature accordingly.",
+      "use_local_model": false
+    },
+    {
+      "id": 5,
+      "description": "IBM ghost-cell mejorado: desplazamiento adaptativo segun malla local en lugar de 1.5 hardcoded, suavizado one-shot de SDF (1-2 pasos Jacobi en banda) antes de calcular normales, clamp local en lugar de _vel_ref escalar.",
+      "files_involved": ["Simulador2D.py"],
+      "aider_instruction": "Modify _precomputar_ghost_cell (around line 1012) and apply_ghost_cell_bc (line 1130). (a) Replace the hardcoded minimum displacement of 1.5 cells (line 1066) with: desplazamiento_min = 1.5 * max(local_dx, local_dy) / min(local_dx, local_dy) computed per ghost cell from the variable mesh metrics. (b) In _signed_distance_and_normals (line 3579), after computing phi, add 1-2 Jacobi smoothing passes restricted to the band |phi| < 5 (no change inside fully solid or far fluid). Use existing CuPy operations. Then compute normals from the smoothed phi. (c) In apply_ghost_cell_bc replace the scalar _vel_ref clamp (line 1153) with a local clamp computed once per ghost cell: clamp_max[g] = 5.0 * max(|u|, |v|) sampled bilinearly at the image point's neighborhood (radius 3 cells). All vectorized on GPU.",
+      "use_local_model": false
+    },
+    {
+      "id": 6,
+      "description": "Validacion final: Cl<0.005, |Cd_100k - Cd_1M|/Cd_1M > 0.15, perf>=3 it/s, comparativa polar vs Xfoil",
+      "files_involved": ["validacion_simetria.py", "comparativa_barrido_completo.py"],
+      "aider_instruction": "Add a `validate_final()` function to validacion_simetria.py that asserts: (1) Cl(NACA0012, alpha=0, Re=100k) < 0.005, (2) |Cd(Re=100k) - Cd(Re=1M)| / Cd(Re=1M) > 0.15 with usar_wale=True, (3) iterations-per-second >= 3 in steady state. Extend comparativa_barrido_completo.py to run a polar sweep alpha in [-5, -2, 0, 2, 5] degrees at Re=100k and overlay against ComparativasReales/NACA0012_100k_Xfoil.csv, computing RMSE on Cl. Output PNG plot and CSV.",
+      "use_local_model": false
+    }
+  ],
+  "validation_criteria": [
+    "Cl(NACA0012, alpha=0, Re=100k) < 0.005 con corregir_deriva_vertical=False",
+    "|Cd(Re=100k) - Cd(Re=1M)| / Cd(Re=1M) > 0.15 con usar_wale=True",
+    "iterations-per-second >= 3 (objetivo 5+, minimo aceptable 2)",
+    "div_max_final * L_ref / U_ref < tol_elegido en ambos Re",
+    "Polar alpha=[-5,-2,0,2,5] tiene RMSE(Cl vs Xfoil) < 0.1",
+    "0 NaN en 2000 iters de validacion"
+  ]
+}

@@ -16,7 +16,18 @@
       "Read(//c/Users/andre/anaconda3/**)",
       "Read(//c/Users/andre/miniconda3/**)",
       "Read(//c/ProgramData/anaconda3/**)",
-      "PowerShell(conda env list 2>&1)"
+      "PowerShell(conda env list 2>&1)",
+      "Bash(findstr /n \"nu_t_max_permitido\\\\|nu_t_max_fisica\\\\|100.0\" Simulador2D.py)",
+      "Bash(python -c \"import validacion_simetria; m = validacion_simetria.run_one\\(Re=1e5, usar_wale=False, tag='smoke', silenciar=False, iteraciones=50, guardado=10\\)\")",
+      "Bash(python -c \"import sys; print\\(sys.executable\\); print\\(sys.version\\)\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import cupy; print\\('cupy', cupy.__version__\\)\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import validacion_simetria; m = validacion_simetria.run_one\\(Re=1e5, usar_wale=False, tag='smoke', silenciar=True, iteraciones=50, guardado=10\\); print\\(m\\)\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --baseline)",
+      "Bash(tasklist //FI \"IMAGENAME eq python.exe\")",
+      "Bash(tasklist //FI \"PID eq 3400\")",
+      "Bash(tasklist)",
+      "Bash(grep -E \"^python.exe +[0-9]+ +Console +[0-9]+ +[0-9]{1,3}\\\\.[0-9]{3}\\\\.[0-9]{3}\")",
+      "Bash(grep -E \"^python.exe +[0-9]+ +Console +[0-9]+ +[0-9]{1,3}\\\\.[0-9]{3}\")"
     ]
   }
 }
