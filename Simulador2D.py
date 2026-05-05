@@ -1607,6 +1607,8 @@ class Mesh:
             donde ν_eff = ν + ν_t(x,y)
         """
         nu_f = float(nu)
+        # Expone nu molecular para el cap relativo de WALE
+        self._nu_molecular = nu_f
         if nu_f <= 0.0 and not usar_wale:
             return
 
@@ -1782,12 +1784,15 @@ class Mesh:
         )
         return div
 
-    def compute_wale_viscosity(self, Cw=0.325, eps=1e-16):
+    def compute_wale_viscosity(self, Cw=None, eps=1e-16):
         """
         Calcula la viscosidad sub-malla ν_t según el modelo WALE (Nicoud & Ducros).
         Devuelve un array `nu_t` con la misma forma que `self.u`.
         Todo cálculo en GPU (cupy, float32).
+        Si Cw es None, lee `self._wale_Cw` (fallback 0.325).
         """
+        if Cw is None:
+            Cw = getattr(self, '_wale_Cw', 0.325)
         dx = self.dx; dy = self.dy
         u = self.u.astype(cp.float32, copy=False)
         v = self.v.astype(cp.float32, copy=False)
@@ -1859,11 +1864,9 @@ class Mesh:
         nu_t = cp.where(cp.isfinite(nu_t), nu_t, cp.float32(0.0))
         nu_t = cp.maximum(nu_t, cp.float32(0.0))
         
-        # ⭐ LIMITAR valores extremos de nu_t que pueden desestabilizar la simulación
-        # En zonas con gradientes muy altos (cerca de paredes), WALE puede dar valores excesivos
-        # Limitar nu_t a un múltiplo razonable de la escala física: nu_t_max ~ U*L / Re_crítico
-        # Para Reynolds típicos (10^3 - 10^6), limitar nu_t a ~100× el tamaño de celda × velocidad
-        nu_t_max_fisica = 100.0 * Delta  # límite físico basado en escala de malla
+        # Cap basado en tamaño de celda (preservar escala turbulenta vs malla).
+        # Cap relativo a nu molecular probado y revirtido: empeoró Cl(α=10°).
+        nu_t_max_fisica = 100.0 * Delta
         nu_t = cp.minimum(nu_t, nu_t_max_fisica)
         
         try:
@@ -2182,7 +2185,8 @@ class Mesh:
             'n_outer_used': n_outer,
         }
 
-    def project_multigrid(self, rho_sim, dt, tol_div=1e-2,
+    def project_multigrid(self, rho_sim, dt, tol_div=None,
+                          tol_div_rel=1e-3,
                           max_outer=8, cycles_per_outer=5,
                           niveles_max=0, pre_suavizado=3, post_suavizado=3,
                           omega=1.15, verbose=False,
@@ -2238,6 +2242,18 @@ class Mesh:
         grid_k = (total_cells + block_sz - 1) // block_sz
         nx_i32 = cp.int32(nx)
         ny_i32 = cp.int32(ny)
+
+        # --- tol_div adimensional: si tol_div es None, usar tol_div_rel·U_ref/L_ref ---
+        # Razon: |div(u)| escala como U/L. tol_div absoluto fijo distorsiona la
+        # comparacion entre Re distintos (la convergencia del solver de presion
+        # depende del Re via dt y la velocidad maxima que el flujo desarrolla).
+        if tol_div is None:
+            try:
+                U_ref = float(cp.max(cp.abs(self.u))) + 1e-30
+                L_ref = float(self.Lx)  # escala global del dominio, no dx_min
+                tol_div = float(tol_div_rel) * U_ref / max(L_ref, 1e-30)
+            except Exception:
+                tol_div = 1e-2  # fallback compat
 
         # --- Inicializar jerarquía multigrid si hace falta ---
         if not self._mg_initialized:
@@ -3423,6 +3439,12 @@ class Mesh:
         free = ~self.solid
         return float(cp.mean(cp.abs(div[free])))
 
+    def compute_divergence_max(self):
+        """Divergencia máxima absoluta en celdas de fluido (detecta problemas locales cerca del perfil)."""
+        div = self._compute_divergence_field()
+        free = ~self.solid
+        return float(cp.max(cp.abs(div[free])))
+
     def remove_vertical_drift(self, target_v_mean=0.0, relax=0.1, max_abs_correction=None):
         """
         Elimina deriva global de la componente vertical en celdas de fluido.
@@ -3551,28 +3573,40 @@ class Mesh:
             show: si True, muestra la figura
             return_fig: si True, retorna la figura en lugar de mostrarla
         """
-        # Convertir a NumPy
-        div = cp.asnumpy(self.divvector).flatten()
-        
-        # Crear eje X en iteraciones reales
-        x_iter = np.arange(len(div)) * self.guardado
-        
-        # Crear figura
-        fig = plt.figure(figsize=(10, 6))
-        plt.semilogy(x_iter, div, linewidth=2, color='red', label='max|div(u)|')
-        plt.xlabel(f"Iteración (guardado cada {self.guardado})", fontsize=11)
-        plt.ylabel("Divergencia máxima |div(u)|", fontsize=11)
-        plt.title("Evolución de la Divergencia (Incompresibilidad)", fontsize=13, fontweight='bold')
-        plt.grid(True, alpha=0.3, which='both')
-        plt.legend(fontsize=10)
-        
-        # Añadir línea de referencia
-        if len(div) > 0:
-            mean_div = np.mean(div)
-            plt.axhline(y=mean_div, color='orange', linestyle='--', 
-                       linewidth=1.5, label=f'Promedio: {mean_div:.2e}')
-            plt.legend(fontsize=10)
-        
+        # Convertir a NumPy (divergencia adimensional: |div(u)| / (U_inf/chord))
+        div_mean = cp.asnumpy(self.divvector).flatten()
+        valid = div_mean > 0
+        div_mean = div_mean[valid]
+
+        div_max = None
+        if hasattr(self, 'divvector_max'):
+            _dm = cp.asnumpy(self.divvector_max).flatten()
+            div_max = _dm[valid] if len(_dm) == len(valid) else _dm[:len(div_mean)]
+
+        x_iter = np.arange(len(div_mean)) * self.guardado
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.semilogy(x_iter, div_mean, linewidth=2, color='red', label='mean |div(u)| / (U/chord)')
+        if div_max is not None and len(div_max) == len(div_mean):
+            ax.semilogy(x_iter, div_max, linewidth=1.5, color='steelblue',
+                        linestyle='--', label='max |div(u)| / (U/chord)')
+
+        # Zonas de referencia (escala chord)
+        ax.axhspan(0, 0.01, alpha=0.10, color='green', label='Bien resuelto < 0.01')
+        ax.axhspan(0.01, 0.10, alpha=0.08, color='orange', label='Aceptable 0.01 – 0.10')
+
+        if len(div_mean) > 0:
+            mean_val = np.mean(div_mean)
+            ax.axhline(y=mean_val, color='orange', linestyle=':',
+                       linewidth=1.5, label=f'Promedio media: {mean_val:.2e}')
+
+        ax.set_xlabel(f"Iteración (guardado cada {self.guardado})", fontsize=11)
+        ax.set_ylabel("|div(u)| / (U_inf / chord)  [adimensional]", fontsize=11)
+        ax.set_title("Incompresibilidad — divergencia normalizada (ref: chord)\n"
+                     "mean=rojo  max=azul  |  < 0.01 bien,  > 0.10 solver insuficiente",
+                     fontsize=11, fontweight='bold')
+        ax.grid(True, alpha=0.3, which='both')
+        ax.legend(fontsize=9)
         plt.tight_layout()
         
         if return_fig:
@@ -4547,6 +4581,7 @@ def main(
     dx_max=None,       # Espaciado máximo absoluto en X (si se define, pisa ratio_max_malla)
     dy_max=None,       # Espaciado máximo absoluto en Y (si se define, pisa ratio_max_malla)
     usar_wale=False,   # Si True, activa modelo de turbulencia WALE
+    wale_Cw=0.325,     # Coeficiente WALE. 0.325 estandar 3D; en 2D probar 0.10-0.20
     
     # Posición del perfil
     cx=2,
@@ -4654,7 +4689,7 @@ def main(
     # Perfil turbo opcional: más agresivo (prioriza rendimiento)
     if mg_modo_turbo:
         mg_max_outer = min(mg_max_outer, 4)
-        mg_cycles_per_outer = min(mg_cycles_per_outer, 3)
+        mg_cycles_per_outer = min(mg_cycles_per_outer, 5)  # era 3, benchmark muestra 5 óptimo
         mg_pre_suavizado = min(mg_pre_suavizado, 1)
         mg_post_suavizado = min(mg_post_suavizado, 1)
         mg_guard_residual_every_outer = False
@@ -4662,7 +4697,7 @@ def main(
         mg_apply_ibm_each_outer = False
         mg_rollback_on_nan = False
         mg_compute_div_after = False
-        print("[MG-turbo] activo: max_outer<=4, cycles<=3, pre/post<=1, guard outer0, IBM por outer OFF, rollback OFF")
+        print("[MG-turbo] activo: max_outer<=4, cycles<=5, pre/post<=1, IBM por outer OFF, rollback OFF")
 
     # ============================================================
     # GENERAR MALLA VARIABLE (stretching 1D)
@@ -4686,6 +4721,7 @@ def main(
     # Crear malla con densidad variable
     mesh_gruesa = Mesh(Lx, Ly, p0, v0x, v0y, dx_min, dy_min if dy_min else dx_min,
                        usar_wale=usar_wale, X_1d=X_1d, Y_1d=Y_1d)
+    mesh_gruesa._wale_Cw = float(wale_Cw)
 
     # Ángulo de geometría: si hay plan_polar, cargar a 0° (el flujo se rota)
     alpha_geom = 0.0 if (plan_polar is not None and len(plan_polar) > 0) else alpha_deg
@@ -4762,6 +4798,7 @@ def main(
     mesh_gruesa.cdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.clvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.divvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_gruesa.divvector_max = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.clcdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
     
@@ -4875,6 +4912,7 @@ def main(
             mesh_gruesa.cdvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.clvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.divvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
+            mesh_gruesa.divvector_max = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.clcdvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
         
@@ -5049,6 +5087,27 @@ def main(
             return
     
     # ============================================================
+    # WARMUP: forzar JIT de kernels CuPy + RawKernel antes del bucle
+    # Evita que la "iter 0" tarde 30-90s y parezca cuelgue (especialmente en F5/Debug)
+    # ============================================================
+    print("[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...", flush=True)
+    try:
+        _t_w = time.time()
+        # Forzar JIT de elementwise/reduce
+        _ = float(cp.sum(mesh_gruesa.u))
+        _ = float(cp.max(cp.sqrt(mesh_gruesa.u * mesh_gruesa.u + mesh_gruesa.v * mesh_gruesa.v)))
+        # Forzar JIT del WALE si aplica (también setea _nu_molecular del cap)
+        mesh_gruesa._nu_molecular = float(nu)
+        if mesh_gruesa.usar_wale:
+            _nu_t = mesh_gruesa.compute_wale_viscosity()
+            del _nu_t
+        # Sincronizar GPU para asegurar que la JIT terminó
+        cp.cuda.Stream.null.synchronize()
+        print(f"[WARMUP] OK ({time.time() - _t_w:.1f}s)", flush=True)
+    except Exception as _e:
+        print(f"[WARMUP] omitido: {_e}", flush=True)
+
+    # ============================================================
     # BUCLE PRINCIPAL: MALLA SIMPLE (SOLO GRUESA)
     # ============================================================
     for it in tqdm(range(iteraciones)):
@@ -5125,7 +5184,8 @@ def main(
         t0 = time.time()
         mg_info = mesh_gruesa.project_multigrid(
             rho, dt_use,
-            tol_div=divergencia,
+            tol_div=None,          # usa tol_div_rel·U/Lx (adimensional)
+            tol_div_rel=divergencia,
             max_outer=mg_max_outer,
             cycles_per_outer=mg_cycles_per_outer,
             pre_suavizado=mg_pre_suavizado,
@@ -5335,7 +5395,11 @@ def main(
             except Exception:
                 ratio = np.nan
             mesh_gruesa.clcdvector[it // guardado] = ratio
-            mesh_gruesa.divvector[it // guardado] = mesh_gruesa.compute_divergence_mean()
+            _div_abs = mesh_gruesa.compute_divergence_mean()
+            _div_max_abs = mesh_gruesa.compute_divergence_max()
+            _div_scale = float(U_inf) / max(float(chord), 1e-30)  # escala convectiva al chord
+            mesh_gruesa.divvector[it // guardado] = _div_abs / max(_div_scale, 1e-30)
+            mesh_gruesa.divvector_max[it // guardado] = _div_max_abs / max(_div_scale, 1e-30)
             mesh_gruesa.update_cp_profile(mu, rho)
 
             # Diagnóstico local de balance de Lift por zonas de cuerda
@@ -5449,6 +5513,7 @@ def main(
                             mesh_gruesa.cdvector[last_idx+1:] = mesh_gruesa.cdvector[last_idx]
                             mesh_gruesa.clvector[last_idx+1:] = mesh_gruesa.clvector[last_idx]
                             mesh_gruesa.divvector[last_idx+1:] = mesh_gruesa.divvector[last_idx]
+                            mesh_gruesa.divvector_max[last_idx+1:] = mesh_gruesa.divvector_max[last_idx]
                             mesh_gruesa.clcdvector[last_idx+1:] = mesh_gruesa.clcdvector[last_idx]
                     
                     # Salir del bucle solo si stop_on_convergence está activado
@@ -5477,6 +5542,7 @@ def main(
         mesh_gruesa.cdvector = mesh_gruesa.cdvector[:idx_final]
         mesh_gruesa.clvector = mesh_gruesa.clvector[:idx_final]
         mesh_gruesa.divvector = mesh_gruesa.divvector[:idx_final]
+        mesh_gruesa.divvector_max = mesh_gruesa.divvector_max[:idx_final]
         mesh_gruesa.clcdvector = mesh_gruesa.clcdvector[:idx_final]
         mesh_gruesa.mg_cycles_vector = mesh_gruesa.mg_cycles_vector[:it+1]
         iteraciones = it  # Actualizar para reportes
@@ -5644,9 +5710,9 @@ if __name__ == "__main__":
         Ly=8,  
         cx=2,
         CFL=0.5,
-        alpha_deg=5,
+        alpha_deg=10,
         polar_descarte=0.3,
-        iteraciones=2000,
+        iteraciones=3000,
         divergencia=1e-1,
         v0x=1,
         v0y=0,
@@ -5661,11 +5727,12 @@ if __name__ == "__main__":
         graficos=True,
         save_frames=False, 
         frames_dir_grueso="",
-        usar_wale=False,
+        usar_wale=True,
+        wale_Cw=0.1,   # 2D-tuned (estandar 3D=0.325 sobre-disipa en 2D)
         stop_on_convergence=False,
         live_view=True,
         mostrar_malla=True,
-        mg_modo_turbo=True,
+        mg_modo_turbo=False,
         
         
     )

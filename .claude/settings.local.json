@@ -38,7 +38,13 @@
       "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\andre\\\\Desktop\\\\Optimizador\\\\validacion_resultados\\\\sweep_tol_postB.log' -Tail 8\")",
       "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --tag post_mesh_sym)",
       "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\andre\\\\Desktop\\\\Optimizador\\\\validacion_resultados\\\\post_mesh_sym.log' -Tail 5\")",
-      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --tag post_mg_levels0)"
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --tag post_mg_levels0)",
+      "Bash(python -c \"import Simulador2D; print\\('OK'\\)\")",
+      "Bash(C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe -c \"import cupy; print\\(cupy.__version__\\)\")",
+      "Bash(\"C:/Users/andre/AppData/Local/Programs/Python/Python312/python.exe\" -c \"import cupy; print\\(cupy.__version__\\)\")",
+      "Bash(\"C:/Users/andre/AppData/Local/Programs/Python/Python312/python.exe\" -c \"import Simulador2D; print\\('OK'\\)\")",
+      "Bash(ITER=15000 \"C:/Users/andre/AppData/Local/Programs/Python/Python312/python.exe\" validacion_re_alpha10.py)",
+      "Bash(awk 'NR>=4380 && NR<=4500 {print NR\": \"$0}' Simulador2D.py)"
     ]
   }
 }
