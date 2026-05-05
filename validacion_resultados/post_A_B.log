@@ -1,0 +1,63 @@
+  0%|          | 0/500 [00:00<?, ?it/s]  0%|          | 0/500 [00:01<?, ?it/s]
+Traceback (most recent call last):
+  File "C:\Users\andre\Desktop\Optimizador\validacion_simetria.py", line 225, in run_baseline
+    m = run_one(Re=Re, usar_wale=usar_wale, tag=etiqueta,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\andre\Desktop\Optimizador\validacion_simetria.py", line 207, in run_one
+    mesh = simular_main(**cfg)
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\andre\Desktop\Optimizador\Simulador2D.py", line 5136, in main
+    raise RuntimeError(f"Simulación abortada: {motivo} en iteración {it}")
+RuntimeError: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+  0%|          | 0/500 [00:00<?, ?it/s]  0%|          | 0/500 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "C:\Users\andre\Desktop\Optimizador\validacion_simetria.py", line 225, in run_baseline
+    m = run_one(Re=Re, usar_wale=usar_wale, tag=etiqueta,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\andre\Desktop\Optimizador\validacion_simetria.py", line 207, in run_one
+    mesh = simular_main(**cfg)
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\andre\Desktop\Optimizador\Simulador2D.py", line 5136, in main
+    raise RuntimeError(f"Simulación abortada: {motivo} en iteración {it}")
+RuntimeError: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+  0%|          | 0/500 [00:00<?, ?it/s]  0%|          | 0/500 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "C:\Users\andre\Desktop\Optimizador\validacion_simetria.py", line 225, in run_baseline
+    m = run_one(Re=Re, usar_wale=usar_wale, tag=etiqueta,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\andre\Desktop\Optimizador\validacion_simetria.py", line 207, in run_one
+    mesh = simular_main(**cfg)
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\andre\Desktop\Optimizador\Simulador2D.py", line 5136, in main
+    raise RuntimeError(f"Simulación abortada: {motivo} en iteración {it}")
+RuntimeError: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+  0%|          | 0/500 [00:00<?, ?it/s]  0%|          | 0/500 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "C:\Users\andre\Desktop\Optimizador\validacion_simetria.py", line 225, in run_baseline
+    m = run_one(Re=Re, usar_wale=usar_wale, tag=etiqueta,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\andre\Desktop\Optimizador\validacion_simetria.py", line 207, in run_one
+    mesh = simular_main(**cfg)
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\andre\Desktop\Optimizador\Simulador2D.py", line 5136, in main
+    raise RuntimeError(f"Simulación abortada: {motivo} en iteración {it}")
+RuntimeError: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+
+[run] tag=post_A_B__Re1e+05__wale0  Re=1.00e+05  nu=1.00e-05  WALE=False  iter=500
+[run] ERROR en post_A_B__Re1e+05__wale0: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+
+[run] tag=post_A_B__Re1e+05__wale1  Re=1.00e+05  nu=1.00e-05  WALE=True  iter=500
+[run] ERROR en post_A_B__Re1e+05__wale1: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+
+[run] tag=post_A_B__Re1e+06__wale0  Re=1.00e+06  nu=1.00e-06  WALE=False  iter=500
+[run] ERROR en post_A_B__Re1e+06__wale0: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+
+[run] tag=post_A_B__Re1e+06__wale1  Re=1.00e+06  nu=1.00e-06  WALE=True  iter=500
+[run] ERROR en post_A_B__Re1e+06__wale1: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+
+[save] resultados -> C:\Users\andre\Desktop\Optimizador\validacion_resultados\post_A_B.json
+
+================================================================================================
+tag                                            Re  WALE    it/s        Cl        Cd   div_max    nut/nu
+================================================================================================
+================================================================================================

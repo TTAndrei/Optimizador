@@ -1,0 +1,33 @@
+{
+  "tag": "post_A_B",
+  "timestamp": "2026-05-05 02:30:43",
+  "config_base": {
+    "filepath": "NACA_0012",
+    "chord": 1.0,
+    "alpha_deg": 0.0,
+    "Lx": 12.0,
+    "Ly": 8.0,
+    "cx": 2.0,
+    "cy": null,
+    "dx_min": 0.001,
+    "factor_expansion": 1.1,
+    "ancho_zona_fina_x": 1.2,
+    "ancho_zona_fina_y": 1.0,
+    "v0x": 1.0,
+    "v0y": 0.0,
+    "rho": 1.0,
+    "p0": 0.0,
+    "CFL": 0.5,
+    "divergencia": 0.1,
+    "iteraciones": 500,
+    "guardado": 25,
+    "mg_modo_turbo": true,
+    "graficos": false,
+    "save_frames": false,
+    "live_view": false,
+    "mostrar_malla": false,
+    "stop_on_convergence": false,
+    "corregir_deriva_vertical": false
+  },
+  "runs": []
+}

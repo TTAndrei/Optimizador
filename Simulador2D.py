@@ -87,15 +87,32 @@ def generar_malla_estirada(L, x_centro, dx_min, factor_expansion=1.05,
     if X_1d[-1] != L:
         X_1d = np.concatenate([X_1d, [L]])
 
+    # --- Forzar simetria exacta cuando el dominio esta centrado en x_centro ---
+    # Si abs(x_centro - L/2) << L, generamos espejo perfecto: mitad derecha
+    # se refleja hacia la izquierda. Necesario para que stencils d1/d2 sean
+    # simetricos (sino acumulan error asimetrico en el solver de presion).
+    if abs(2.0 * x_centro - L) < 1e-9 * max(L, 1.0):
+        right = X_1d[X_1d >= x_centro]
+        left_mirrored = 2.0 * x_centro - right[::-1]
+        X_1d = np.concatenate([left_mirrored[:-1], right])
+        # extremos exactos tras mirror
+        X_1d[0] = 0.0
+        X_1d[-1] = L
+
     return X_1d.astype(np.float64)
 
 
-def calcular_metricas_1d(pos_1d_gpu):
+def calcular_metricas_1d(pos_1d_gpu, pos_1d_f64=None):
     """
     Dada una secuencia monótona de posiciones (CuPy float32, longitud N),
     devuelve las distancias a vecinos y los coeficientes de diferencias
     finitas (primera y segunda derivada) en stencil de 3 puntos para
     malla no‑uniforme.
+
+    Si se pasa pos_1d_f64 (numpy float64), los pesos se calculan en float64
+    y se castean a float32 al final. Esto preserva la simetria exacta de
+    los pesos cuando la malla es simetrica, evitando que ruido de cast f32
+    en zonas alejadas del origen rompa la simetria del solver.
 
     Retorna dict con arrays CuPy float32 de longitud N:
         dx_e   – distancia al vecino Este  (padded en borde derecho)
@@ -103,6 +120,36 @@ def calcular_metricas_1d(pos_1d_gpu):
         d1_W, d1_C, d1_E  – coeficientes ∂/∂x
         d2_W, d2_C, d2_E  – coeficientes ∂²/∂x²
     """
+    if pos_1d_f64 is not None:
+        # Calcula pesos en CPU/numpy float64 para preservar simetria exacta
+        N = len(pos_1d_f64)
+        diffs = np.diff(pos_1d_f64)          # f64
+        dx_e = np.zeros(N, dtype=np.float64)
+        dx_w = np.zeros(N, dtype=np.float64)
+        dx_e[:-1] = diffs;  dx_e[-1] = diffs[-1]
+        dx_w[1:]  = diffs;  dx_w[0]  = diffs[0]
+        he = dx_e
+        hw = dx_w
+        hsum = he + hw
+        eps = 1e-300
+        d1_W_f64 = -he / (hw * hsum + eps)
+        d1_C_f64 = (he - hw) / (he * hw + eps)
+        d1_E_f64 =  hw / (he * hsum + eps)
+        d2_W_f64 =  2.0 / (hw * hsum + eps)
+        d2_C_f64 = -2.0 / (he * hw + eps)
+        d2_E_f64 =  2.0 / (he * hsum + eps)
+        # Cast a f32 GPU
+        return {
+            'dx_e': cp.asarray(dx_e, dtype=cp.float32),
+            'dx_w': cp.asarray(dx_w, dtype=cp.float32),
+            'd1_W': cp.asarray(d1_W_f64, dtype=cp.float32),
+            'd1_C': cp.asarray(d1_C_f64, dtype=cp.float32),
+            'd1_E': cp.asarray(d1_E_f64, dtype=cp.float32),
+            'd2_W': cp.asarray(d2_W_f64, dtype=cp.float32),
+            'd2_C': cp.asarray(d2_C_f64, dtype=cp.float32),
+            'd2_E': cp.asarray(d2_E_f64, dtype=cp.float32),
+        }
+
     N = len(pos_1d_gpu)
     dx_e = cp.zeros(N, dtype=cp.float32)
     dx_w = cp.zeros(N, dtype=cp.float32)
@@ -188,8 +235,10 @@ class Mesh:
             self.dy = dy
 
         # ---- Métricas 1D pre‑computadas --------------------------------
-        met_x = calcular_metricas_1d(self.X_1d)
-        met_y = calcular_metricas_1d(self.Y_1d)
+        # Usa f64 para calcular los pesos: preserva simetria exacta cuando
+        # la malla es simetrica (evita ruido de cast f32 cerca de extremos).
+        met_x = calcular_metricas_1d(self.X_1d, pos_1d_f64=self.X_1d_f64)
+        met_y = calcular_metricas_1d(self.Y_1d, pos_1d_f64=self.Y_1d_f64)
 
         # Distancias a vecinos (1D, se broadcastean a 2D)
         self.dx_e = met_x['dx_e']   # (nx,)
@@ -797,10 +846,15 @@ class Mesh:
         ny, nx = self.p.shape
         self._mg_niveles = max(0, min(niveles_max, int(np.log2(min(ny, nx))) - 2))
 
-        def _coarsen_mask(mask):
+        # Offsets por nivel (siempre 0 = coarsen estandar).
+        self._mg_x_start = [0] * (self._mg_niveles + 1)
+        self._mg_y_start = [0] * (self._mg_niveles + 1)
+
+        def _coarsen_mask(mask, sx=0, sy=0):
             ny_m, nx_m = mask.shape
-            ny_c, nx_c = ny_m // 2, nx_m // 2
-            m = mask[:ny_c*2, :nx_c*2]
+            nx_c = (nx_m - sx) // 2
+            ny_c = (ny_m - sy) // 2
+            m = mask[sy:sy+ny_c*2, sx:sx+nx_c*2]
             return m[0::2, 0::2] | m[1::2, 0::2] | m[0::2, 1::2] | m[1::2, 1::2]
 
         # Jerarquía de máscaras de sólidos (nivel 0 = fino)
@@ -814,7 +868,9 @@ class Mesh:
         if self._mg_hay_dirichlet:
             self._mg_fixed_mask_flat = self.fixed_pressure_mask.ravel()
             for lvl in range(self._mg_niveles):
-                self._mg_dirichlet.append(_coarsen_mask(self._mg_dirichlet[-1]))
+                sx = self._mg_x_start[lvl + 1]
+                sy = self._mg_y_start[lvl + 1]
+                self._mg_dirichlet.append(_coarsen_mask(self._mg_dirichlet[-1], sx, sy))
         else:
             self._mg_fixed_mask_flat = None
             for lvl in range(self._mg_niveles):
@@ -830,9 +886,12 @@ class Mesh:
         self._mg_d2y_N = []
         X_1d_lvl = self.X_1d
         Y_1d_lvl = self.Y_1d
+        # Mantener tambien las posiciones en f64 para preservar simetria de pesos
+        X_1d_f64_lvl = self.X_1d_f64
+        Y_1d_f64_lvl = self.Y_1d_f64
         for lvl in range(self._mg_niveles + 1):
-            met_x = calcular_metricas_1d(X_1d_lvl)
-            met_y = calcular_metricas_1d(Y_1d_lvl)
+            met_x = calcular_metricas_1d(X_1d_lvl, pos_1d_f64=X_1d_f64_lvl)
+            met_y = calcular_metricas_1d(Y_1d_lvl, pos_1d_f64=Y_1d_f64_lvl)
             self._mg_d2x_W.append(met_x['d2_W'])
             self._mg_d2x_C.append(met_x['d2_C'])
             self._mg_d2x_E.append(met_x['d2_E'])
@@ -840,50 +899,56 @@ class Mesh:
             self._mg_d2y_C.append(met_y['d2_C'])
             self._mg_d2y_N.append(met_y['d2_E'])
             if lvl < self._mg_niveles:
-                # Coarsen positions: take every-other node
-                nx_c = len(X_1d_lvl) // 2
-                ny_c = len(Y_1d_lvl) // 2
-                X_1d_lvl = X_1d_lvl[:nx_c*2:2]
-                Y_1d_lvl = Y_1d_lvl[:ny_c*2:2]
+                # Coarsen positions con start_offset que preserva el centro
+                # cuando la malla es simetrica respecto al centro del dominio.
+                sx = self._mg_x_start[lvl + 1]
+                sy = self._mg_y_start[lvl + 1]
+                nx_c = (len(X_1d_lvl) - sx) // 2
+                ny_c = (len(Y_1d_lvl) - sy) // 2
+                X_1d_lvl = X_1d_lvl[sx:sx+nx_c*2:2]
+                Y_1d_lvl = Y_1d_lvl[sy:sy+ny_c*2:2]
+                X_1d_f64_lvl = X_1d_f64_lvl[sx:sx+nx_c*2:2]
+                Y_1d_f64_lvl = Y_1d_f64_lvl[sy:sy+ny_c*2:2]
 
         # Pre-computar pesos de prolongación por nivel (malla no-uniforme)
         # wx[jf]=0 si jf par, wx[jf]=(x_f[jf]-x_f[jf-1])/(x_f[jf+1]-x_f[jf-1]) si impar
+        # Calculamos en f64 (CPU) y casteamos a f32 al final → preserva simetria.
         self._mg_prolong_wx = []
         self._mg_prolong_wy = []
-        X_1d_lvl = self.X_1d
-        Y_1d_lvl = self.Y_1d
+        X_1d_f64_lvl = self.X_1d_f64
+        Y_1d_f64_lvl = self.Y_1d_f64
         for lvl in range(self._mg_niveles + 1):
-            nx_f = len(X_1d_lvl)
-            ny_f = len(Y_1d_lvl)
-            wx = cp.zeros(nx_f, dtype=cp.float32)
-            wy = cp.zeros(ny_f, dtype=cp.float32)
-            # Pesos x: para índices impares
+            nx_f = len(X_1d_f64_lvl)
+            ny_f = len(Y_1d_f64_lvl)
+            wx_f64 = np.zeros(nx_f, dtype=np.float64)
+            wy_f64 = np.zeros(ny_f, dtype=np.float64)
             for jf in range(1, nx_f, 2):
                 if jf + 1 < nx_f:
-                    denom = float(X_1d_lvl[jf + 1] - X_1d_lvl[jf - 1])
+                    denom = X_1d_f64_lvl[jf + 1] - X_1d_f64_lvl[jf - 1]
                     if abs(denom) > 1e-30:
-                        wx[jf] = float(X_1d_lvl[jf] - X_1d_lvl[jf - 1]) / denom
+                        wx_f64[jf] = (X_1d_f64_lvl[jf] - X_1d_f64_lvl[jf - 1]) / denom
                     else:
-                        wx[jf] = 0.5
+                        wx_f64[jf] = 0.5
                 else:
-                    wx[jf] = 0.5
-            # Pesos y: para índices impares
+                    wx_f64[jf] = 0.5
             for if_ in range(1, ny_f, 2):
                 if if_ + 1 < ny_f:
-                    denom = float(Y_1d_lvl[if_ + 1] - Y_1d_lvl[if_ - 1])
+                    denom = Y_1d_f64_lvl[if_ + 1] - Y_1d_f64_lvl[if_ - 1]
                     if abs(denom) > 1e-30:
-                        wy[if_] = float(Y_1d_lvl[if_] - Y_1d_lvl[if_ - 1]) / denom
+                        wy_f64[if_] = (Y_1d_f64_lvl[if_] - Y_1d_f64_lvl[if_ - 1]) / denom
                     else:
-                        wy[if_] = 0.5
+                        wy_f64[if_] = 0.5
                 else:
-                    wy[if_] = 0.5
-            self._mg_prolong_wx.append(wx)
-            self._mg_prolong_wy.append(wy)
+                    wy_f64[if_] = 0.5
+            self._mg_prolong_wx.append(cp.asarray(wx_f64, dtype=cp.float32))
+            self._mg_prolong_wy.append(cp.asarray(wy_f64, dtype=cp.float32))
             if lvl < self._mg_niveles:
-                nx_c = len(X_1d_lvl) // 2
-                ny_c = len(Y_1d_lvl) // 2
-                X_1d_lvl = X_1d_lvl[:nx_c*2:2]
-                Y_1d_lvl = Y_1d_lvl[:ny_c*2:2]
+                sx = self._mg_x_start[lvl + 1]
+                sy = self._mg_y_start[lvl + 1]
+                nx_c = (len(X_1d_f64_lvl) - sx) // 2
+                ny_c = (len(Y_1d_f64_lvl) - sy) // 2
+                X_1d_f64_lvl = X_1d_f64_lvl[sx:sx+nx_c*2:2]
+                Y_1d_f64_lvl = Y_1d_f64_lvl[:ny_c*2:2]
 
         # Buffers pre-alocados por nivel
         self._mg_bufs = []
@@ -2119,14 +2184,15 @@ class Mesh:
 
     def project_multigrid(self, rho_sim, dt, tol_div=1e-2,
                           max_outer=8, cycles_per_outer=5,
-                          niveles_max=8, pre_suavizado=3, post_suavizado=3,
+                          niveles_max=0, pre_suavizado=3, post_suavizado=3,
                           omega=1.15, verbose=False,
                           modo_adaptativo=True,
                           guard_residual_every_outer=True,
                           adaptive_outer0_cycles=False,
                           apply_ibm_each_outer=True,
                           rollback_on_nan=True,
-                          compute_div_after=True):
+                          compute_div_after=True,
+                          usar_adjoint_correction=False):
         """
         Proyección incompresible con defect-correction iterativo + multigrid.
         Smoother: Red-Black Gauss-Seidel SOR (CUDA kernel in-place).
@@ -2203,6 +2269,14 @@ class Mesh:
         restrict_k = self._restrict_kernel
         prolong_k = self._prolongate_add_kernel
         vc_kernel = self._velocity_correction_kernel
+        adj_kernel = self._adjoint_gradient_kernel
+
+        # Buffers para gradiente adjunto (lazy alloc, reuso entre llamadas)
+        if usar_adjoint_correction:
+            if (not hasattr(self, '_grad_u_buf')
+                    or self._grad_u_buf.shape != self.u.shape):
+                self._grad_u_buf = cp.empty_like(self.u)
+                self._grad_v_buf = cp.empty_like(self.v)
 
         omega_f32 = cp.float32(omega)
         p0_i32    = cp.int32(0)
@@ -2533,18 +2607,32 @@ class Mesh:
             # Guardar columna de salida: no aplicamos corrección allí (ver rhs[:,-2]=0)
             u_out_save[:] = self.u[:, -2]
             v_out_save[:] = self.v[:, -2]
-            vc_kernel(
-                (grid_k,), (block_sz,),
-                (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
-                 coef_eff,
-                 self.d1x_W, self.d1x_C, self.d1x_E,
-                 self.d1y_S, self.d1y_C, self.d1y_N,
-                 nx_i32, ny_i32))
+            if usar_adjoint_correction:
+                # D^T·p (adjoint exacto del operador divergencia) → grad_u/v
+                adj_kernel(
+                    (grid_k,), (block_sz,),
+                    (p_corr.ravel(), solid_flat,
+                     self._grad_u_buf.ravel(), self._grad_v_buf.ravel(),
+                     self.d1x_W, self.d1x_C, self.d1x_E,
+                     self.d1y_S, self.d1y_C, self.d1y_N,
+                     nx_i32, ny_i32))
+                self.u -= coef_eff * self._grad_u_buf
+                self.v -= coef_eff * self._grad_v_buf
+            else:
+                vc_kernel(
+                    (grid_k,), (block_sz,),
+                    (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
+                     coef_eff,
+                     self.d1x_W, self.d1x_C, self.d1x_E,
+                     self.d1y_S, self.d1y_C, self.d1y_N,
+                     nx_i32, ny_i32))
             # Restaurar columna de salida (la proyección no actúa allí)
             self.u[:, -2] = u_out_save
             self.v[:, -2] = v_out_save
 
             if apply_ibm_each_outer:
+                # Paso B: BC dominio antes del IBM para que ghost lea u/v limpios
+                self.apply_boundaries(after_projection=True)
                 self.apply_ghost_cell_bc()
                 self.reforzar_impermeabilidad()
 
@@ -2581,6 +2669,8 @@ class Mesh:
         if hay_dirichlet:
             self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
 
+        # Paso B: BC dominio antes del IBM (ghost lee u/v consistentes con BCs)
+        self.apply_boundaries(after_projection=True)
         self.apply_ghost_cell_bc()
         self.reforzar_impermeabilidad()
         self.apply_boundaries(after_projection=True)
@@ -5554,7 +5644,7 @@ if __name__ == "__main__":
         Ly=8,  
         cx=2,
         CFL=0.5,
-        alpha_deg=0,
+        alpha_deg=5,
         polar_descarte=0.3,
         iteraciones=2000,
         divergencia=1e-1,

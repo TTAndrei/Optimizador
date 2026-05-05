@@ -27,7 +27,18 @@
       "Bash(tasklist //FI \"PID eq 3400\")",
       "Bash(tasklist)",
       "Bash(grep -E \"^python.exe +[0-9]+ +Console +[0-9]+ +[0-9]{1,3}\\\\.[0-9]{3}\\\\.[0-9]{3}\")",
-      "Bash(grep -E \"^python.exe +[0-9]+ +Console +[0-9]+ +[0-9]{1,3}\\\\.[0-9]{3}\")"
+      "Bash(grep -E \"^python.exe +[0-9]+ +Console +[0-9]+ +[0-9]{1,3}\\\\.[0-9]{3}\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"from Simulador2D import main; print\\('import OK'\\)\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --tag post_A_B)",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --tag post_B_only)",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\andre\\\\Desktop\\\\Optimizador\\\\validacion_resultados\\\\post_B_only.log' -Tail 60\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --sweep-tol --tag sweep_tol_postB)",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\andre\\\\Desktop\\\\Optimizador\\\\validacion_resultados\\\\sweep_tol_postB.log' -Tail 30\")",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\andre\\\\Desktop\\\\Optimizador\\\\validacion_resultados\\\\sweep_tol_postB.log' -Tail 20\")",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\andre\\\\Desktop\\\\Optimizador\\\\validacion_resultados\\\\sweep_tol_postB.log' -Tail 8\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --tag post_mesh_sym)",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\andre\\\\Desktop\\\\Optimizador\\\\validacion_resultados\\\\post_mesh_sym.log' -Tail 5\")",
+      "Bash(\"C:\\\\Users\\\\andre\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" validacion_simetria.py --tag post_mg_levels0)"
     ]
   }
 }

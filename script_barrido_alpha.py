@@ -58,7 +58,7 @@ COMMON: CommonParams = {
     "cx": 2,
     "cy": 4,
     "CFL": 0.5,
-    "iteraciones": 2000,
+    "iteraciones": 4000,
     "guardado": 50,
     "polar_descarte": 0.3,
     "divergencia": 1e-1,
@@ -66,7 +66,7 @@ COMMON: CommonParams = {
     "v0y": 0.0,
     "rho": 1.0,
     "nu": 1 / 100000,
-    "filepath": "AG24",
+    "filepath": "NACA_0012",
     "chord": 1.0,
     "dx_min": 0.001,
     "factor_expansion": 1.10,
@@ -84,11 +84,11 @@ COMMON: CommonParams = {
 }
 
 # Barrido de alpha: 0 a 10 cada 2 grados
-ALPHAS = list(range(0, 21, 1))
+ALPHAS = list(range(-12, 13, 1))
 DESCARTE_FRAC = 0.30
 
-OUT_CSV = "barrido_alpha_resultados.csv"
-OUT_JSON = "barrido_alpha_resultados.json"
+OUT_CSV = "barrido_naca0012_resultados_vopus.csv"
+OUT_JSON = "barrido_naca0012_resultados_vopus.json"
 OUT_PNG_PREFIX = "barrido_alpha"
 
 
