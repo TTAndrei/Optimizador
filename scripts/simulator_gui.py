@@ -290,7 +290,7 @@ class ParameterPanel(QScrollArea):
 
         # ── Perfil Aerodinámico ───────────────────────────────────────────
         s = CollapsibleSection("PERFIL AERODINÁMICO")
-        self.e_filepath = float_edit("AG24", "nombre archivo")
+        self.e_filepath = float_edit("profiles/AG24", "nombre archivo")
         btn_browse = QPushButton("…")
         btn_browse.setFixedWidth(28)
         btn_browse.setFixedHeight(24)
@@ -482,7 +482,7 @@ class ParameterPanel(QScrollArea):
         def sf(widget, val):
             widget.setText("" if val is None else str(val))
 
-        sf(self.e_filepath,  p.get('filepath', 'AG24'))
+        sf(self.e_filepath,  p.get('filepath', 'profiles/AG24'))
         sf(self.e_chord,     p.get('chord', 1.0))
         sf(self.e_alpha,     p.get('alpha_deg', 5.0))
         sf(self.e_Lx,        p.get('Lx', 7.0))
@@ -562,7 +562,7 @@ class ParameterPanel(QScrollArea):
             CFL                          = self._f(self.e_CFL, 0.8),
             alpha_deg                    = self._f(self.e_alpha, 5.0),
             chord                        = self._f(self.e_chord, 1.0),
-            filepath                     = self.e_filepath.text().strip() or "NACA_0012",
+            filepath                     = self.e_filepath.text().strip() or "profiles/NACA_0012",
             Lx                           = self._f(self.e_Lx, 7.0),
             Ly                           = self._f(self.e_Ly, 6.0),
             dx_min                       = self._f(self.e_dx_min, 0.01),

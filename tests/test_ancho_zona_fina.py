@@ -16,7 +16,7 @@ COMMON = dict(
     divergencia=1e-1,
     v0x=1.0, v0y=0.0,
     rho=1.0, nu=1/100000,
-    filepath="NACA_0012",
+    filepath="profiles/NACA_0012",
     chord=1.0,
     dx_min=0.002,
     factor_expansion=1.05,

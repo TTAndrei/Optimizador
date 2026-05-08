@@ -44,7 +44,7 @@ CARPETA_RESULTADOS.mkdir(exist_ok=True)
 
 CONFIG_BASE = dict(
     # Geometria
-    filepath="NACA_0012",
+    filepath="profiles/NACA_0012",
     chord=1.0,
     alpha_deg=0.0,
 

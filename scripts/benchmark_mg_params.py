@@ -38,7 +38,7 @@ CONFIGS = [
 ]
 
 CFG_BASE = dict(
-    filepath="NACA_0012", chord=1.0, alpha_deg=10.0,
+    filepath="profiles/NACA_0012", chord=1.0, alpha_deg=10.0,
     Lx=12.0, Ly=8.0, cx=2.0,
     dx_min=0.001, factor_expansion=1.1,
     ancho_zona_fina_x=1.2, ancho_zona_fina_y=1.0,

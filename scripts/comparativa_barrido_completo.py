@@ -30,9 +30,9 @@ OUT_ROOT = os.path.join(BASE_DIR, "resultados_comparacion")
 TMP_SCRIPT = os.path.join(BASE_DIR, "_tmp_barrido.py")
 
 PROFILES = [
-    {"name": "NACA0012", "filepath": "NACA_0012"},
-    {"name": "AG24",     "filepath": "AG24"},
-    {"name": "GM15",     "filepath": "GM15"},
+    {"name": "NACA0012", "filepath": "profiles/NACA_0012"},
+    {"name": "AG24",     "filepath": "profiles/AG24"},
+    {"name": "GM15",     "filepath": "profiles/GM15"},
 ]
 REYNOLDS_LIST = [100_000, 1_000_000]
 

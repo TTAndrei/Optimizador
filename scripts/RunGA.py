@@ -57,7 +57,7 @@ PARAMETROS_OPTIMOS_HIJOS = {
 # ==========================================
 CONFIG = {
     # --- Archivos ---
-    'archivo_base': 'OPTIMO_PARCIAL_2604_2.dat',                             # Perfil base (formato Selig)
+    'archivo_base': 'profiles/OPTIMO_PARCIAL_2604_2.dat',                    # Perfil base (formato Selig)
     'archivo_memoria_ia': 'cerebro_aerodinamico.pkl',   # Memoria persistente del filtro IA
     'archivo_datos_ml': 'aprendizaje_ML.jsonl',         # Datos acumulados para ML futuro
     'directorio_resultados': 'resultados_ga',           # Carpeta de salida

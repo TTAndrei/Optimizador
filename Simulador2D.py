@@ -4666,8 +4666,8 @@ def main(
     # Geometría del perfil
     alpha_deg=5,
     chord=1.0,
-    filepath="NACA_0012",
-    
+    filepath="profiles/NACA_0012",
+
     # Tamaño del dominio
     Lx=7,
     Ly=6,
@@ -5847,7 +5847,7 @@ if __name__ == "__main__":
         Ly=8,  
         cx=2,
         CFL=0.5,
-        alpha_deg=0,
+        alpha_deg=45,
         polar_descarte=0.3,
         iteraciones=2000,
         divergencia=1e-1,
@@ -5855,7 +5855,7 @@ if __name__ == "__main__":
         v0y=0,
         rho=1.0,
         nu=1/100000,
-        filepath="NACA_0012",
+        filepath="profiles/NACA_0012",
         chord=1.0,
         dx_min=0.0005,
         ancho_zona_fina_x=1.2,

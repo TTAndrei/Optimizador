@@ -486,7 +486,7 @@ def main():
     
     # Obtener directorio del script actual
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    naca_file = os.path.join(script_dir, "NACA_0012")
+    naca_file = os.path.join(script_dir, "..", "profiles", "NACA_0012")
     
     # Carga automática si existe NACA_0012 en la misma carpeta
     if os.path.exists(naca_file):

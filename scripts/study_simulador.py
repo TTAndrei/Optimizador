@@ -28,7 +28,7 @@ CONFIG = {
     'dx_fino': 0.0015, 
     'v0x': 5,
     'CFL': 0.5,
-    'filepath': 'AG24',
+    'filepath': 'profiles/AG24',
     'chord': 1.0,
     'Lx': 7,
     'Ly': 6,

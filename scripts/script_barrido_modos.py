@@ -53,7 +53,7 @@ MODOS = {
 RESOLUCIONES = [ 0.002, 0.001, 0.0005]
 
 BASE_CFG = dict(
-    filepath="NACA_0012", chord=1.0,
+    filepath="profiles/NACA_0012", chord=1.0,
     Lx=12.0, Ly=8.0, cx=2.0,
     factor_expansion=1.10,
     ancho_zona_fina_x=1.2, ancho_zona_fina_y=1.0,

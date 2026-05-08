@@ -23,7 +23,7 @@ OUT.parent.mkdir(exist_ok=True)
 def run(Re: float, iter_n: int = 10000) -> dict:
     nu = 1.0 / Re
     cfg = dict(
-        filepath="NACA_0012",
+        filepath="profiles/NACA_0012",
         chord=1.0,
         alpha_deg=10.0,
         Lx=12.0, Ly=8.0, cx=2.0,
