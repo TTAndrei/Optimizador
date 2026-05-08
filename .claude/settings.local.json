@@ -44,7 +44,16 @@
       "Bash(\"C:/Users/andre/AppData/Local/Programs/Python/Python312/python.exe\" -c \"import cupy; print\\(cupy.__version__\\)\")",
       "Bash(\"C:/Users/andre/AppData/Local/Programs/Python/Python312/python.exe\" -c \"import Simulador2D; print\\('OK'\\)\")",
       "Bash(ITER=15000 \"C:/Users/andre/AppData/Local/Programs/Python/Python312/python.exe\" validacion_re_alpha10.py)",
-      "Bash(awk 'NR>=4380 && NR<=4500 {print NR\": \"$0}' Simulador2D.py)"
+      "Bash(awk 'NR>=4380 && NR<=4500 {print NR\": \"$0}' Simulador2D.py)",
+      "Bash(py -3.12 test_mg_simetria.py)",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; py -3.12 test_mg_simetria.py 2>&1 | Select-String -Pattern 'test\\\\]|Cl_mean|Cd_mean|div_mean|asimetria|walltime|BUG|OK\\\\] coarsening|Label|baseline|coarsening 1|=====' | ForEach-Object { $_.Line })",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; py -3.12 test_mg_simetria.py 2>&1 | Select-String -Pattern 'test\\\\]|Cl_mean|Cd_mean|div_mean|asimetria|walltime|BUG|OK\\\\] coarsening|baseline|coarsening 1' | ForEach-Object { $_.Line })",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; py -3.12 probe_grid_sim.py 2>&1 | Select-String -Pattern 'len\\\\\\(X\\\\\\)|jf_center|max \\\\||coarse:' | ForEach-Object { $_.Line })",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; py -3.12 probe_grid_sim.py 2>&1 | Select-String -Pattern 'len\\\\\\(Y\\\\\\)|if_center|max \\\\||coarse Y' | ForEach-Object { $_.Line })",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; py -3.12 test_mg_simetria.py 2>&1 | Select-String -Pattern 'test\\\\]|Cl_mean|Cd_mean|div_mean|asimetria|walltime|BUG|OK\\\\] coarsening|baseline|coarsening 1|Error|Traceback' | ForEach-Object { $_.Line })",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; py -3.12 test_mg_simetria.py 2>&1 | Select-String -Pattern 'test\\\\]|Cl_mean|MG\\\\] offsets' | ForEach-Object { $_.Line })",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; py -3.12 test_mg_simetria.py 2>&1 | Select-String -Pattern 'test\\\\]|Cl_mean|div_mean|walltime|Error|Traceback' | ForEach-Object { $_.Line })",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; py -3.12 test_mg_simetria.py 2>&1 | Select-String -Pattern 'Traceback|File \"|line |Error|attribute' | ForEach-Object { $_.Line } | Select-Object -First 30)"
     ]
   }
 }

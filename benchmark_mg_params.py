@@ -18,13 +18,23 @@ from Simulador2D import main as simular_main
 
 OUT = Path(__file__).parent / "benchmark_mg_results.json"
 
-CONFIGS = [
+# Configs base: combinaciones de max_outer / cycles / div
+BASE = [
     {"id": "T1", "desc": "Turbo actual",            "max_outer": 4,  "cycles": 3, "div": 0.10},
     {"id": "T2", "desc": "Turbo + más ciclos",       "max_outer": 4,  "cycles": 5, "div": 0.05},
     {"id": "N1", "desc": "Normal actual",             "max_outer": 8,  "cycles": 5, "div": 0.10},
     {"id": "N2", "desc": "Equilibrio",                "max_outer": 6,  "cycles": 4, "div": 0.05},
     {"id": "N3", "desc": "Normal estricto",           "max_outer": 8,  "cycles": 5, "div": 0.01},
     {"id": "N4", "desc": "Muchos outers/pocos ciclos","max_outer": 12, "cycles": 3, "div": 0.01},
+]
+
+# Barrido de niveles MG: 0 = sólo RB-SOR, 1-2 = coarsening real (vertex-centered)
+NIVELES = [0, 1, 2]
+
+CONFIGS = [
+    {**b, "id": f"{b['id']}_L{n}", "niveles": n}
+    for b in BASE
+    for n in NIVELES
 ]
 
 CFG_BASE = dict(
@@ -50,7 +60,8 @@ def run_config(cfg: dict) -> dict:
               "iteraciones": ITER_N,
               "divergencia": cfg["div"],
               "mg_max_outer": cfg["max_outer"],
-              "mg_cycles_per_outer": cfg["cycles"]}
+              "mg_cycles_per_outer": cfg["cycles"],
+              "mg_niveles_max": cfg["niveles"]}
 
     t0 = time.time()
     mesh = simular_main(**kwargs)
@@ -77,7 +88,8 @@ def run_config(cfg: dict) -> dict:
 
     return dict(
         id=cfg["id"], desc=cfg["desc"],
-        max_outer=cfg["max_outer"], cycles_per_outer=cfg["cycles"], divergencia=cfg["div"],
+        max_outer=cfg["max_outer"], cycles_per_outer=cfg["cycles"],
+        divergencia=cfg["div"], niveles=cfg["niveles"],
         its_per_sec=round(its_per_sec, 2),
         div_mean_norm=round(float(np.mean(div_mean_ss)), 4) if len(div_mean_ss) else None,
         div_max_norm=round(float(np.mean(div_max_ss)), 4)   if len(div_max_ss)  else None,
@@ -89,17 +101,17 @@ def run_config(cfg: dict) -> dict:
 
 
 def print_table(results: list[dict]) -> None:
-    header = f"{'ID':<4} {'Desc':<26} {'mo':>3} {'cpo':>4} {'div':>6} {'it/s':>6} {'div_mean':>9} {'div_max':>9} {'Cl':>7} {'Cd':>7}"
+    header = f"{'ID':<7} {'Desc':<26} {'mo':>3} {'cpo':>4} {'div':>6} {'lvl':>3} {'it/s':>6} {'div_mean':>9} {'div_max':>9} {'Cl':>7} {'Cd':>7}"
     print("\n" + "="*len(header))
     print(header)
     print("-"*len(header))
     for r in results:
-        print(f"{r['id']:<4} {r['desc']:<26} {r['max_outer']:>3} {r['cycles_per_outer']:>4} "
-              f"{r['divergencia']:>6.3f} {r['its_per_sec']:>6.1f} "
+        print(f"{r['id']:<7} {r['desc']:<26} {r['max_outer']:>3} {r['cycles_per_outer']:>4} "
+              f"{r['divergencia']:>6.3f} {r['niveles']:>3} {r['its_per_sec']:>6.1f} "
               f"{r['div_mean_norm'] or 0:>9.4f} {r['div_max_norm'] or 0:>9.3f} "
               f"{r['Cl_mean'] or 0:>7.4f} {r['Cd_mean'] or 0:>7.4f}")
     print("="*len(header))
-    print("Columnas: mo=max_outer  cpo=cycles_per_outer  div=tol_div_rel")
+    print("Columnas: mo=max_outer  cpo=cycles_per_outer  div=tol_div_rel  lvl=mg_niveles_max")
     print("div_mean/max normalizados por U_inf/chord\n")
 
 
@@ -107,7 +119,8 @@ def main() -> None:
     results = []
     for cfg in CONFIGS:
         print(f"\n[bench] Config {cfg['id']}: {cfg['desc']}  "
-              f"(max_outer={cfg['max_outer']}, cycles={cfg['cycles']}, div={cfg['div']})",
+              f"(max_outer={cfg['max_outer']}, cycles={cfg['cycles']}, "
+              f"div={cfg['div']}, niveles={cfg['niveles']})",
               flush=True)
         try:
             r = run_config(cfg)

@@ -547,25 +547,39 @@ class Mesh:
         # Kernel fusionado: Restricción 2D (fine → coarse, full-weighting)
         # Reemplaza ~8 operaciones CuPy (slicing + aritmética) con 1 lanzamiento
         # ============================================================
+        # Full-weighting vertex-centered (Galerkin pair con prolongation bilineal):
+        # R = (1/4) P^T → stencil 1-2-1 ⊗ 1-2-1 / 16. Simétrico en X e Y.
+        # Bordes: clamp (replica). coarse[jc,ic] alineado a fine[sx+2jc, sy+2ic].
         self._restrict_kernel = cp.RawKernel(r'''
         extern "C" __global__ void restrict_2d(
             const float* __restrict__ fine,
             float* __restrict__ coarse,
-            int nx_f, int ny_f, int nx_c, int ny_c
+            int nx_f, int ny_f, int nx_c, int ny_c, int sx, int sy
         ) {
             int idx = blockDim.x * blockIdx.x + threadIdx.x;
             if (idx >= nx_c * ny_c) return;
             int jc = idx % nx_c;
             int ic = idx / nx_c;
-            int jf = jc * 2;
-            int if_ = ic * 2;
-            if (jf + 1 >= nx_f || if_ + 1 >= ny_f) {
+            int jf = sx + jc * 2;
+            int if_ = sy + ic * 2;
+            if (jf < 0 || jf >= nx_f || if_ < 0 || if_ >= ny_f) {
                 coarse[idx] = 0.0f;
                 return;
             }
-            int base = if_ * nx_f + jf;
-            coarse[idx] = 0.25f * (fine[base] + fine[base + 1]
-                                 + fine[base + nx_f] + fine[base + nx_f + 1]);
+            int jm = jf > 0 ? jf - 1 : 0;
+            int jp = jf + 1 < nx_f ? jf + 1 : nx_f - 1;
+            int im = if_ > 0 ? if_ - 1 : 0;
+            int ip = if_ + 1 < ny_f ? if_ + 1 : ny_f - 1;
+            float c  = fine[if_ * nx_f + jf];
+            float n  = fine[im  * nx_f + jf];
+            float s  = fine[ip  * nx_f + jf];
+            float w  = fine[if_ * nx_f + jm];
+            float e  = fine[if_ * nx_f + jp];
+            float nw = fine[im  * nx_f + jm];
+            float ne = fine[im  * nx_f + jp];
+            float sw = fine[ip  * nx_f + jm];
+            float se = fine[ip  * nx_f + jp];
+            coarse[idx] = (4.0f*c + 2.0f*(n+s+w+e) + (nw+ne+sw+se)) * (1.0f/16.0f);
         }
         ''', 'restrict_2d')
 
@@ -579,25 +593,27 @@ class Mesh:
             float* __restrict__ fine,
             const float* __restrict__ wx_arr,
             const float* __restrict__ wy_arr,
-            int nx_c, int ny_c, int nx_f, int ny_f
+            int nx_c, int ny_c, int nx_f, int ny_f, int sx, int sy
         ) {
             int idx = blockDim.x * blockIdx.x + threadIdx.x;
             if (idx >= nx_f * ny_f) return;
             int jf = idx % nx_f;
             int if_ = idx / nx_f;
-            int jc = jf >> 1;
-            int ic = if_ >> 1;
-            // Clamp
-            if (jc >= nx_c) jc = nx_c - 1;
-            if (ic >= ny_c) ic = ny_c - 1;
+            int rel_x = jf - sx;
+            int rel_y = if_ - sy;
+            int rel_x_max = 2 * (nx_c - 1);
+            int rel_y_max = 2 * (ny_c - 1);
+            int jc, ic;
+            if (rel_x < 0) jc = 0;
+            else if (rel_x > rel_x_max) jc = nx_c - 1;
+            else jc = rel_x >> 1;
+            if (rel_y < 0) ic = 0;
+            else if (rel_y > rel_y_max) ic = ny_c - 1;
+            else ic = rel_y >> 1;
             int jc1 = jc + 1 < nx_c ? jc + 1 : jc;
             int ic1 = ic + 1 < ny_c ? ic + 1 : ic;
-            // Pesos basados en posicion real (pre-computados)
             float wx = wx_arr[jf];
             float wy = wy_arr[if_];
-            // Si es impar y no hay vecino superior, skip
-            if (wx > 0.0f && jc1 == jc) return;
-            if (wy > 0.0f && ic1 == ic) return;
             float f00 = coarse[ic * nx_c + jc];
             float f10 = coarse[ic * nx_c + jc1];
             float f01 = coarse[ic1 * nx_c + jc];
@@ -846,21 +862,84 @@ class Mesh:
         ny, nx = self.p.shape
         self._mg_niveles = max(0, min(niveles_max, int(np.log2(min(ny, nx))) - 2))
 
-        # Offsets por nivel (siempre 0 = coarsen estandar).
-        self._mg_x_start = [0] * (self._mg_niveles + 1)
-        self._mg_y_start = [0] * (self._mg_niveles + 1)
+        # Offsets por nivel autodetectados: si la malla es simetrica respecto
+        # a su midpoint geometrico (e.g. Y centrado en cy=Ly/2), aplicar sx/sy
+        # tal que un coarse vertex caiga sobre el eje de simetria. Asi el
+        # coarsening preserva mirror symmetry exacto.
+        def _detect_sym_offset(pos_f64):
+            N = len(pos_f64)
+            if N < 8:
+                return 0
+            midpoint = 0.5 * (pos_f64[0] + pos_f64[-1])
+            idx_c = int(np.argmin(np.abs(pos_f64 - midpoint)))
+            nL = idx_c
+            nR = N - 1 - idx_c
+            n_test = min(nL, nR, 100)
+            if n_test < 4:
+                return 0
+            err = 0.0
+            for k in range(1, n_test + 1):
+                e = abs((pos_f64[idx_c - k] - midpoint) - (midpoint - pos_f64[idx_c + k]))
+                if e > err:
+                    err = e
+            scale = abs(pos_f64[-1] - pos_f64[0]) + 1e-30
+            if err / scale > 1e-4:
+                return 0
+            return idx_c % 2
+
+        self._mg_x_start = [0]
+        self._mg_y_start = [0]
+        X_pos = self.X_1d_f64
+        Y_pos = self.Y_1d_f64
+        for lvl in range(self._mg_niveles):
+            sx = _detect_sym_offset(X_pos)
+            sy = _detect_sym_offset(Y_pos)
+            self._mg_x_start.append(sx)
+            self._mg_y_start.append(sy)
+            nx_c = (len(X_pos) - sx) // 2
+            ny_c = (len(Y_pos) - sy) // 2
+            X_pos = X_pos[sx:sx + nx_c * 2:2]
+            Y_pos = Y_pos[sy:sy + ny_c * 2:2]
 
         def _coarsen_mask(mask, sx=0, sy=0):
+            """Vertex-centered: coarse[k,j] cubre control volume 3x3 fine
+            centrado en fine vertex (sy+2k, sx+2j). Simetrico bajo mirror
+            cuando offsets alinean coarse vertex con eje simetria."""
             ny_m, nx_m = mask.shape
             nx_c = (nx_m - sx) // 2
             ny_c = (ny_m - sy) // 2
-            m = mask[sy:sy+ny_c*2, sx:sx+nx_c*2]
-            return m[0::2, 0::2] | m[1::2, 0::2] | m[0::2, 1::2] | m[1::2, 1::2]
+            out = cp.zeros((ny_c, nx_c), dtype=cp.bool_)
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    iy0 = sy + di
+                    ix0 = sx + dj
+                    # Si offset arranca antes del 0, recortamos primer coarse
+                    if iy0 < 0:
+                        ic_start = 1
+                        iy_eff = iy0 + 2
+                    else:
+                        ic_start = 0
+                        iy_eff = iy0
+                    if ix0 < 0:
+                        jc_start = 1
+                        ix_eff = ix0 + 2
+                    else:
+                        jc_start = 0
+                        ix_eff = ix0
+                    if iy_eff >= ny_m or ix_eff >= nx_m:
+                        continue
+                    sub = mask[iy_eff:iy_eff + (ny_c - ic_start) * 2:2,
+                               ix_eff:ix_eff + (nx_c - jc_start) * 2:2]
+                    h, w = sub.shape
+                    out[ic_start:ic_start + h, jc_start:jc_start + w] |= sub
+            return out
 
         # Jerarquía de máscaras de sólidos (nivel 0 = fino)
         self._mg_solids = [self.solid]
         for lvl in range(self._mg_niveles):
-            self._mg_solids.append(_coarsen_mask(self._mg_solids[-1]))
+            sx = self._mg_x_start[lvl + 1]
+            sy = self._mg_y_start[lvl + 1]
+            self._mg_solids.append(_coarsen_mask(self._mg_solids[-1], sx, sy))
 
         # Jerarquía Dirichlet
         self._mg_hay_dirichlet = bool(cp.any(self.fixed_pressure_mask))
@@ -910,8 +989,13 @@ class Mesh:
                 X_1d_f64_lvl = X_1d_f64_lvl[sx:sx+nx_c*2:2]
                 Y_1d_f64_lvl = Y_1d_f64_lvl[sy:sy+ny_c*2:2]
 
-        # Pre-computar pesos de prolongación por nivel (malla no-uniforme)
-        # wx[jf]=0 si jf par, wx[jf]=(x_f[jf]-x_f[jf-1])/(x_f[jf+1]-x_f[jf-1]) si impar
+        # Pre-computar pesos de prolongación por nivel (malla no-uniforme).
+        # En cada lvl los pesos describen como prolongar coarse(lvl+1) sobre
+        # fine(lvl). Coarse[jc] alinea con fine[sx_next + 2*jc].
+        # Para fine[jf], rel = jf - sx_next:
+        #   rel par dentro de rango → wx=0 (copia exacta de coarse[rel/2])
+        #   rel impar dentro de rango → interp lineal entre coarse[rel/2] y coarse[rel/2+1]
+        #   rel < 0 o rel > 2*(nx_c-1) → wx=0 (clamp a coarse extremo)
         # Calculamos en f64 (CPU) y casteamos a f32 al final → preserva simetria.
         self._mg_prolong_wx = []
         self._mg_prolong_wy = []
@@ -922,24 +1006,37 @@ class Mesh:
             ny_f = len(Y_1d_f64_lvl)
             wx_f64 = np.zeros(nx_f, dtype=np.float64)
             wy_f64 = np.zeros(ny_f, dtype=np.float64)
-            for jf in range(1, nx_f, 2):
-                if jf + 1 < nx_f:
-                    denom = X_1d_f64_lvl[jf + 1] - X_1d_f64_lvl[jf - 1]
-                    if abs(denom) > 1e-30:
-                        wx_f64[jf] = (X_1d_f64_lvl[jf] - X_1d_f64_lvl[jf - 1]) / denom
+            if lvl < self._mg_niveles:
+                sx_next = self._mg_x_start[lvl + 1]
+                sy_next = self._mg_y_start[lvl + 1]
+                nx_c_next = (nx_f - sx_next) // 2
+                ny_c_next = (ny_f - sy_next) // 2
+                rel_x_max = 2 * (nx_c_next - 1)
+                rel_y_max = 2 * (ny_c_next - 1)
+                for jf in range(nx_f):
+                    rel = jf - sx_next
+                    if rel < 0 or rel > rel_x_max or (rel % 2 == 0):
+                        wx_f64[jf] = 0.0
                     else:
-                        wx_f64[jf] = 0.5
-                else:
-                    wx_f64[jf] = 0.5
-            for if_ in range(1, ny_f, 2):
-                if if_ + 1 < ny_f:
-                    denom = Y_1d_f64_lvl[if_ + 1] - Y_1d_f64_lvl[if_ - 1]
-                    if abs(denom) > 1e-30:
-                        wy_f64[if_] = (Y_1d_f64_lvl[if_] - Y_1d_f64_lvl[if_ - 1]) / denom
+                        jf_lo = sx_next + (rel // 2) * 2
+                        jf_hi = jf_lo + 2
+                        denom = X_1d_f64_lvl[jf_hi] - X_1d_f64_lvl[jf_lo]
+                        if abs(denom) > 1e-30:
+                            wx_f64[jf] = (X_1d_f64_lvl[jf] - X_1d_f64_lvl[jf_lo]) / denom
+                        else:
+                            wx_f64[jf] = 0.5
+                for if_ in range(ny_f):
+                    rel = if_ - sy_next
+                    if rel < 0 or rel > rel_y_max or (rel % 2 == 0):
+                        wy_f64[if_] = 0.0
                     else:
-                        wy_f64[if_] = 0.5
-                else:
-                    wy_f64[if_] = 0.5
+                        if_lo = sy_next + (rel // 2) * 2
+                        if_hi = if_lo + 2
+                        denom = Y_1d_f64_lvl[if_hi] - Y_1d_f64_lvl[if_lo]
+                        if abs(denom) > 1e-30:
+                            wy_f64[if_] = (Y_1d_f64_lvl[if_] - Y_1d_f64_lvl[if_lo]) / denom
+                        else:
+                            wy_f64[if_] = 0.5
             self._mg_prolong_wx.append(cp.asarray(wx_f64, dtype=cp.float32))
             self._mg_prolong_wy.append(cp.asarray(wy_f64, dtype=cp.float32))
             if lvl < self._mg_niveles:
@@ -948,7 +1045,7 @@ class Mesh:
                 nx_c = (len(X_1d_f64_lvl) - sx) // 2
                 ny_c = (len(Y_1d_f64_lvl) - sy) // 2
                 X_1d_f64_lvl = X_1d_f64_lvl[sx:sx+nx_c*2:2]
-                Y_1d_f64_lvl = Y_1d_f64_lvl[:ny_c*2:2]
+                Y_1d_f64_lvl = Y_1d_f64_lvl[sy:sy+ny_c*2:2]
 
         # Buffers pre-alocados por nivel
         self._mg_bufs = []
@@ -2416,7 +2513,9 @@ class Mesh:
                     (kd_c['grid'],), (256,),
                     (res_buf.ravel(), rhs_c.ravel(),
                      cp.int32(kd['nx']), cp.int32(kd['ny']),
-                     cp.int32(kd_c['nx']), cp.int32(kd_c['ny'])))
+                     cp.int32(kd_c['nx']), cp.int32(kd_c['ny']),
+                     cp.int32(self._mg_x_start[lvl + 1]),
+                     cp.int32(self._mg_y_start[lvl + 1])))
                 rhs_lv[lvl + 1] = rhs_c
 
                 e_c = self._mg_bufs[lvl + 1]['error']
@@ -2437,7 +2536,9 @@ class Mesh:
                     (kd_f['grid'],), (256,),
                     (p_lv[lvl + 1].ravel(), p_lv[lvl].ravel(), wx, wy,
                      cp.int32(kd_c['nx']), cp.int32(kd_c['ny']),
-                     cp.int32(kd_f['nx']), cp.int32(kd_f['ny'])))
+                     cp.int32(kd_f['nx']), cp.int32(kd_f['ny']),
+                     cp.int32(self._mg_x_start[lvl + 1]),
+                     cp.int32(self._mg_y_start[lvl + 1])))
                 p_lv[lvl][self._mg_solids[lvl]] = cp.float32(0.0)
                 _smooth(p_lv[lvl], rhs_lv[lvl], lvl, post_suavizado)
                 _aplicar_bc_mg(p_lv[lvl], lvl)
@@ -4622,6 +4723,9 @@ def main(
     mg_compute_div_after=True,
     mg_modo_rapido=False,
     mg_modo_turbo=False,
+    mg_modo_turbo_hd=False,    # T2_L1: turbo + 5 ciclos + niveles=1 + div=0.05 (Cl~0.65, 2.1 it/s)
+    mg_modo_turbo_ultra=False,  # T2_L2: turbo + 5 ciclos + niveles=2 + div=0.05 (Cl~0.68, 1.4 it/s)
+    mg_niveles_max=1,  # 0 = sin coarsening (compat); 1-2 = MG real
     
     # Opciones de visualización y guardado
     save_frames=False,
@@ -4698,6 +4802,38 @@ def main(
         mg_rollback_on_nan = False
         mg_compute_div_after = False
         print("[MG-turbo] activo: max_outer<=4, cycles<=5, pre/post<=1, IBM por outer OFF, rollback OFF")
+
+    # Perfil turbo HD: T2_L1 — igual que turbo + niveles=1 + div=0.05
+    # Benchmark: Cl=0.65, div_mean=0.24, 2.1 it/s
+    if mg_modo_turbo_hd:
+        mg_max_outer = 4
+        mg_cycles_per_outer = 5
+        mg_niveles_max = 1
+        divergencia = 0.05
+        mg_pre_suavizado = 1
+        mg_post_suavizado = 1
+        mg_guard_residual_every_outer = False
+        mg_adaptive_outer0_cycles = True
+        mg_apply_ibm_each_outer = False
+        mg_rollback_on_nan = False
+        mg_compute_div_after = False
+        print("[MG-turbo-hd] activo: max_outer=4, cycles=5, niveles=1, div=0.05, 2.1 it/s estimado")
+
+    # Perfil turbo Ultra: T2_L2 — igual que turbo_hd + niveles=2
+    # Benchmark: Cl=0.68, div_mean=0.14, 1.4 it/s
+    if mg_modo_turbo_ultra:
+        mg_max_outer = 4
+        mg_cycles_per_outer = 5
+        mg_niveles_max = 2
+        divergencia = 0.05
+        mg_pre_suavizado = 1
+        mg_post_suavizado = 1
+        mg_guard_residual_every_outer = False
+        mg_adaptive_outer0_cycles = True
+        mg_apply_ibm_each_outer = False
+        mg_rollback_on_nan = False
+        mg_compute_div_after = False
+        print("[MG-turbo-ultra] activo: max_outer=4, cycles=5, niveles=2, div=0.05, 1.4 it/s estimado")
 
     # ============================================================
     # GENERAR MALLA VARIABLE (stretching 1D)
@@ -5188,6 +5324,7 @@ def main(
             tol_div_rel=divergencia,
             max_outer=mg_max_outer,
             cycles_per_outer=mg_cycles_per_outer,
+            niveles_max=mg_niveles_max,
             pre_suavizado=mg_pre_suavizado,
             post_suavizado=mg_post_suavizado,
             guard_residual_every_outer=mg_guard_residual_every_outer,
@@ -5710,9 +5847,9 @@ if __name__ == "__main__":
         Ly=8,  
         cx=2,
         CFL=0.5,
-        alpha_deg=10,
+        alpha_deg=0,
         polar_descarte=0.3,
-        iteraciones=3000,
+        iteraciones=2000,
         divergencia=1e-1,
         v0x=1,
         v0y=0,
@@ -5720,7 +5857,7 @@ if __name__ == "__main__":
         nu=1/100000,
         filepath="NACA_0012",
         chord=1.0,
-        dx_min=0.001,
+        dx_min=0.0005,
         ancho_zona_fina_x=1.2,
         ancho_zona_fina_y=1,
         factor_expansion=1.1,
@@ -5733,6 +5870,8 @@ if __name__ == "__main__":
         live_view=True,
         mostrar_malla=True,
         mg_modo_turbo=False,
+        mg_modo_turbo_hd=True,
+        mg_modo_turbo_ultra=False
         
         
     )
