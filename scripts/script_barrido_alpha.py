@@ -12,8 +12,12 @@ Salida:
 import csv
 import json
 import math
+import os
+import sys
 import time
 from typing import TypedDict
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cupy as cp
 import matplotlib.pyplot as plt
@@ -58,7 +62,7 @@ COMMON: CommonParams = {
     "cx": 2,
     "cy": 4,
     "CFL": 0.5,
-    "iteraciones": 4000,
+    "iteraciones": 2000,
     "guardado": 50,
     "polar_descarte": 0.3,
     "divergencia": 1e-1,
@@ -80,16 +84,16 @@ COMMON: CommonParams = {
     "stop_on_convergence": False,
     "live_view": False,
     "mostrar_malla": False,
-    "mg_modo_turbo": True,
+    "mg_modo_turbo_hd": True,
 }
 
 # Barrido de alpha: 0 a 10 cada 2 grados
-ALPHAS = list(range(-12, 13, 1))
+ALPHAS = list(range(-10, 11, 1))
 DESCARTE_FRAC = 0.30
 
-OUT_CSV = "barrido_naca0012_resultados_vopus.csv"
-OUT_JSON = "barrido_naca0012_resultados_vopus.json"
-OUT_PNG_PREFIX = "barrido_alpha"
+OUT_CSV = "barrido_naca0012_resultados_bl.csv"
+OUT_JSON = "barrido_naca0012_resultados_bl.json"
+OUT_PNG_PREFIX = "barrido_alpha_bl"
 
 
 def resumen_vector(vec_gpu, iteraciones, guardado, descartar_frac):
@@ -244,6 +248,27 @@ def main():
             "n_muestras_cl": int(n_cl),
             "elapsed_s": float(elapsed),
         }
+
+        try:
+            from bl_correction import compute_corrected_forces
+            bl = compute_corrected_forces(mesh, filepath=COMMON["filepath"],
+                                          alpha_deg=float(alpha))
+            row.update({
+                "Cl_bl":         float(bl["Cl"]),
+                "Cd_bl":         float(bl["Cd"]),
+                "Cd_p_bl":       float(bl["Cd_p"]),
+                "Cd_visc_bl":    float(bl["Cd_visc"]),
+                "Ef_bl":         float(bl["Ef"]),
+                "Cl_inviscid":   float(bl["Cl_inviscid"]),
+                "trans_x_upper": float(bl["trans_x_upper"]),
+                "trans_x_lower": float(bl["trans_x_lower"]),
+            })
+        except Exception as _e:
+            row.update({"Cl_bl": float("nan"), "Cd_bl": float("nan"),
+                        "Cd_p_bl": float("nan"), "Cd_visc_bl": float("nan"),
+                        "Ef_bl": float("nan")})
+            print(f"  [BL correction failed: {_e}]")
+
         results.append(row)
 
         print(

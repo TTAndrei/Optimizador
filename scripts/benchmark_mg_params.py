@@ -86,7 +86,7 @@ def run_config(cfg: dict) -> dict:
     div_mean_ss = div_mean_arr[-tail:] if len(div_mean_arr) >= tail else div_mean_arr
     div_max_ss  = div_max_arr[-tail:]  if len(div_max_arr)  >= tail else div_max_arr
 
-    return dict(
+    out = dict(
         id=cfg["id"], desc=cfg["desc"],
         max_outer=cfg["max_outer"], cycles_per_outer=cfg["cycles"],
         divergencia=cfg["div"], niveles=cfg["niveles"],
@@ -98,6 +98,27 @@ def run_config(cfg: dict) -> dict:
         Cd_mean=round(float(np.mean(cd_ss)), 4) if len(cd_ss) else None,
         Cd_std=round(float(np.std(cd_ss)),  4)  if len(cd_ss) else None,
     )
+
+    try:
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from bl_correction import compute_corrected_forces
+        bl = compute_corrected_forces(mesh, filepath=CFG_BASE["filepath"],
+                                      alpha_deg=float(CFG_BASE["alpha_deg"]))
+        out.update({
+            "Cl_bl":      round(float(bl["Cl"]), 4),
+            "Cd_bl":      round(float(bl["Cd"]), 4),
+            "Cd_p_bl":    round(float(bl["Cd_p"]), 4),
+            "Cd_visc_bl": round(float(bl["Cd_visc"]), 4),
+            "Ef_bl":      round(float(bl["Ef"]), 4),
+        })
+    except Exception as _e:
+        out.update({"Cl_bl": None, "Cd_bl": None,
+                    "Cd_p_bl": None, "Cd_visc_bl": None, "Ef_bl": None})
+        print(f"  [BL correction failed: {_e}]", flush=True)
+
+    return out
 
 
 def print_table(results: list[dict]) -> None:

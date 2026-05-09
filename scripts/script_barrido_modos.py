@@ -171,6 +171,28 @@ def run_step(step: dict) -> dict:
         its_per_s=float(ITER / elapsed) if elapsed > 0 else 0.0,
     )
 
+    try:
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from bl_correction import compute_corrected_forces
+        bl = compute_corrected_forces(mesh, filepath=BASE_CFG["filepath"],
+                                      alpha_deg=float(alpha))
+        row.update({
+            "Cl_bl":         float(bl["Cl"]),
+            "Cd_bl":         float(bl["Cd"]),
+            "Cd_p_bl":       float(bl["Cd_p"]),
+            "Cd_visc_bl":    float(bl["Cd_visc"]),
+            "Ef_bl":         float(bl["Ef"]),
+            "trans_x_upper": float(bl["trans_x_upper"]),
+            "trans_x_lower": float(bl["trans_x_lower"]),
+        })
+    except Exception as _e:
+        row.update({"Cl_bl": float("nan"), "Cd_bl": float("nan"),
+                    "Cd_p_bl": float("nan"), "Cd_visc_bl": float("nan"),
+                    "Ef_bl": float("nan")})
+        print(f"  [BL correction failed: {_e}]")
+
     del mesh
     cp.get_default_memory_pool().free_all_blocks()
     cp.get_default_pinned_memory_pool().free_all_blocks()
