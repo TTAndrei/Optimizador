@@ -333,13 +333,14 @@ def integrate_bl(s: np.ndarray,
 
     if trans_idx is None:
         return {"theta": theta, "dstar": dstar, "H": H_arr,
-                "Cf": Cf_arr, "trans_idx": None, "separated": False}
+                "Cf": Cf_arr, "trans_idx": None, "separated": False, "sep_idx": None}
 
     # ── Head turbulento (RK4) ────────────────────────────────────────────────
     H0  = max(H_arr[trans_idx], 1.1)
     H10 = _h1_from_h(H0)
     state = np.array([theta[trans_idx], H10 * theta[trans_idx]])
     separated = False
+    sep_idx = None  # primer índice donde H cruza 2.4 (separación parcial)
 
     for i in range(trans_idx + 1, M):
         ds_i  = s[i] - s[i-1]
@@ -356,6 +357,9 @@ def integrate_bl(s: np.ndarray,
         H1_i = max(state[1] / state[0], 3.01)
         H_i  = _h_from_h1(H1_i)
 
+        if H_i > 2.4 and sep_idx is None:
+            sep_idx = i  # registrar punto de separación incipiente
+
         if H_i > 3.5:
             separated = True
             H_i = 3.5
@@ -367,7 +371,8 @@ def integrate_bl(s: np.ndarray,
         Cf_arr[i] = _cf_head(H_i, Re_th)
 
     return {"theta": theta, "dstar": dstar, "H": H_arr,
-            "Cf": Cf_arr, "trans_idx": trans_idx, "separated": separated}
+            "Cf": Cf_arr, "trans_idx": trans_idx,
+            "separated": separated, "sep_idx": sep_idx}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -406,6 +411,46 @@ def cl_from_delta_cp(x_norm: np.ndarray,
         dCp = np.interp(x_norm, x_norm[mask_valid], dCp[mask_valid])
 
     return float(np.trapezoid(dCp, x_norm) * np.cos(alpha_rad))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# F1. Lógica de régimen de separación
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_SEP_PARTIAL_H = 2.4   # H umbral separación incipiente (Stratford/Drela)
+_SEP_MASSIVE_X = 0.3   # x/c umbral separación masiva
+
+
+def _cd_visc_surface(bl: dict, s: np.ndarray, Ue: np.ndarray,
+                     v_inf: float, chord: float) -> tuple:
+    """
+    Squire-Young adaptado al régimen de separación.
+
+    Adjunto (sep_idx=None):
+        Squire-Young en TE — comportamiento estándar.
+    Separación parcial (x_sep >= 0.3c):
+        Squire-Young evaluado en x_sep — BL post-separación ignorada.
+    Separación masiva (x_sep < 0.3c):
+        Cd_visc = 0 — Cd_p_LES ya captura resistencia de forma dominante.
+
+    Returns: (cd_visc, regime_str, x_sep_norm)
+      regime_str: "adjunto" | "sep_parcial" | "sep_masiva"
+      x_sep_norm: x/c del punto de separación (1.0 si adjunto)
+    """
+    sep_idx = bl["sep_idx"]
+
+    if sep_idx is None:
+        cd = cd_visc_squire_young(bl["theta"][-1], bl["H"][-1], Ue[-1], v_inf, chord)
+        return cd, "adjunto", 1.0
+
+    x_sep = float(s[sep_idx]) / chord
+
+    if x_sep >= _SEP_MASSIVE_X:
+        cd = cd_visc_squire_young(bl["theta"][sep_idx], bl["H"][sep_idx],
+                                  Ue[sep_idx], v_inf, chord)
+        return cd, "sep_parcial", x_sep
+    else:
+        return 0.0, "sep_masiva", x_sep
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -471,14 +516,16 @@ def compute_corrected_forces(mesh,
     bl_u = integrate_bl(s, Ue_u, nu, Re)
     bl_l = integrate_bl(s, Ue_l, nu, Re)
 
-    if bl_u["separated"] or bl_l["separated"]:
-        warn.append("separacion detectada — Cd_visc via Squire-Young menos fiable")
-
-    Cd_v_u = cd_visc_squire_young(
-        bl_u["theta"][-1], bl_u["H"][-1], Ue_u[-1], v_inf, chord)
-    Cd_v_l = cd_visc_squire_young(
-        bl_l["theta"][-1], bl_l["H"][-1], Ue_l[-1], v_inf, chord)
+    Cd_v_u, regime_u, x_sep_u = _cd_visc_surface(bl_u, s, Ue_u, v_inf, chord)
+    Cd_v_l, regime_l, x_sep_l = _cd_visc_surface(bl_l, s, Ue_l, v_inf, chord)
     Cd_visc = Cd_v_u + Cd_v_l
+
+    if regime_u == "sep_masiva" or regime_l == "sep_masiva":
+        warn.append(f"sep_masiva: x_sep_u={x_sep_u:.2f} x_sep_l={x_sep_l:.2f} "
+                    f"— Cd_visc=0, usando solo Cd_p_LES")
+    elif regime_u == "sep_parcial" or regime_l == "sep_parcial":
+        warn.append(f"sep_parcial: Squire-Young en x_sep "
+                    f"(u={x_sep_u:.2f}, l={x_sep_l:.2f})")
 
     # ── Cl desde Cp del LES (ΔCp integración directa) ────────────────────────
     x_les, Cpu_les, Cpl_les = mesh.get_cp_profile_mean()
@@ -511,6 +558,10 @@ def compute_corrected_forces(mesh,
         "Cl_inviscid":    Cl_inv,
         "trans_x_upper":  trans_x_u,
         "trans_x_lower":  trans_x_l,
+        "regime_upper":   regime_u,
+        "regime_lower":   regime_l,
+        "x_sep_upper":    x_sep_u,
+        "x_sep_lower":    x_sep_l,
         "bl_upper":       bl_u,
         "bl_lower":       bl_l,
         "separated":      bl_u["separated"] or bl_l["separated"],

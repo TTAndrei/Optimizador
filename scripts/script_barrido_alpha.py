@@ -70,7 +70,7 @@ COMMON: CommonParams = {
     "v0y": 0.0,
     "rho": 1.0,
     "nu": 1 / 100000,
-    "filepath": "profiles/NACA_0012",
+    "filepath": "profiles/AG24",
     "chord": 1.0,
     "dx_min": 0.001,
     "factor_expansion": 1.10,
@@ -88,11 +88,11 @@ COMMON: CommonParams = {
 }
 
 # Barrido de alpha: 0 a 10 cada 2 grados
-ALPHAS = list(range(-10, 11, 1))
+ALPHAS = list(range(-10, 11, 2))
 DESCARTE_FRAC = 0.30
 
-OUT_CSV = "barrido_naca0012_resultados_bl.csv"
-OUT_JSON = "barrido_naca0012_resultados_bl.json"
+OUT_CSV = "barrido_ag24_resultados_bl.csv"
+OUT_JSON = "barrido_ag24_resultados_bl.json"
 OUT_PNG_PREFIX = "barrido_alpha_bl"
 
 
@@ -127,46 +127,94 @@ def guardar_json(path_json, payload):
         json.dump(payload, f, indent=2)
 
 
+def _safe_arr(rows, key):
+    """Extrae columna como float array, NaN donde falte la clave."""
+    return np.array([float(r.get(key, float("nan"))) for r in rows], dtype=float)
+
+
 def graficar_curvas(rows, out_prefix):
     alphas = np.array([r["alpha_deg"] for r in rows], dtype=float)
 
-    def plot_doble(y_mean, y_final, ylabel, titulo, out_path):
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.plot(alphas, y_mean, "o-", linewidth=2, markersize=6, label=f"{ylabel} mean")
-        ax.plot(alphas, y_final, "s--", linewidth=1.8, markersize=5, label=f"{ylabel} final")
-        ax.set_xlabel("Angulo de ataque alpha [deg]")
-        ax.set_ylabel(ylabel)
-        ax.set_title(titulo)
-        ax.grid(True, alpha=0.3)
-        ax.legend()
+    # ── valores BL corregidos (principales) ─────────────────────────────────
+    cd_bl  = _safe_arr(rows, "Cd_bl")
+    cl_bl  = _safe_arr(rows, "Cl_bl")
+    ef_bl  = _safe_arr(rows, "Ef_bl")
+    cd_p   = _safe_arr(rows, "Cd_p_bl")   # presion LES (fiable)
+    cd_v   = _safe_arr(rows, "Cd_visc_bl") # friccion BL corregida
+
+    # ── valores raw LES (referencia/diagnostico) ─────────────────────────────
+    cd_raw = _safe_arr(rows, "Cd_mean")
+    cl_raw = _safe_arr(rows, "Cl_mean")
+    ef_raw = _safe_arr(rows, "Ef_mean")
+
+    def _save(fig, path):
         fig.tight_layout()
-        fig.savefig(out_path, dpi=200)
+        fig.savefig(path, dpi=200)
         plt.close(fig)
 
-    cd_mean = np.array([r["Cd_mean"] for r in rows], dtype=float)
-    cd_final = np.array([r["Cd_final"] for r in rows], dtype=float)
-    cl_mean = np.array([r["Cl_mean"] for r in rows], dtype=float)
-    cl_final = np.array([r["Cl_final"] for r in rows], dtype=float)
-    ef_mean = np.array([r["Ef_mean"] for r in rows], dtype=float)
-    ef_final = np.array([r["Ef_final"] for r in rows], dtype=float)
-
-    plot_doble(cd_mean, cd_final, "Cd", "Cd vs angulo de ataque", f"{out_prefix}_Cd.png")
-    plot_doble(cl_mean, cl_final, "Cl", "Cl vs angulo de ataque", f"{out_prefix}_Cl.png")
-    plot_doble(ef_mean, ef_final, "Cl/Cd", "Eficiencia vs angulo de ataque", f"{out_prefix}_Eficiencia.png")
-
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.plot(alphas, [r["Cd_p"] for r in rows], "o-", linewidth=2, label="Cd_p")
-    ax.plot(alphas, [r["Cd_v"] for r in rows], "o-", linewidth=2, label="Cd_v")
-    ax.plot(alphas, [r["Cl_p"] for r in rows], "s--", linewidth=1.8, label="Cl_p")
-    ax.plot(alphas, [r["Cl_v"] for r in rows], "s--", linewidth=1.8, label="Cl_v")
+    # ── Cd ───────────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(alphas, cd_bl,  "o-",  linewidth=2,   markersize=6, color="#E53935", label="Cd_bl (corregido)")
+    ax.plot(alphas, cd_raw, "s--", linewidth=1.5,  markersize=5, color="#90A4AE", label="Cd_mean (raw LES)")
+    ax.plot(alphas, cd_p,   "^:",  linewidth=1.2,  markersize=4, color="#1E88E5", label="Cd_p (presion LES)")
+    ax.plot(alphas, cd_v,   "v:",  linewidth=1.2,  markersize=4, color="#43A047", label="Cd_visc (BL corr.)")
     ax.set_xlabel("Angulo de ataque alpha [deg]")
-    ax.set_ylabel("Coeficiente")
-    ax.set_title("Componentes de fuerzas vs angulo de ataque")
+    ax.set_ylabel("Cd")
+    ax.set_title("Cd vs angulo de ataque")
     ax.grid(True, alpha=0.3)
     ax.legend()
-    fig.tight_layout()
-    fig.savefig(f"{out_prefix}_Componentes.png", dpi=200)
-    plt.close(fig)
+    _save(fig, f"{out_prefix}_Cd.png")
+
+    # ── Cl ───────────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(alphas, cl_bl,  "o-",  linewidth=2,   markersize=6, color="#E53935", label="Cl_bl (corregido)")
+    ax.plot(alphas, cl_raw, "s--", linewidth=1.5,  markersize=5, color="#90A4AE", label="Cl_mean (raw LES)")
+    ax.set_xlabel("Angulo de ataque alpha [deg]")
+    ax.set_ylabel("Cl")
+    ax.set_title("Cl vs angulo de ataque")
+    ax.grid(True, alpha=0.3)
+    ax.axhline(0, color="k", linewidth=0.5, linestyle=":")
+    ax.legend()
+    _save(fig, f"{out_prefix}_Cl.png")
+
+    # ── Eficiencia ───────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(alphas, ef_bl,  "o-",  linewidth=2,   markersize=6, color="#E53935", label="Cl/Cd BL (corregido)")
+    ax.plot(alphas, ef_raw, "s--", linewidth=1.5,  markersize=5, color="#90A4AE", label="Cl/Cd raw LES")
+    ax.set_xlabel("Angulo de ataque alpha [deg]")
+    ax.set_ylabel("Cl/Cd")
+    ax.set_title("Eficiencia vs angulo de ataque")
+    ax.grid(True, alpha=0.3)
+    ax.axhline(0, color="k", linewidth=0.5, linestyle=":")
+    ax.legend()
+    _save(fig, f"{out_prefix}_Eficiencia.png")
+
+    # ── Polar Cl vs Cd ───────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.plot(cd_bl,  cl_bl,  "o-",  linewidth=2,  markersize=6, color="#E53935", label="BL corregido")
+    ax.plot(cd_raw, cl_raw, "s--", linewidth=1.5, markersize=5, color="#90A4AE", label="Raw LES")
+    for i, a in enumerate(alphas):
+        if i % 2 == 0:
+            ax.annotate(f"{a:.0f}°", (cd_bl[i], cl_bl[i]),
+                        textcoords="offset points", xytext=(5, 3), fontsize=7, color="#E53935")
+    ax.set_xlabel("Cd")
+    ax.set_ylabel("Cl")
+    ax.set_title("Polar Cl vs Cd")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    _save(fig, f"{out_prefix}_Polar.png")
+
+    # ── Componentes Cd ───────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(alphas, cd_p, "o-",  linewidth=2,  markersize=5, color="#1E88E5", label="Cd_p (presion LES)")
+    ax.plot(alphas, cd_v, "s--", linewidth=2,  markersize=5, color="#43A047", label="Cd_visc (BL corr.)")
+    ax.plot(alphas, cd_bl,"^-",  linewidth=1.5, markersize=4, color="#E53935", label="Cd_bl = Cd_p + Cd_visc")
+    ax.set_xlabel("Angulo de ataque alpha [deg]")
+    ax.set_ylabel("Coeficiente")
+    ax.set_title("Componentes Cd vs angulo de ataque")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    _save(fig, f"{out_prefix}_Componentes.png")
 
 
 def imprimir_tabla(rows):
@@ -262,6 +310,10 @@ def main():
                 "Cl_inviscid":   float(bl["Cl_inviscid"]),
                 "trans_x_upper": float(bl["trans_x_upper"]),
                 "trans_x_lower": float(bl["trans_x_lower"]),
+                "regime_upper":  bl.get("regime_upper", ""),
+                "regime_lower":  bl.get("regime_lower", ""),
+                "x_sep_upper":   float(bl.get("x_sep_upper", 1.0)),
+                "x_sep_lower":   float(bl.get("x_sep_lower", 1.0)),
             })
         except Exception as _e:
             row.update({"Cl_bl": float("nan"), "Cd_bl": float("nan"),
@@ -271,10 +323,14 @@ def main():
 
         results.append(row)
 
+        bl_info = ""
+        if not np.isnan(row.get("Cd_bl", float("nan"))):
+            bl_info = (f"  |  Cd_bl={row['Cd_bl']:.5f}  Cl_bl={row['Cl_bl']:.5f}"
+                       f"  [{row.get('regime_upper','?')}/{row.get('regime_lower','?')}]")
         print(
             f"  -> nx={mesh.nx}, ny={mesh.ny} | "
-            f"Cd_mean={row['Cd_mean']:.5f}, Cl_mean={row['Cl_mean']:.5f}, Ef_mean={row['Ef_mean']:.5f} "
-            f"({elapsed:.1f}s)"
+            f"Cd_mean={row['Cd_mean']:.5f}, Cl_mean={row['Cl_mean']:.5f} ({elapsed:.1f}s)"
+            f"{bl_info}"
         )
 
         # Liberar memoria GPU entre corridas
@@ -303,6 +359,7 @@ def main():
     print(f"  - {OUT_PNG_PREFIX}_Cd.png")
     print(f"  - {OUT_PNG_PREFIX}_Cl.png")
     print(f"  - {OUT_PNG_PREFIX}_Eficiencia.png")
+    print(f"  - {OUT_PNG_PREFIX}_Polar.png")
     print(f"  - {OUT_PNG_PREFIX}_Componentes.png")
 
 

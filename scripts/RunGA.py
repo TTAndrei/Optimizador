@@ -533,6 +533,39 @@ def estimar_radio_le(puntos, le_idx):
     return float((a * b * c) / (2.0 * area2))
 
 
+def extraer_parametrizacion(puntos, le_idx):
+    """
+    Extrae parámetros de diseño compactos de un perfil para el dataset de IA.
+
+    Returns dict con: camber_max, camber_pos, espesor_max, espesor_pos,
+                      le_radius, te_gap. None en cada campo si falla.
+    """
+    resultado = {
+        'camber_max': None, 'camber_pos': None,
+        'espesor_max': None, 'espesor_pos': None,
+        'le_radius': None, 'te_gap': None,
+    }
+
+    try:
+        x_common, camber, espesor = descomponer_camber_espesor(puntos, le_idx)
+        if x_common is not None and len(camber) > 0:
+            idx_c = int(np.argmax(np.abs(camber)))
+            idx_e = int(np.argmax(espesor))
+            resultado['camber_max'] = round(float(camber[idx_c]), 6)
+            resultado['camber_pos'] = round(float(x_common[idx_c]), 6)
+            resultado['espesor_max'] = round(float(espesor[idx_e]), 6)
+            resultado['espesor_pos'] = round(float(x_common[idx_e]), 6)
+
+        r_le = estimar_radio_le(puntos, le_idx)
+        resultado['le_radius'] = round(float(r_le), 6) if np.isfinite(r_le) else None
+
+        resultado['te_gap'] = round(abs(float(puntos[0, 1] - puntos[-1, 1])), 6)
+    except Exception:
+        pass
+
+    return resultado
+
+
 def construir_restricciones_geometricas(perfil_base, le_idx, config):
     """Deriva umbrales geométricos automáticos a partir del perfil base."""
     te_base = abs(float(perfil_base[0, 1] - perfil_base[-1, 1]))
@@ -1026,8 +1059,13 @@ def simular_perfil(filepath_temp, alpha_deg, config):
         n_datos = len(mesh_gruesa.cdvector)
         inicio = max(1, int(n_datos * 0.1))
 
-        cd_val = float(cp.mean(mesh_gruesa.cdvector[inicio:]).get())
-        cl_val = float(cp.mean(mesh_gruesa.clvector[inicio:]).get())
+        cd_arr = mesh_gruesa.cdvector[inicio:]
+        cl_arr = mesh_gruesa.clvector[inicio:]
+
+        cd_val = float(cp.mean(cd_arr).get())
+        cl_val = float(cp.mean(cl_arr).get())
+        cd_std = float(cp.std(cd_arr).get())
+        cl_std = float(cp.std(cl_arr).get())
 
         # Validar: descartar NaN/Inf
         if (np.isnan(cd_val) or np.isnan(cl_val)
@@ -1037,7 +1075,11 @@ def simular_perfil(filepath_temp, alpha_deg, config):
 
         ld = cl_val / cd_val if abs(cd_val) > 1e-6 else 0.0
 
-        return {'cl': round(cl_val, 6), 'cd': round(cd_val, 6), 'ld': round(ld, 4)}
+        return {
+            'cl': round(cl_val, 6), 'cd': round(cd_val, 6), 'ld': round(ld, 4),
+            'cl_std': round(cl_std, 6), 'cd_std': round(cd_std, 6),
+            'n_samples': int(len(cd_arr)),
+        }
 
     except Exception as e:
         print(f"   [!] Error simulación @ alpha={alpha_deg}°: {e}")
@@ -1168,16 +1210,37 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
 
         # Registrar para ML (solo evaluaciones exitosas)
         if ind.fitness > 0 and resultados:
+            # Parametrización geométrica compacta para IA
+            _param = extraer_parametrizacion(ind.genes, le_idx) if le_idx is not None else {}
+
+            # Stats de convergencia agregadas sobre todos los ángulos evaluados
+            _cl_stds = [r['cl_std'] for r in resultados.values() if 'cl_std' in r]
+            _cd_stds = [r['cd_std'] for r in resultados.values() if 'cd_std' in r]
+            _ns = [r['n_samples'] for r in resultados.values() if 'n_samples' in r]
+            _conv = {
+                'cl_std_mean': round(float(np.mean(_cl_stds)), 6) if _cl_stds else None,
+                'cd_std_mean': round(float(np.mean(_cd_stds)), 6) if _cd_stds else None,
+                'n_samples': int(np.mean(_ns)) if _ns else None,
+            }
+
+            # Resultados limpios (sin campos de convergencia inline)
+            resultados_limpios = {
+                ang: {k: v for k, v in r.items() if k in ('cl', 'cd', 'ld')}
+                for ang, r in resultados.items()
+            }
+
             logger.registrar(
                 perfil_puntos=ind.genes,
                 condiciones=condiciones,
-                resultados_por_angulo=resultados,
+                resultados_por_angulo=resultados_limpios,
                 metadata={
                     'generacion': gen,
                     'individuo': i,
                     'fitness': ind.fitness,
                     'perfil_base': config['archivo_base'],
                     'multi_angulo': config['multi_angulo'],
+                    'parametrizacion': _param,
+                    'convergencia': _conv,
                 }
             )
 
