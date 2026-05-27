@@ -1,0 +1,21 @@
+# Dependencias del proyecto Optimizador
+# Python >= 3.14 requerido
+
+# Computacion cientifica
+numpy
+scipy
+pandas
+
+# Visualizacion
+matplotlib
+PyQt6
+
+# Machine Learning
+scikit-learn
+
+# Utilidades
+tqdm
+
+# GPU (CUDA 13.x - RTX 3070 Ti)
+# cupy instala la version correspondiente a tu CUDA:
+cupy-cuda13x

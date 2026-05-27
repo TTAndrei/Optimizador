@@ -34,6 +34,8 @@ import time
 import gc
 from datetime import datetime
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -57,14 +59,14 @@ PARAMETROS_OPTIMOS_HIJOS = {
 # ==========================================
 CONFIG = {
     # --- Archivos ---
-    'archivo_base': 'profiles/OPTIMO_PARCIAL_2604_2.dat',                    # Perfil base (formato Selig)
+    'archivo_base': 'profiles/s1014.dat',                    # Perfil base (formato Selig)
     'archivo_memoria_ia': 'cerebro_aerodinamico.pkl',   # Memoria persistente del filtro IA
     'archivo_datos_ml': 'aprendizaje_ML.jsonl',         # Datos acumulados para ML futuro
-    'directorio_resultados': 'resultados_ga',           # Carpeta de salida
+    'directorio_resultados': 'auto',   # 'auto' -> results/{perfil}_Re{Re}_a{alpha}/
 
     # --- Parámetros Evolutivos ---
-    'poblacion_tamano': 12,        # Individuos por generación
-    'generaciones': 10,            # Máximo de generaciones (parable con Ctrl+C)
+    'poblacion_tamano': 10,        # Individuos por generación
+    'generaciones': 30,            # Máximo de generaciones (parable con Ctrl+C)
     'elites': 4,                   # Individuos preservados intactos por elitismo
     'torneo_tamano': 4,            # Tamaño del torneo de selección de padres
 
@@ -137,7 +139,7 @@ CONFIG = {
     # --- Parámetros extra del simulador (opcionales) ---
     #   Dict con parámetros adicionales para Simulador2D.main()
     #   Ej: {'Lx': 12, 'Ly': 8, 'usar_wale': True}
-    'sim_extra_params': {'Lx': 12, 'Ly': 8, 'usar_wale': True,'divergencia': 1e-1, 'ancho_zona_fina_x':1.2,'ancho_zona_fina_y':1,'factor_expansion':1.1, 'mg_modo_turbo':True},
+    'sim_extra_params': {'Lx': 12, 'Ly': 8, 'usar_wale': True,'divergencia': 1e-1, 'ancho_zona_fina_x':1.2,'ancho_zona_fina_y':1,'factor_expansion':1.1, 'mg_modo_turbo_hd':True},
         
         
 }
@@ -408,6 +410,29 @@ def cargar_perfil(filepath):
         print(f"   Trailing edge: idx={ti} "
               f"({puntos[ti, 0]:.6f}, {puntos[ti, 1]:.6f}) [Y libre]")
 
+    # Mostrar linaje si existe companion .meta.json
+    for meta_candidate in (filepath + '.meta.json',
+                           os.path.splitext(filepath)[0] + '.meta.json'):
+        if os.path.exists(meta_candidate):
+            try:
+                with open(meta_candidate, 'r', encoding='utf-8') as _f:
+                    _meta = json.load(_f)
+                print(f"   Linaje:    {_meta.get('perfil_padre', '?')} "
+                      f"-> {os.path.basename(filepath)}  "
+                      f"(opt. gen {_meta.get('generacion_optimizacion', '?')})")
+                _cond = _meta.get('condiciones', {})
+                if _cond:
+                    print(f"   Cond. previas: Re={_cond.get('Re','?')}  "
+                          f"alpha={_cond.get('alpha_deg','?')}deg  "
+                          f"v0x={_cond.get('v0x','?')} m/s")
+                _prev = _meta.get('resultados', {})
+                for _ang, _r in sorted(_prev.items(), key=lambda x: float(x[0])):
+                    print(f"   @{_ang}deg: Cl={_r.get('cl','?')}  "
+                          f"Cd={_r.get('cd','?')}  L/D={_r.get('ld','?')}")
+            except Exception:
+                pass
+            break
+
     return puntos, header, le_idx, te_indices
 
 
@@ -420,6 +445,122 @@ def guardar_perfil(filepath, puntos, header):
         f.write(header)
         for p in puntos:
             f.write(f"  {p[0]:.6f}  {p[1]:.6f}\n")
+
+
+def _meta_ancestro(base_path):
+    """Lee el .meta.json compañero para extraer (ancestro_original, generacion_optimizacion+1)."""
+    for candidate in (
+        base_path + '.meta.json',
+        os.path.splitext(base_path)[0] + '.meta.json',
+    ):
+        if os.path.exists(candidate):
+            try:
+                with open(candidate, 'r', encoding='utf-8') as f:
+                    meta = json.load(f)
+                return (
+                    meta.get('ancestro_original',
+                             os.path.splitext(os.path.basename(base_path))[0]),
+                    int(meta.get('generacion_optimizacion', 0)) + 1,
+                )
+            except Exception:
+                break
+    return os.path.splitext(os.path.basename(base_path))[0], 1
+
+
+def generar_directorio_resultados(config):
+    """
+    Genera la ruta del directorio de resultados bajo results/.
+
+    Formato: results/{ancestro}[_g{N}]_Re{Re:.0f}_a{alpha:.1f}
+    Se llama al inicio de main() cuando directorio_resultados == 'auto'.
+    """
+    ancestro, gen_opt = _meta_ancestro(config['archivo_base'])
+    re_val = config['v0x'] * config['chord'] / config['nu']
+    gen_tag = f'_g{gen_opt}' if gen_opt > 1 else ''
+    nombre = f"{ancestro}{gen_tag}_Re{round(re_val)}_a{config['alpha_deg']:.1f}"
+    return os.path.join('results', nombre)
+
+
+def generar_stem_optimizado(config, fitness):
+    """
+    Genera el stem (nombre sin extensión) para el perfil optimizado.
+
+    Formato:  {ancestro}[_g{N}]_Re{Re:.0f}_a{alpha:.1f}_LD{ld:.2f}
+    Ejemplos: AG24_Re100000_a4.0_LD15.23
+              AG24_g2_Re100000_a4.0_LD16.01  (segunda corrida de optimización)
+
+    Returns: (stem: str, lineage: dict)
+    """
+    ancestro, gen_opt = _meta_ancestro(config['archivo_base'])
+    padre_name = os.path.splitext(os.path.basename(config['archivo_base']))[0]
+    re_val = config['v0x'] * config['chord'] / config['nu']
+    gen_tag = f'_g{gen_opt}' if gen_opt > 1 else ''
+    stem = (f"{ancestro}{gen_tag}"
+            f"_Re{round(re_val)}"
+            f"_a{config['alpha_deg']:.1f}"
+            f"_LD{fitness:.2f}")
+    lineage = {
+        'ancestro_original': ancestro,
+        'perfil_padre': padre_name,
+        'generacion_optimizacion': gen_opt,
+    }
+    return stem, lineage
+
+
+def guardar_perfil_con_metadata(directorio, stem, genes, config, fitness,
+                                 resultados, lineage, historial=None):
+    """
+    Guarda el perfil .dat con nombre descriptivo + un .meta.json compañero.
+
+    El .meta.json permite relanzar el GA desde este perfil y reconstruir
+    la cadena de linaje completa. Para continuar la optimización basta con
+    apuntar CONFIG['archivo_base'] al .dat generado.
+
+    Returns: ruta absoluta del .dat guardado.
+    """
+    os.makedirs(directorio, exist_ok=True)
+    re_val = config['v0x'] * config['chord'] / config['nu']
+
+    header = (
+        f"{stem}  "
+        f"[padre:{lineage['perfil_padre']}  "
+        f"Re:{round(re_val)}  alpha:{config['alpha_deg']}deg  "
+        f"L/D:{fitness:.4f}]\n"
+    )
+    filepath_dat = os.path.join(directorio, stem + '.dat')
+    guardar_perfil(filepath_dat, genes, header)
+
+    meta = {
+        'nombre': stem,
+        'timestamp': datetime.now().isoformat(),
+        'ancestro_original': lineage['ancestro_original'],
+        'perfil_padre': lineage['perfil_padre'],
+        'generacion_optimizacion': lineage['generacion_optimizacion'],
+        'condiciones': {
+            'v0x': config['v0x'],
+            'alpha_deg': config['alpha_deg'],
+            'chord': config['chord'],
+            'Re': round(re_val, 1),
+            'rho': config['rho'],
+            'nu': config['nu'],
+            'dx_min': config['dx_min'],
+            'iteraciones_cfd': config['simulacion_iteraciones'],
+            'CFL': config['CFL'],
+        },
+        'resultados': resultados,
+        'fitness': round(fitness, 6),
+        'historial_fitness': historial or [],
+        'config_ga': {k: v for k, v in config.items()
+                      if isinstance(v, (int, float, str, bool, list, dict))},
+    }
+    try:
+        with open(os.path.join(directorio, stem + '.meta.json'),
+                  'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f'   [!] Error guardando metadata: {e}')
+
+    return filepath_dat
 
 
 def suavizar_perfil(puntos, le_idx, n_pasadas=2):
@@ -1451,6 +1592,11 @@ def main():
     print(f" Población:    {CONFIG['poblacion_tamano']} individuos")
     print(f" Generaciones: {CONFIG['generaciones']} (máximo)")
 
+    # Resolver directorio automático antes de usarlo
+    if CONFIG.get('directorio_resultados') == 'auto':
+        CONFIG['directorio_resultados'] = generar_directorio_resultados(CONFIG)
+    print(f" Directorio:   {CONFIG['directorio_resultados']}")
+
     # Crear directorio de resultados
     os.makedirs(CONFIG['directorio_resultados'], exist_ok=True)
 
@@ -1702,11 +1848,23 @@ def main():
             mejor_global = copy.deepcopy(mejor_gen)
             print(f"\n   >>> NUEVO RÉCORD GLOBAL: "
                   f"L/D = {mejor_global.fitness:.4f} <<<")
+            # Checkpoint de seguridad (se sobreescribe en cada récord)
             guardar_perfil(
                 os.path.join(CONFIG['directorio_resultados'],
                              "OPTIMO_PARCIAL.dat"),
                 mejor_global.genes, mejor_global.header
             )
+            # Copia nombrada en records/ — una por cada nuevo récord
+            _stem_rec, _lin_rec = generar_stem_optimizado(
+                CONFIG, mejor_global.fitness
+            )
+            guardar_perfil_con_metadata(
+                os.path.join(CONFIG['directorio_resultados'], 'records'),
+                _stem_rec, mejor_global.genes, CONFIG,
+                mejor_global.fitness, mejor_global.resultados, _lin_rec,
+                historial=historial_fitness,
+            )
+            print(f"   Record guardado: records/{_stem_rec}.dat")
 
         # --- Guardar estado del GA ---
         guardar_estado_ga(
@@ -1845,12 +2003,23 @@ def main():
             else:
                 print(f"\n  Mejora sobre BASE: +{_delta_fin:.4f} (+{_pct_fin:.1f}%)")
 
-        # Guardar perfil final
-        nombre_final = os.path.join(
-            CONFIG['directorio_resultados'], "OPTIMO_FINAL.dat"
+        # Guardar perfil final con nombre descriptivo + metadata
+        stem_final, lineage_final = generar_stem_optimizado(
+            CONFIG, mejor_global.fitness
         )
-        guardar_perfil(nombre_final, mejor_global.genes, mejor_global.header)
-        print(f"\n Perfil óptimo guardado en: {nombre_final}")
+        nombre_final = guardar_perfil_con_metadata(
+            CONFIG['directorio_resultados'],
+            stem_final, mejor_global.genes, CONFIG,
+            mejor_global.fitness, mejor_global.resultados, lineage_final,
+            historial=historial_fitness,
+        )
+        print(f"\n Perfil optimo guardado en: {nombre_final}")
+        print(f"\n {'=' * 58}")
+        print(f"  Para continuar la optimizacion desde este perfil:")
+        print(f"  Cambia en CONFIG:")
+        print(f"    'archivo_base': '{nombre_final}'")
+        print(f"  El linaje se preservara automaticamente.")
+        print(f" {'=' * 58}")
 
         # Guardar historial de fitness
         historial_path = os.path.join(
