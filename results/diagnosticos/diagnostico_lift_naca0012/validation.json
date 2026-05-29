@@ -1,0 +1,22 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "no_failed_cases",
+      "ok": true,
+      "detail": "0 casos fallidos"
+    },
+    {
+      "name": "no_nan_core_metrics",
+      "ok": true,
+      "detail": "metricas principales finitas"
+    },
+    {
+      "name": "cp_files_exist",
+      "ok": true,
+      "detail": "Cp CSV generado para cada caso ok"
+    }
+  ],
+  "n_ok_rows": 6,
+  "n_error_rows": 0
+}

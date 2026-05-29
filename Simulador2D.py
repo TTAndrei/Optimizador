@@ -12,6 +12,7 @@ import sys
 from datetime import datetime
 from multiprocessing import shared_memory
 import struct
+import threading
 
 
 # ============================================================
@@ -298,7 +299,7 @@ class Mesh:
         self.u[:] = v0x
         self.v[:] = v0y
         self.p[:] = p0
-        
+
         # Velocidad de referencia (para clamp en ghost-cell IBM)
         self._vel_ref = float(max(np.sqrt(v0x**2 + v0y**2), 1.0))
 
@@ -323,11 +324,11 @@ class Mesh:
         self._nx_hat = None
         self._ny_hat = None
         self._mask_interfaz = None
-        
+
         # --- Ghost-Cell IBM ---
         self._ghost_cell_ready = False
         self._ghost_mask = None
-        
+
         # Ángulo de ataque del perfil (para transformación Drag/Lift)
         self.alpha_deg = 0.0
         self.alpha_geometry = 0.0  # Ángulo con que se cargó la geometría en la malla
@@ -1178,15 +1179,15 @@ class Mesh:
     def _precomputar_ghost_cell(self):
         """
         Precomputa los datos necesarios para el método Ghost-Cell IBM.
-        
-        Identifica celdas ghost (sólidas adyacentes a fluido) y calcula 
+
+        Identifica celdas ghost (sólidas adyacentes a fluido) y calcula
         los puntos imagen simétricos en el fluido para cada una.
         Se llama una vez después de cargar la geometría.
         """
         solid = self.solid
         ny, nx = solid.shape
         dx = self.dx; dy = self.dy
-        
+
         # Ghost cells: celdas SÓLIDAS con al menos un vecino FLUIDO (4-vecinos)
         fluid = ~solid
         vecino_fluido = cp.zeros_like(solid, dtype=cp.bool_)
@@ -1194,34 +1195,34 @@ class Mesh:
             fluid[1:-1, 2:] | fluid[1:-1, :-2] | fluid[2:, 1:-1] | fluid[:-2, 1:-1]
         )
         ghost_mask = solid & vecino_fluido
-        
+
         # Excluir bordes del dominio
         ghost_mask[0, :] = False; ghost_mask[-1, :] = False
         ghost_mask[:, 0] = False; ghost_mask[:, -1] = False
-        
+
         # Obtener distancia firmada y normales
         sd, nx_hat, ny_hat = self._signed_distance_and_normals()
-        
+
         # Indices de ghost cells
         ghost_indices = cp.where(ghost_mask)
         i_ghost = ghost_indices[0].astype(cp.float32)  # filas (y)
         j_ghost = ghost_indices[1].astype(cp.float32)  # columnas (x)
         n_ghost = len(i_ghost)
-        
+
         if n_ghost == 0:
             self._ghost_cell_ready = False
             self._ghost_mask = ghost_mask
             self._ghost_direct_zero = cp.zeros(0, dtype=cp.bool_)
             return
-        
+
         # Distancia de cada ghost cell a la pared (en celdas, siempre negativa dentro del sólido)
         # sd < 0 dentro del sólido, sd > 0 fuera
         d_ghost = sd[ghost_indices[0], ghost_indices[1]]  # negativo
-        
+
         # Normal en cada ghost cell (apunta hacia el fluido)
         nx_g = nx_hat[ghost_indices[0], ghost_indices[1]]
         ny_g = ny_hat[ghost_indices[0], ghost_indices[1]]
-        
+
         # Punto imagen: reflejar ghost a través de la pared hacia el fluido
         # x_imagen = x_ghost + 2*|d|*n  (en unidades de celda, d ya está en celdas)
         # |d| = -d_ghost (porque d_ghost < 0 dentro del sólido)
@@ -1230,12 +1231,12 @@ class Mesh:
         desplazamiento = cp.float32(2.0) * d_abs
         # Mínimo: mover al menos 1.5 celdas para alcanzar fluido
         desplazamiento = cp.maximum(desplazamiento, cp.float32(1.5))
-        
+
         # Coordenadas imagen en índices (j=x, i=y)
         # nx_g está en coord. físicas: dx*normal_x, pero sd ya está en celdas
         j_image = j_ghost + desplazamiento * nx_g  # x-direction
         i_image = i_ghost + desplazamiento * ny_g  # y-direction
-        
+
         # Clamp para que queden dentro del dominio
         j_image = cp.clip(j_image, cp.float32(1.0), cp.float32(nx - 2))
         i_image = cp.clip(i_image, cp.float32(1.0), cp.float32(ny - 2))
@@ -1289,14 +1290,14 @@ class Mesh:
         self._image_i_idx = i_image  # para _bilinear_interpolate (y = i)
         self._n_ghost = n_ghost
         self._ghost_cell_ready = True
-        
+
         # Máscara de sólido interior (celdas sólidas que NO son ghost)
         self._solid_interior = solid & (~ghost_mask)
-    
+
     def apply_ghost_cell_bc(self):
         """
         Aplica condición IBM Ghost-Cell: impone u=0 en la posición exacta de la pared.
-        
+
         Para cada celda ghost (sólida adyacente a fluido):
             u_ghost = -u_imagen
         donde u_imagen se interpola bilinealmente desde el campo fluido
@@ -1306,20 +1307,20 @@ class Mesh:
             self.u[self.solid] = 0.0
             self.v[self.solid] = 0.0
             return
-        
+
         # Interpolar velocidad en puntos imagen desde el campo actual
         u_image = self._bilinear_interpolate(self.u, self._image_j_idx, self._image_i_idx)
         v_image = self._bilinear_interpolate(self.v, self._image_j_idx, self._image_i_idx)
-        
+
         # Sanitizar NaN (punto imagen caía en zona problemática)
         u_image = cp.where(cp.isnan(u_image), cp.float32(0.0), u_image)
         v_image = cp.where(cp.isnan(v_image), cp.float32(0.0), v_image)
-        
+
         # Limitar magnitud con velocidad de referencia fija (no depende del campo actual)
         clamp_max = cp.float32(5.0 * self._vel_ref)
         u_image = cp.clip(u_image, -clamp_max, clamp_max)
         v_image = cp.clip(v_image, -clamp_max, clamp_max)
-        
+
         # Ghost cell = negativo de imagen (para que en la pared: promedio = 0)
         self.u[self._ghost_i, self._ghost_j] = -u_image
         self.v[self._ghost_i, self._ghost_j] = -v_image
@@ -1331,7 +1332,7 @@ class Mesh:
             gj = self._ghost_j[self._ghost_direct_zero]
             self.u[gi, gj] = cp.float32(0.0)
             self.v[gi, gj] = cp.float32(0.0)
-        
+
         # Sólido interior (lejos de la interfaz): mantener a cero
         self.u[self._solid_interior] = 0.0
         self.v[self._solid_interior] = 0.0
@@ -1400,16 +1401,17 @@ class Mesh:
         """
         Cambia el ángulo de ataque modificando la dirección del flujo.
         Asume que la geometría está cargada a 0° (plan_polar).
-        Establece v0x = U·cos(α), v0y = U·sin(α).
+        Establece el freestream equivalente en ejes del perfil:
+        v0x = U·cos(α), v0y = -U·sin(α).
 
         Parámetros:
             nuevo_alpha_deg: ángulo de ataque deseado en grados
             U_inf: módulo de la velocidad del flujo libre
-        
+
         Retorna:
             (v0x_new, v0y_new): nuevas componentes de velocidad libre
         """
-        alpha_rad = np.deg2rad(nuevo_alpha_deg)
+        alpha_rad = -np.deg2rad(nuevo_alpha_deg)
         v0x_new = float(U_inf * np.cos(alpha_rad))
         v0y_new = float(U_inf * np.sin(alpha_rad))
 
@@ -1458,7 +1460,7 @@ class Mesh:
     def apply_boundaries(self, after_projection=False):
         """
         Aplica condiciones de frontera.
-        
+
         Parámetros:
             after_projection: Si True, no sobrescribir outflow (ya tiene grad(p) aplicado)
         """
@@ -1660,7 +1662,7 @@ class Mesh:
             self.y_prev_idx = II - v_idx * dt
 
     '''Velocidades y presiones'''
-    
+
     def advect_velocities(self, dt):
         """Advección semi-Lagrangiana; steady=True activa under-relaxation para régimen estacionario.
 
@@ -1693,12 +1695,12 @@ class Mesh:
         Difusión viscosa de u,v con modelo WALE de viscosidad turbulenta
         y viscosidad de estela (surrogate 3D).
         Versión transitoria explícita (Forward Euler).
-        
+
         Parámetros:
             nu: viscosidad molecular (cinemática)
             dt: paso temporal
             usar_wale: si True, usa nu_eff = nu + nu_t (WALE); si False, solo nu molecular
-        
+
         Ecuación resuelta:
             ∂u/∂t = ∇·(ν_eff ∇u)
             donde ν_eff = ν + ν_t(x,y)
@@ -1712,20 +1714,20 @@ class Mesh:
         dx = float(self.dx)
         dy = float(self.dy)
         dx_min = min(dx, dy)
-        
+
         # ⭐ Calcular viscosidad efectiva
         if usar_wale:
             nu_t = self.compute_wale_viscosity()
             nu_eff = cp.float32(nu_f) + nu_t
         else:
             nu_eff = cp.full_like(self.u, nu_f, dtype=cp.float32)
-        
+
         # Determinar viscosidad máxima para sub-stepping
         nu_max = float(cp.max(nu_eff))
-        
+
         if nu_max <= 0.0:
             return
-        
+
         # Para estabilidad explícita: dt_sub <= C * min(dx,dy)^2 / nu_max
         C_visc = 0.25
         dt_visc = C_visc * (dx_min * dx_min) / nu_max
@@ -1755,7 +1757,7 @@ class Mesh:
         for _ in range(n_sub):
             u = u_new
             v = v_new
-            
+
             # ⭐ Con viscosidad variable: ∇·(ν_eff ∇u) ≠ ν_eff ∇²u
             # Forma correcta: ∂(ν ∂u/∂x)/∂x + ∂(ν ∂u/∂y)/∂y
             viscosidad_variable = usar_wale
@@ -1765,18 +1767,18 @@ class Mesh:
                 du_dy = cp.zeros_like(u, dtype=cp.float32)
                 dv_dx = cp.zeros_like(v, dtype=cp.float32)
                 dv_dy = cp.zeros_like(v, dtype=cp.float32)
-                
+
                 du_dx[:, 1:-1] = _d1x_W * u[:, :-2] + _d1x_C * u[:, 1:-1] + _d1x_E * u[:, 2:]
                 du_dy[1:-1, :] = _d1y_S * u[:-2, :] + _d1y_C * u[1:-1, :] + _d1y_N * u[2:, :]
                 dv_dx[:, 1:-1] = _d1x_W * v[:, :-2] + _d1x_C * v[:, 1:-1] + _d1x_E * v[:, 2:]
                 dv_dy[1:-1, :] = _d1y_S * v[:-2, :] + _d1y_C * v[1:-1, :] + _d1y_N * v[2:, :]
-                
+
                 # Calcular gradientes de nu_eff
                 dnu_dx = cp.zeros_like(nu_eff, dtype=cp.float32)
                 dnu_dy = cp.zeros_like(nu_eff, dtype=cp.float32)
                 dnu_dx[:, 1:-1] = _d1x_W * nu_eff[:, :-2] + _d1x_C * nu_eff[:, 1:-1] + _d1x_E * nu_eff[:, 2:]
                 dnu_dy[1:-1, :] = _d1y_S * nu_eff[:-2, :] + _d1y_C * nu_eff[1:-1, :] + _d1y_N * nu_eff[2:, :]
-                
+
                 # Laplaciano de u,v (stencil no-uniforme)
                 lap_u = cp.zeros_like(u, dtype=cp.float32)
                 lap_v = cp.zeros_like(v, dtype=cp.float32)
@@ -1788,11 +1790,11 @@ class Mesh:
                     _d2x_W * v[1:-1, :-2] + _d2x_C * v[1:-1, 1:-1] + _d2x_E * v[1:-1, 2:]
                     + _d2y_S * v[:-2, 1:-1] + _d2y_C * v[1:-1, 1:-1] + _d2y_N * v[2:, 1:-1]
                 )
-                
+
                 # Término completo: ∇·(ν_eff ∇u) = ν_eff ∇²u + ∇ν_eff · ∇u
                 div_visc_u = nu_eff * lap_u + dnu_dx * du_dx + dnu_dy * du_dy
                 div_visc_v = nu_eff * lap_v + dnu_dx * dv_dx + dnu_dy * dv_dy
-                
+
                 u_new = u + dt_sub_cp * div_visc_u
                 v_new = v + dt_sub_cp * div_visc_v
             else:
@@ -1847,7 +1849,7 @@ class Mesh:
         """
         Calcula el campo completo de divergencia del^2 u = du/dx + dv/dy.
         Usa stencil adaptativo cerca de sólidos para evitar gradientes explosivos.
-        
+
         Parámetros:
             out: buffer opcional (ny,nx) float32 para evitar nuevas alocaciones.
 
@@ -1960,12 +1962,12 @@ class Mesh:
         # No-negatividad y enmascarar sólidos
         nu_t = cp.where(cp.isfinite(nu_t), nu_t, cp.float32(0.0))
         nu_t = cp.maximum(nu_t, cp.float32(0.0))
-        
+
         # Cap basado en tamaño de celda (preservar escala turbulenta vs malla).
         # Cap relativo a nu molecular probado y revirtido: empeoró Cl(α=10°).
         nu_t_max_fisica = 100.0 * Delta
         nu_t = cp.minimum(nu_t, nu_t_max_fisica)
-        
+
         try:
             nu_t[self.solid] = cp.float32(0.0)
         except Exception:
@@ -2606,9 +2608,30 @@ class Mesh:
         p_corr = cp.zeros((ny, nx), dtype=cp.float32)
         rhs_flat_ref = rhs.ravel()
         coef_eff = cp.float32(float(coef_f))
-        # Evitar alocaciones por outer en la columna de salida
-        u_out_save = cp.empty((ny,), dtype=cp.float32)
-        v_out_save = cp.empty((ny,), dtype=cp.float32)
+        # Evitar alocaciones por outer en capas adyacentes a salidas. La
+        # proyeccion no debe corregir una capa que despues se sobrescribe con
+        # Neumann de velocidad en apply_boundaries(outflow).
+        def _bc_type(side):
+            bc = self.boundaries.get(side)
+            return bc[0] if bc is not None else None
+
+        outflow_layers = []
+        if nx > 2 and _bc_type("left") == "outflow":
+            outflow_layers.append((("left", (slice(None), 1)),
+                                   cp.empty((ny,), dtype=cp.float32),
+                                   cp.empty((ny,), dtype=cp.float32)))
+        if nx > 2 and _bc_type("right") == "outflow":
+            outflow_layers.append((("right", (slice(None), -2)),
+                                   cp.empty((ny,), dtype=cp.float32),
+                                   cp.empty((ny,), dtype=cp.float32)))
+        if ny > 2 and _bc_type("bottom") == "outflow":
+            outflow_layers.append((("bottom", (1, slice(None))),
+                                   cp.empty((nx,), dtype=cp.float32),
+                                   cp.empty((nx,), dtype=cp.float32)))
+        if ny > 2 and _bc_type("top") == "outflow":
+            outflow_layers.append((("top", (-2, slice(None))),
+                                   cp.empty((nx,), dtype=cp.float32),
+                                   cp.empty((nx,), dtype=cp.float32)))
         total_cycles = 0
         converged = False
         div_mean_current = div_mean_before
@@ -2664,12 +2687,11 @@ class Mesh:
             rhs.fill(cp.float32(0.0))
             rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_field[1:-1, 1:-1]
 
-            # Columna de salida (j=nx-2): la BC Neumann u[nx-1]=u[nx-2] hace que
-            # la divergencia allí sea una diferencia unilateral que el solver de
-            # presión no puede compensar sin oscilar (polo amplificante).
-            # Solución: vaciar el término fuente en esa columna y no aplicar
-            # corrección de velocidad → la proyección no "toca" la salida.
-            rhs[:, -2] = cp.float32(0.0)
+            # Capa interior adyacente a cada salida: la BC Neumann de velocidad
+            # copia la celda interior hacia la frontera. Si la proyeccion corrige
+            # esa capa, la salida puede realimentar un modo amplificante.
+            for (_name, out_slice), _u_buf, _v_buf in outflow_layers:
+                rhs[out_slice] = cp.float32(0.0)
 
             # Compatibilidad Neumann: media ponderada por volumen = 0
             if not hay_dirichlet:
@@ -2721,9 +2743,10 @@ class Mesh:
             # IMPORTANTE: no se usa line-search. La divergencia se mide ANTES del
             # post-procesado IBM (que reintroduce divergencia en la interfaz y haría
             # rechazar correcciones válidas). La corrección se aplica siempre.
-            # Guardar columna de salida: no aplicamos corrección allí (ver rhs[:,-2]=0)
-            u_out_save[:] = self.u[:, -2]
-            v_out_save[:] = self.v[:, -2]
+            # Guardar capas de salida: no aplicamos correccion efectiva alli.
+            for (_name, out_slice), u_buf, v_buf in outflow_layers:
+                u_buf[:] = self.u[out_slice]
+                v_buf[:] = self.v[out_slice]
             if usar_adjoint_correction:
                 # D^T·p (adjoint exacto del operador divergencia) → grad_u/v
                 adj_kernel(
@@ -2743,9 +2766,10 @@ class Mesh:
                      self.d1x_W, self.d1x_C, self.d1x_E,
                      self.d1y_S, self.d1y_C, self.d1y_N,
                      nx_i32, ny_i32))
-            # Restaurar columna de salida (la proyección no actúa allí)
-            self.u[:, -2] = u_out_save
-            self.v[:, -2] = v_out_save
+            # Restaurar capas de salida (la proyeccion no actua alli).
+            for (_name, out_slice), u_buf, v_buf in outflow_layers:
+                self.u[out_slice] = u_buf
+                self.v[out_slice] = v_buf
 
             if apply_ibm_each_outer:
                 # Paso B: BC dominio antes del IBM para que ghost lea u/v limpios
@@ -3055,7 +3079,7 @@ class Mesh:
 
         # Reaplicar fronteras
         self.apply_boundaries()
-        
+
         # Almacenar ángulo de ataque y ángulo de geometría
         self.alpha_deg = alpha_deg
         self.alpha_geometry = alpha_deg
@@ -3115,7 +3139,7 @@ class Mesh:
 
         if save_path:
             plt.savefig(save_path, dpi=600, bbox_inches="tight")
-        
+
         if return_fig:
             return fig
         elif show:
@@ -3221,8 +3245,8 @@ class Mesh:
         else:
             plt.close()
 
-    def visualize_surface_traction(self, mu, rho=1.0, max_arrows=100, arrow_scale=0.02, 
-                                   show_annotations=True, annotation_step=5, 
+    def visualize_surface_traction(self, mu, rho=1.0, max_arrows=100, arrow_scale=0.02,
+                                   show_annotations=True, annotation_step=5,
                                    show=True, save_path=None):
         """
         Visualiza campos de tracción en la superficie usando compute_surface_forces_definitive.
@@ -3235,12 +3259,12 @@ class Mesh:
         Ty_p = cp.asnumpy(data["Ty_p_face"])
         Tx_v = cp.asnumpy(data["Tx_v_face"])
         Ty_v = cp.asnumpy(data["Ty_v_face"])
-        
+
         # Calcular fuerza total
         Tx_total = Tx_p + Tx_v
         Ty_total = Ty_p + Ty_v
         force_mag = np.sqrt(Tx_total**2 + Ty_total**2)
-        
+
         # Submuestreo uniforme para limitar número de flechas
         n_points = len(Xb)
         if n_points > max_arrows:
@@ -3248,7 +3272,7 @@ class Mesh:
             indices = np.arange(0, n_points, step)
         else:
             indices = np.arange(n_points)
-        
+
         # Aplicar submuestreo
         Xb_sub = Xb[indices]
         Yb_sub = Yb[indices]
@@ -3259,59 +3283,59 @@ class Mesh:
         Tx_total_sub = Tx_total[indices]
         Ty_total_sub = Ty_total[indices]
         force_mag_sub = force_mag[indices]
-        
+
         # Calcular escala automática para evitar flechas enormes
         max_force = np.max(force_mag_sub) if len(force_mag_sub) > 0 else 1.0
         auto_scale = min(self.Lx, self.Ly) * arrow_scale / max_force if max_force > 0 else arrow_scale
-        
+
         ar = self.Ly / self.Lx
         fig, ax = plt.subplots(figsize=(16, 16 * ar))
-        
+
         # Fondo: magnitud de velocidad para referencia
         speed = cp.sqrt(self.u**2 + self.v**2)
         ax.imshow(cp.asnumpy(speed), origin="lower",
                   extent=[0, self.Lx, 0, self.Ly], cmap="Greys", alpha=0.3)
-        
+
         # Quiver presión (rojo)
-        Q1 = ax.quiver(Xb_sub, Yb_sub, Tx_p_sub * auto_scale, Ty_p_sub * auto_scale, 
+        Q1 = ax.quiver(Xb_sub, Yb_sub, Tx_p_sub * auto_scale, Ty_p_sub * auto_scale,
                        color="red", angles="xy", scale_units="xy", scale=1,
                        width=0.003, label="Tracción presión", alpha=0.7)
-        
+
         # Quiver viscosa (azul)
-        Q2 = ax.quiver(Xb_sub, Yb_sub, Tx_v_sub * auto_scale, Ty_v_sub * auto_scale, 
+        Q2 = ax.quiver(Xb_sub, Yb_sub, Tx_v_sub * auto_scale, Ty_v_sub * auto_scale,
                        color="blue", angles="xy", scale_units="xy", scale=1,
                        width=0.003, label="Tracción viscosa", alpha=0.7)
-        
+
         # Quiver total (negro, más grueso)
-        Q3 = ax.quiver(Xb_sub, Yb_sub, Tx_total_sub * auto_scale, Ty_total_sub * auto_scale, 
+        Q3 = ax.quiver(Xb_sub, Yb_sub, Tx_total_sub * auto_scale, Ty_total_sub * auto_scale,
                        color="black", angles="xy", scale_units="xy", scale=1,
                        width=0.005, label="Tracción total", alpha=0.9)
-        
+
         # Anotaciones con valores de fuerza
         if show_annotations and len(force_mag_sub) > 0:
             for i in range(0, len(Xb_sub), annotation_step):
-                ax.annotate(f'{force_mag_sub[i]:.3f}', 
+                ax.annotate(f'{force_mag_sub[i]:.3f}',
                            xy=(Xb_sub[i], Yb_sub[i]),
                            xytext=(5, 5), textcoords='offset points',
                            fontsize=8, color='darkgreen',
                            bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.6))
-        
+
         # Información en el título
         avg_force = np.mean(force_mag_sub)
         max_force_val = np.max(force_mag_sub)
         ax.set_title(f"Tracción en la superficie (μ={mu:.4f})\n"
                     f"Fuerza promedio: {avg_force:.4f}, Máxima: {max_force_val:.4f}\n"
-                    f"Mostrando {len(Xb_sub)} de {n_points} puntos", 
+                    f"Mostrando {len(Xb_sub)} de {n_points} puntos",
                     fontsize=12, fontweight='bold')
-        
+
         ax.legend(loc='upper right', fontsize=10)
         ax.set_xlabel("x", fontsize=11)
         ax.set_ylabel("y", fontsize=11)
         ax.set_aspect('equal', adjustable='box')
         ax.grid(True, alpha=0.2)
-        
+
         plt.tight_layout()
-        
+
         if save_path:
             plt.savefig(save_path, dpi=600, bbox_inches="tight")
         if show:
@@ -3403,7 +3427,7 @@ class Mesh:
         """
         Grafica la evolución de la media acumulada de Cd y Cl para mostrar convergencia.
         Útil para verificar si la simulación ha alcanzado un estado estacionario.
-        
+
         Parámetros:
             show: si True, muestra la figura
             return_fig: si True, retorna la figura en lugar de mostrarla
@@ -3411,16 +3435,16 @@ class Mesh:
         # Convertir a NumPy
         cd = cp.asnumpy(self.cdvector).flatten()
         cl = cp.asnumpy(self.clvector).flatten()
-        
+
         # Excluir el primer 10% para el cálculo de medias
         inicio_calculo = int(len(cd) * 0.1)
         cd_calculo = cd[inicio_calculo:]
         cl_calculo = cl[inicio_calculo:]
-        
+
         # Calcular medias acumuladas solo desde el 10%
         cd_mean_running = np.cumsum(cd_calculo) / np.arange(1, len(cd_calculo) + 1)
         cl_mean_running = np.cumsum(cl_calculo) / np.arange(1, len(cl_calculo) + 1)
-        
+
         # Ejes x en iteraciones reales
         x_full = np.arange(len(cd)) * self.guardado
         x_mean = np.arange(inicio_calculo, len(cd)) * self.guardado
@@ -3456,7 +3480,7 @@ class Mesh:
         cd_min_idx_real = cd_rel_min + inicio_calculo
         cl_max_idx_real = cl_rel_max + inicio_calculo
         cl_min_idx_real = cl_rel_min + inicio_calculo
-        
+
         cd_trend_max, cd_coef_max = linear_trend(cd_max_idx, cd[cd_max_idx_real] if len(cd_max_idx_real)>0 else np.array([]), x_mean)
         cd_trend_min, cd_coef_min = linear_trend(cd_min_idx, cd[cd_min_idx_real] if len(cd_min_idx_real)>0 else np.array([]), x_mean)
         cl_trend_max, cl_coef_max = linear_trend(cl_max_idx, cl[cl_max_idx_real] if len(cl_max_idx_real)>0 else np.array([]), x_mean)
@@ -3524,14 +3548,14 @@ class Mesh:
         """
         Calcula la divergencia media absoluta del campo de velocidad.
         div(u) = du/dx + dv/dy
-        
+
         Para fluidos incompresibles, div(u) DEBE ser 0 en todo momento
         (tanto en régimen transitorio como estacionario). La proyección de
         Poisson debería garantizar esto. Valores no nulos indican:
         - Error numérico acumulado
         - Tolerancia insuficiente en solver de Poisson
         - Problemas en condiciones de frontera o interpolaciones
-        
+
         Retorna:
             float: Valor medio absoluto de la divergencia en el dominio
         """
@@ -3592,46 +3616,46 @@ class Mesh:
         """
         Grafica el número de ciclos multigrid usados en cada paso temporal.
         Útil para diagnosticar eficiencia de convergencia y ajustar parámetros.
-        
+
         Parámetros:
             show: Si True, muestra la figura al final (llama plt.show()).
             return_fig: Si True, retorna (fig, ax) para posterior personalización.
-        
+
         Retorna:
             Si return_fig=True: (fig, (ax1, ax2)). De lo contrario, None.
         """
         try:
             # Mover datos a CPU
             cycles = self.mg_cycles_vector.get()
-            
+
             # Filtrar valores válidos (>0)
             valid_mask = cycles > 0
             if not valid_mask.any():
                 print("[ADVERTENCIA] No hay datos de ciclos multigrid para plotear")
                 return None
-            
+
             cycles = cycles[valid_mask]
             iterations = np.arange(len(cycles))
-            
+
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-            
+
             # Subplot 1: Serie temporal completa
             ax1.plot(iterations, cycles, 'b-', linewidth=0.8, alpha=0.7)
             ax1.set_xlabel('Iteración', fontsize=11)
             ax1.set_ylabel('Ciclos Multigrid', fontsize=11)
             ax1.set_title('Ciclos Multigrid por Paso Temporal', fontsize=13, fontweight='bold')
             ax1.grid(True, alpha=0.3)
-            
+
             # Estadísticas
             mean_cycles = np.mean(cycles)
             median_cycles = np.median(cycles)
             max_cycles = np.max(cycles)
             min_cycles = np.min(cycles)
-            
+
             ax1.axhline(mean_cycles, color='r', linestyle='--', linewidth=1.5, label=f'Media: {mean_cycles:.1f}')
             ax1.axhline(median_cycles, color='orange', linestyle='--', linewidth=1.5, label=f'Mediana: {median_cycles:.1f}')
             ax1.legend(loc='upper right', fontsize=10)
-            
+
             # Subplot 2: Histograma
             ax2.hist(cycles, bins=min(30, max_cycles-min_cycles+1), color='steelblue', alpha=0.7, edgecolor='black')
             ax2.axvline(mean_cycles, color='r', linestyle='--', linewidth=2, label=f'Media: {mean_cycles:.1f}')
@@ -3641,21 +3665,21 @@ class Mesh:
             ax2.set_title('Distribución de Ciclos', fontsize=13, fontweight='bold')
             ax2.legend(loc='upper right', fontsize=10)
             ax2.grid(True, alpha=0.3, axis='y')
-            
+
             # Info adicional
             textstr = f'Min: {min_cycles}\nMax: {max_cycles}\nStd: {np.std(cycles):.1f}'
             props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
             ax2.text(0.98, 0.97, textstr, transform=ax2.transAxes, fontsize=10,
                     verticalalignment='top', horizontalalignment='right', bbox=props)
-            
+
             plt.tight_layout()
-            
+
             if show:
                 plt.show()
-            
+
             if return_fig:
                 return fig, (ax1, ax2)
-            
+
         except Exception as e:
             print(f"Error al plotear historial de ciclos multigrid: {e}")
             return None
@@ -3663,13 +3687,13 @@ class Mesh:
     def plot_divergence_history(self, show=True, return_fig=False):
         """
         Grafica la evolución de la divergencia máxima a lo largo del tiempo.
-        
+
         Para fluidos incompresibles, div(u) = 0 es una condición exacta que debe
         cumplirse en todo momento. Una divergencia cercana a la precisión de máquina
         indica que el solver de Poisson está funcionando correctamente.
-        
+
         Valores típicamente aceptables: < 1e-6
-        
+
         Parámetros:
             show: si True, muestra la figura
             return_fig: si True, retorna la figura en lugar de mostrarla
@@ -3709,7 +3733,7 @@ class Mesh:
         ax.grid(True, alpha=0.3, which='both')
         ax.legend(fontsize=9)
         plt.tight_layout()
-        
+
         if return_fig:
             return fig
         elif show:
@@ -3731,7 +3755,7 @@ class Mesh:
         backend_original = matplotlib.get_backend()
         if backend_original != 'agg':
             matplotlib.use('Agg', force=True)
-        
+
         fig = None
         try:
             if kind == "velocity":
@@ -3781,7 +3805,7 @@ class Mesh:
                 plt.close(fig)
             else:
                 plt.close()
-            
+
             # Restaurar backend original
             if backend_original != 'agg':
                 matplotlib.use(backend_original, force=True)
@@ -3879,35 +3903,35 @@ class Mesh:
         Calcula Drag y Lift en el sistema aerodinámico (relativo al flujo libre).
         Hace la transformación de coordenadas desde fuerzas en ejes del cuerpo (Fx, Fy)
         a ejes aerodinámicos usando el ángulo de ataque.
-        
+
         Drag: paralelo al flujo libre
         Lift: perpendicular al flujo libre
         """
         res = self.compute_surface_forces_definitive(mu, rho=rho, n_extrap_layers=n_extrap_layers)
-        
+
         # Descomponer en ejes viento usando ángulo real del flujo libre
         alpha_rad = self._get_freestream_angle_rad()
         cos_a = np.cos(alpha_rad)
         sin_a = np.sin(alpha_rad)
-        
+
         # Fuerzas totales
         Fx = res["Fx"]
         Fy = res["Fy"]
         Drag = Fx * cos_a + Fy * sin_a
         Lift = -Fx * sin_a + Fy * cos_a
-        
+
         # Componentes de presión
         Fx_p = res["Fx_p"]
         Fy_p = res["Fy_p"]
         Drag_p = Fx_p * cos_a + Fy_p * sin_a
         Lift_p = -Fx_p * sin_a + Fy_p * cos_a
-        
+
         # Componentes viscosas
         Fx_v = res["Fx_v"]
         Fy_v = res["Fy_v"]
         Drag_v = Fx_v * cos_a + Fy_v * sin_a
         Lift_v = -Fx_v * sin_a + Fy_v * cos_a
-        
+
         return {
             "Drag": Drag, "Lift": Lift,
             "Drag_p": Drag_p, "Lift_p": Lift_p,
@@ -4460,13 +4484,13 @@ class Mesh:
                 return {'x': None, 'cp_mean_extrados': None, 'cp_mean_intrados': None, 'fig': fig}
 
 
-def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: int, it_actual: int, 
+def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: int, it_actual: int,
                                 tiempo_fisico_acumulado: float, rho: float, U_inf: float, chord: float, nu: float, mu: float,
                                 graficos: bool = True, verbose: bool = True):
     """
     Genera todos los gráficos y reportes de la simulación con los datos actuales.
     Puede ser llamada durante la simulación o al final.
-    
+
     Parámetros:
         mesh_gruesa: malla principal con datos de simulación
         iteraciones: número total de iteraciones programadas
@@ -4479,22 +4503,22 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     """
     # Calcular índice válido para promedios (hasta donde hay datos)
     idx_valido = min((it_actual // guardado) + 1, len(mesh_gruesa.cdvector))
-    
+
     if idx_valido <= 1:
         return
-    
+
     # Excluir 10% inicial para medias (o al menos 1 elemento)
     inicio_calculo = max(1, int(idx_valido * 0.1))
-    
+
     cd_medio = cp.mean(mesh_gruesa.cdvector[inicio_calculo:idx_valido]).get()
     cl_medio = cp.mean(mesh_gruesa.clvector[inicio_calculo:idx_valido]).get()
     cd_final = mesh_gruesa.cdvector[idx_valido-1].get()
     cl_final = mesh_gruesa.clvector[idx_valido-1].get()
     Re = (U_inf * chord) / nu
-    
+
     # Calcular fuerzas detalladas finales/actuales
     forces_final = mesh_gruesa.compute_drag_lift(mu, rho=rho, n_extrap_layers=5)
-    
+
     # Fuerzas en unidades físicas
     Fx_total = forces_final['Drag']
     Fy_total = forces_final['Lift']
@@ -4502,13 +4526,13 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     Fy_presion = forces_final['Lift_p']
     Fx_friccion = forces_final['Drag_v']
     Fy_friccion = forces_final['Lift_v']
-    
+
     # Coeficientes por componentes
     Cd_presion = 2 * Fx_presion / (rho * U_inf**2 * chord)
     Cd_friccion = 2 * Fx_friccion / (rho * U_inf**2 * chord)
     Cl_presion = 2 * Fy_presion / (rho * U_inf**2 * chord)
     Cl_friccion = 2 * Fy_friccion / (rho * U_inf**2 * chord)
-    
+
     ld_medio = cl_medio / cd_medio if abs(cd_medio) > 1e-12 else 0.0
     print(f"\n--- Resultados (Re={Re:.0f}, t={tiempo_fisico_acumulado:.4f}s) ---")
     print(f"  Cl medio = {cl_medio:.6f}   Cd medio = {cd_medio:.6f}   L/D = {ld_medio:.2f}")
@@ -4528,8 +4552,8 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     print(f"  {'  Cl fricción':20s}  {Cl_friccion:>12.6f}  ({100*Cl_friccion/(2*Fy_total/(rho*U_inf**2*chord)+1e-30):.1f}%)")
     print(f"{'─'*52}")
     # retener variables para posible uso posterior
-    
-    if graficos:    
+
+    if graficos:
         mesh_gruesa.visualize_velocity()
         mesh_gruesa.visualize_velocity_vectors(u_ref=U_inf)
         mesh_gruesa.plot_forces_over_time()
@@ -4611,21 +4635,21 @@ def _guardar_punto_polar(polar_data, mesh, mu, rho, U_inf, chord,
     idx_ini = iter_inicio // guardado
     idx_fin = iter_fin // guardado
     n_total = idx_fin - idx_ini
-    
+
     if n_total > 2:
         n_descartar = max(1, int(n_total * descarte))
         idx_media_ini = idx_ini + n_descartar
         idx_media_fin = idx_fin
-        
+
         cd_arr = cp.asnumpy(mesh.cdvector[idx_media_ini:idx_media_fin])
         cl_arr = cp.asnumpy(mesh.clvector[idx_media_ini:idx_media_fin])
-        
+
         # Filtrar ceros (iteraciones no alcanzadas)
         mask = (cd_arr != 0) | (cl_arr != 0)
         if np.any(mask):
             cd_arr = cd_arr[mask]
             cl_arr = cl_arr[mask]
-        
+
         cd_mean = float(np.mean(cd_arr)) if len(cd_arr) > 0 else 0.0
         cl_mean = float(np.mean(cl_arr)) if len(cl_arr) > 0 else 0.0
         cd_std = float(np.std(cd_arr)) if len(cd_arr) > 0 else 0.0
@@ -4662,7 +4686,7 @@ def _guardar_punto_polar(polar_data, mesh, mu, rho, U_inf, chord,
 def main(
     # Parámetros temporales
     CFL=0.8,
-    
+
     # Geometría del perfil
     alpha_deg=5,
     chord=1.0,
@@ -4671,7 +4695,7 @@ def main(
     # Tamaño del dominio
     Lx=7,
     Ly=6,
-    
+
     # Resolución de malla
     dx_min=0.01,       # Espaciado mínimo (zona fina alrededor del perfil)
     dy_min=None,       # Si None, se usa dx_min
@@ -4683,21 +4707,21 @@ def main(
     dy_max=None,       # Espaciado máximo absoluto en Y (si se define, pisa ratio_max_malla)
     usar_wale=False,   # Si True, activa modelo de turbulencia WALE
     wale_Cw=0.325,     # Coeficiente WALE. 0.325 estandar 3D; en 2D probar 0.10-0.20
-    
+
     # Posición del perfil
     cx=2,
     cy=None,  # Si None, se centra verticalmente
-    
+
     # Condiciones iniciales
     p0=0,      # Pa
     v0x=5,     # m/s
     v0y=0.0,   # m/s
-    
+
     # Propiedades del fluido
     rho=1.225,   # kg/m^3
     nu=1.5e-5,   # m^2/s (viscosidad cinemática)
     divergencia=1e-1,
-    
+
     # Condiciones de frontera
     boundary_left=("inflow", None),
     boundary_top=("slip", None),
@@ -4706,7 +4730,7 @@ def main(
     # Esto estabiliza la proyección: evita el modo amplificante Neumann+Neumann
     # que produce picos u = 2*u[n-2] - u[n-3] en la frontera de salida.
     boundary_right=("outflow", 0.0),
-    
+
     # Parámetros de simulación
     guardado=50,
     iteraciones=2000,
@@ -4721,35 +4745,43 @@ def main(
     mg_apply_ibm_each_outer=True,
     mg_rollback_on_nan=True,
     mg_compute_div_after=True,
+    usar_adjoint_correction=False,
     mg_modo_rapido=False,
     mg_modo_turbo=False,
     mg_modo_turbo_hd=False,    # T2_L1: turbo + 5 ciclos + niveles=1 + div=0.05 (Cl~0.65, 2.1 it/s)
     mg_modo_turbo_ultra=False,  # T2_L2: turbo + 5 ciclos + niveles=2 + div=0.05 (Cl~0.68, 1.4 it/s)
     mg_niveles_max=1,  # 0 = sin coarsening (compat); 1-2 = MG real
-    
+
     # Opciones de visualización y guardado
     save_frames=False,
     frames_dir_grueso=None,
+    save_frames_cada=None,
     graficos=False,
-    
+
     # Control de convergencia
     stop_on_convergence=True,
-    
+
     # Plan polar automático
     plan_polar=None,
     polar_descarte=0.3,
-    
+
     # Vista en tiempo real
     live_view=False,
-    
+
     # Visualización de malla
     mostrar_malla=False,
 
     # Correccion de deriva vertical (casos simetricos)
-    corregir_deriva_vertical=True,
+    corregir_deriva_vertical=False,
     umbral_deriva_vertical=1e-8,
     corregir_deriva_cada=1,
     factor_deriva_vertical=0.1,
+
+    # Diagnostico IBM: mantener la geometria sin rotar y rotar el flujo libre
+    usar_flujo_inclinado=False,
+    flujo_inclinado_signo=-1.0,
+    flujo_inclinado_angulo_deg=None,
+    flujo_inclinado_bc="auto_farfield",
 
     # Diagnóstico detallado de spikes (costoso; usar solo al depurar)
     debug_spikes=False,
@@ -4773,9 +4805,47 @@ def main(
         raise ValueError(f"ratio_max_malla debe ser > 1.0, recibido: {ratio_max_malla}")
     dx_max_eff = float(dx_max) if dx_max is not None else float(ratio_max_malla * dx_min)
     dy_max_eff = float(dy_max) if dy_max is not None else float(ratio_max_malla * dy_min)
-    
+
     # Calcular viscosidad dinámica
     mu = rho * nu
+
+    # Modo equivalente fisicamente a rotar la geometria, pero mas benigno para
+    # IBM cartesiano: el perfil queda alineado con la malla y se inclina el inflow.
+    if usar_flujo_inclinado:
+        U_inicial = float(np.sqrt(float(v0x)**2 + float(v0y)**2))
+        if U_inicial <= 0.0:
+            raise ValueError("usar_flujo_inclinado requiere velocidad libre no nula")
+        flow_angle_deg = (
+            float(flujo_inclinado_angulo_deg)
+            if flujo_inclinado_angulo_deg is not None
+            else float(flujo_inclinado_signo) * float(alpha_deg)
+        )
+        alpha_rad_in = np.deg2rad(flow_angle_deg)
+        v0x = float(U_inicial * np.cos(alpha_rad_in))
+        v0y = float(U_inicial * np.sin(alpha_rad_in))
+        print(
+            f"[flujo-inclinado] geometria a 0deg, inflow=({v0x:.6f}, {v0y:.6f}) "
+            f"para alpha={float(alpha_deg):.3f}deg, flow_angle={flow_angle_deg:.3f}deg"
+        )
+        # Con v0y != 0, slip en top/bottom anularia la componente vertical del
+        # freestream. Si el usuario no cambio esas fronteras, clasificamos las
+        # fronteras lejanas por U·n: inflow donde entra y outflow donde sale.
+        if abs(v0y) > 1e-12:
+            if boundary_top == ("slip", None) and boundary_bottom == ("slip", None):
+                if str(flujo_inclinado_bc) == "inflow_top_bottom":
+                    boundary_bottom = ("inflow", None)
+                    boundary_top = ("inflow", None)
+                elif str(flujo_inclinado_bc) == "auto_farfield":
+                    if v0y > 0.0:
+                        boundary_bottom = ("inflow", None)
+                        boundary_top = ("outflow", p0)
+                    else:
+                        boundary_top = ("inflow", None)
+                        boundary_bottom = ("outflow", p0)
+                else:
+                    raise ValueError(
+                        "flujo_inclinado_bc debe ser 'auto_farfield' o 'inflow_top_bottom'"
+                    )
 
     # Perfil rápido opcional de MG (sin tocar defaults del solver base)
     if mg_modo_rapido:
@@ -4849,7 +4919,7 @@ def main(
         factor_expansion=factor_expansion,
         ancho_zona_fina=ancho_zona_fina_y, dx_max=dy_max_eff
     )
-    
+
     print(f"Malla variable: {len(X_1d)} x {len(Y_1d)} nodos")
     print(f"  X: dx_min={np.min(np.diff(X_1d)):.6f}, dx_max={np.max(np.diff(X_1d)):.6f}")
     print(f"  Y: dy_min={np.min(np.diff(Y_1d)):.6f}, dy_max={np.max(np.diff(Y_1d)):.6f}")
@@ -4859,9 +4929,11 @@ def main(
                        usar_wale=usar_wale, X_1d=X_1d, Y_1d=Y_1d)
     mesh_gruesa._wale_Cw = float(wale_Cw)
 
-    # Ángulo de geometría: si hay plan_polar, cargar a 0° (el flujo se rota)
-    alpha_geom = 0.0 if (plan_polar is not None and len(plan_polar) > 0) else alpha_deg
-    
+    # Ángulo de geometría: en plan_polar o flujo inclinado se carga a 0° y se rota el inflow.
+    alpha_geom = 0.0 if (
+        usar_flujo_inclinado or (plan_polar is not None and len(plan_polar) > 0)
+    ) else alpha_deg
+
     # Espesor mínimo del TE
     min_te = 2.0 * dx_min
     '''
@@ -4875,36 +4947,44 @@ def main(
         alpha_deg=alpha_geom, fill=True, plot=False,
         min_te_height=min_te
     )
+    if usar_flujo_inclinado:
+        mesh_gruesa.alpha_deg = float(alpha_deg)
 
     # Aplicar condiciones de frontera a malla gruesa
     boundary_type_left, boundary_val_left = boundary_left
     boundary_type_top, boundary_val_top = boundary_top
     boundary_type_bottom, boundary_val_bottom = boundary_bottom
     boundary_type_right, boundary_val_right = boundary_right
-    
+
     # Usar valores por defecto si no se especifican
     if boundary_val_left is None:
         boundary_val_left = (v0x, v0y)
     elif boundary_type_left == "inflow" and not isinstance(boundary_val_left, (tuple, list)):
         # Si inflow recibe un escalar, convertir a tupla (vx, 0)
         boundary_val_left = (float(boundary_val_left), 0.0)
-    
+
     if boundary_val_top is None:
-        boundary_val_top = None
+        if boundary_type_top == "inflow":
+            boundary_val_top = (v0x, v0y)
+        else:
+            boundary_val_top = None
     elif boundary_type_top == "inflow" and not isinstance(boundary_val_top, (tuple, list)):
         # Si inflow recibe un escalar, convertir a tupla (vx, vy)
         boundary_val_top = (float(boundary_val_top), 0.0)
-    
+
     if boundary_val_bottom is None:
-        boundary_val_bottom = None
+        if boundary_type_bottom == "inflow":
+            boundary_val_bottom = (v0x, v0y)
+        else:
+            boundary_val_bottom = None
     elif boundary_type_bottom == "inflow" and not isinstance(boundary_val_bottom, (tuple, list)):
         # Si inflow recibe un escalar, convertir a tupla (vx, vy)
         boundary_val_bottom = (float(boundary_val_bottom), 0.0)
-    
+
     # Derecha: outflow con presión fija p0 por defecto (Dirichlet), ahora soportado por CG
     if boundary_val_right is None:
         boundary_val_right = p0
-    
+
     mesh_gruesa.set_boundary("left", boundary_type_left, value=boundary_val_left)
     mesh_gruesa.set_boundary("top", boundary_type_top, value=boundary_val_top)
     mesh_gruesa.set_boundary("bottom", boundary_type_bottom, value=boundary_val_bottom)
@@ -4919,11 +4999,11 @@ def main(
     corregir_deriva_cada = max(1, int(corregir_deriva_cada))
     umbral_deriva_vertical = float(max(0.0, umbral_deriva_vertical))
     factor_deriva_vertical = float(max(0.0, min(1.0, factor_deriva_vertical)))
-    
+
     # Parámetros físicos
     CFL = CFL
     dt = CFL * min(dx_min, dy_min if dy_min else dx_min) / np.sqrt(v0x**2 + v0y**2)
-    print(f"dt = {dt:.6f} s  (CFL={CFL})")  
+    print(f"dt = {dt:.6f} s  (CFL={CFL})")
 
     guardado = guardado
     iteraciones = iteraciones
@@ -4937,7 +5017,7 @@ def main(
     mesh_gruesa.divvector_max = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.clcdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
-    
+
     # Estadísticas
     print(f"Malla: {mesh_gruesa.nx} x {mesh_gruesa.ny} ({mesh_gruesa.nx * mesh_gruesa.ny:,} celdas)")
 
@@ -4995,17 +5075,17 @@ def main(
         'otros': 0.0,
         'total_por_paso': []
     }
-    
+
     # ⭐ Variable para acumular tiempo físico simulado
     tiempo_fisico_acumulado = 0.0
-    
+
     # ============================================================
     # SISTEMA DE CONTROL INTERACTIVO: TRIGGERS Y SEÑALES
     # ============================================================
     # Variables de control
     interrupcion_solicitada = False
     plot_solicitado = False
-    
+
     def signal_handler(sig, frame):
         """Manejador para Ctrl+C: finaliza limpiamente con todos los outputs"""
         nonlocal interrupcion_solicitada
@@ -5016,24 +5096,56 @@ def main(
         print("Se generarán todos los outputs y gráficos con los datos actuales.")
         print("="*70)
         interrupcion_solicitada = True
-    
-    # Instalar manejador de señal Ctrl+C
-    signal.signal(signal.SIGINT, signal_handler)
-    
+
+    # Instalar manejador de señal Ctrl+C solo en el hilo principal y restaurarlo al salir.
+    previous_sigint_handler = None
+    sigint_handler_installed = False
+    if threading.current_thread() is threading.main_thread():
+        previous_sigint_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal_handler)
+        sigint_handler_installed = True
+
+    def _cleanup_runtime_resources():
+        nonlocal shm_data, shm_meta, shm_coords
+        def _close_unlink(shm):
+            if shm is None:
+                return
+            try:
+                shm.close()
+                shm.unlink()
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+
+        _close_unlink(shm_data)
+        _close_unlink(shm_meta)
+        _close_unlink(shm_coords)
+        shm_data = None
+        shm_meta = None
+        shm_coords = None
+
+    def _restore_signal_handler():
+        if sigint_handler_installed:
+            try:
+                signal.signal(signal.SIGINT, previous_sigint_handler)
+            except Exception:
+                pass
+
     # Archivos trigger para control durante ejecución
     trigger_plot = "PLOT_NOW.trigger"
     trigger_stop = "STOP_SIMULATION.trigger"
     trigger_alpha = "CHANGE_ALPHA.trigger"
-    
+
     # Velocidad libre (módulo constante)
     U_inf = np.sqrt(v0x**2 + v0y**2)
     alpha_actual = alpha_deg  # Ángulo de ataque actual
-    
+
     # Registro polar: almacena Cd/Cl convergido para cada alpha
     polar_data = []  # Lista de dicts: {alpha, Cd, Cl, Cd_p, Cd_v, Cl_p, Cl_v, iter_inicio, iter_fin}
     iter_inicio_alpha = 0  # Iteración donde empezó el alpha actual
     archivo_polar = "polar_results.json"
-    
+
     # ============================================================
     # PLAN POLAR AUTOMÁTICO
     # ============================================================
@@ -5051,14 +5163,14 @@ def main(
             mesh_gruesa.divvector_max = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.clcdvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
-        
+
         # Geometría cargada a 0°: SIEMPRE programar el primer alpha
         # (el flujo arranca horizontal, hay que rotarlo al primer alpha del plan)
         acum = 0
         for idx_plan, (alpha_plan, n_iter_plan) in enumerate(plan_polar):
             cambios_alpha_programados[acum] = alpha_plan
             acum += n_iter_plan
-        
+
         print("\n" + "="*70)
         print("📅 PLAN POLAR AUTOMÁTICO:")
         print("="*70)
@@ -5068,7 +5180,7 @@ def main(
             iter_acum += n_p
         print(f"   Total: {iteraciones} iteraciones")
         print("="*70 + "\n")
-    
+
     # Limpiar triggers antiguos si existen
     for trigger_file in [trigger_plot, trigger_stop, trigger_alpha]:
         if os.path.exists(trigger_file):
@@ -5076,7 +5188,7 @@ def main(
                 os.remove(trigger_file)
             except:
                 pass
-    
+
     print("\n" + "="*70)
     print("[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:")
     print("="*70)
@@ -5087,7 +5199,7 @@ def main(
     if diagnostico_fuerzas:
         print(f"  • Diagnóstico fuerzas: ON (cada {diagnostico_fuerzas_cada} iters, bins={diagnostico_fuerzas_bins}, TE>={diagnostico_fuerzas_te_start:.2f})")
     print("="*70 + "\n")
-    
+
     # ============================================================
     # CRITERIO DE CONVERGENCIA A ESTADO ESTACIONARIO
     # ============================================================
@@ -5097,13 +5209,13 @@ def main(
     tol_u = 1e-2  # Tolerancia relativa para velocidad u
     tol_v = 1e-1  # Tolerancia relativa para velocidad v
     tol_p = 1e-2  # Tolerancia relativa para presión
-    
+
     # Variables para almacenar campos previos
     u_prev = None
     v_prev = None
     p_prev = None
     converged_to_steady = False
-    
+
     # ============================================================
     # VISTA EN TIEMPO REAL (memoria compartida)
     # ============================================================
@@ -5122,9 +5234,9 @@ def main(
             data_size = base_size + n_cells * 4
         else:
             data_size = base_size
-        
+
         meta_size = 40  # ny(4)+nx(4)+iter(4)+cd(4)+cl(4)+alpha(4)+timestamp(8)+v0x(4)+v0y(4)
-        
+
         # Limpiar bloques previos si existen
         for name in ["sim2d_meta", "sim2d_live", "sim2d_coords"]:
             try:
@@ -5152,10 +5264,12 @@ def main(
         print(f"   Progreso en memoria compartida: {meta_size} bytes (iteraciones sincronizadas)")
     except Exception as e:
         print(f"\n[ADVERTENCIA] No se pudo crear memoria compartida: {e}")
+        _cleanup_runtime_resources()
         live_view = False
         shm_meta = None
         shm_data = None
-    
+        shm_coords = None
+
     # Velocidad máxima permitida (red de seguridad contra blowup)
     U_ref = float(np.sqrt(v0x**2 + v0y**2))
     vel_clamp_max = 50.0 * max(U_ref, 1.0)
@@ -5221,454 +5335,452 @@ def main(
         # Sin coste extra por iteración cuando no se está depurando.
         def _diag_check(_etapa):
             return
-    
-    # ============================================================
-    # WARMUP: forzar JIT de kernels CuPy + RawKernel antes del bucle
-    # Evita que la "iter 0" tarde 30-90s y parezca cuelgue (especialmente en F5/Debug)
-    # ============================================================
-    print("[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...", flush=True)
+
     try:
-        _t_w = time.time()
-        # Forzar JIT de elementwise/reduce
-        _ = float(cp.sum(mesh_gruesa.u))
-        _ = float(cp.max(cp.sqrt(mesh_gruesa.u * mesh_gruesa.u + mesh_gruesa.v * mesh_gruesa.v)))
-        # Forzar JIT del WALE si aplica (también setea _nu_molecular del cap)
-        mesh_gruesa._nu_molecular = float(nu)
-        if mesh_gruesa.usar_wale:
-            _nu_t = mesh_gruesa.compute_wale_viscosity()
-            del _nu_t
-        # Sincronizar GPU para asegurar que la JIT terminó
-        cp.cuda.Stream.null.synchronize()
-        print(f"[WARMUP] OK ({time.time() - _t_w:.1f}s)", flush=True)
-    except Exception as _e:
-        print(f"[WARMUP] omitido: {_e}", flush=True)
-
-    # ============================================================
-    # BUCLE PRINCIPAL: MALLA SIMPLE (SOLO GRUESA)
-    # ============================================================
-    for it in tqdm(range(iteraciones)):
-        t_paso_inicio = time.time()
-        
-        # Recalcular dt cada iteración (CFL adaptativo + restricción viscosa)
-        t0 = time.time()
+        # ============================================================
+        # WARMUP: forzar JIT de kernels CuPy + RawKernel antes del bucle
+        # Evita que la "iter 0" tarde 30-90s y parezca cuelgue (especialmente en F5/Debug)
+        # ============================================================
+        print("[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...", flush=True)
         try:
-            # Calcular velocidad máxima SOLO en el fluido (excluir sólidos)
-            speed_g = cp.sqrt(mesh_gruesa.u * mesh_gruesa.u + mesh_gruesa.v * mesh_gruesa.v)
-            fluid_mask = ~mesh_gruesa.solid
-            
-            if cp.any(fluid_mask):
-                Umax_cp = cp.max(speed_g[fluid_mask])
-                Umax = float(Umax_cp) if float(Umax_cp) > 1e-12 else float(np.sqrt(v0x**2 + v0y**2))
-            else:
-                Umax = float(np.sqrt(v0x**2 + v0y**2))
-            
-            # dt advectivo (CFL)
-            dt_adv = float(CFL * min(mesh_gruesa.dx, mesh_gruesa.dy) / max(Umax, 1e-12))
-            
-            # dt viscoso (estabilidad difusiva)
+            _t_w = time.time()
+            # Forzar JIT de elementwise/reduce
+            _ = float(cp.sum(mesh_gruesa.u))
+            _ = float(cp.max(cp.sqrt(mesh_gruesa.u * mesh_gruesa.u + mesh_gruesa.v * mesh_gruesa.v)))
+            # Forzar JIT del WALE si aplica (también setea _nu_molecular del cap)
+            mesh_gruesa._nu_molecular = float(nu)
             if mesh_gruesa.usar_wale:
-                nu_t_g = mesh_gruesa.compute_wale_viscosity()
-                
-                nu_t_max_permitido = 100.0 * nu
-                nu_t_g = cp.minimum(nu_t_g, cp.float32(nu_t_max_permitido))
-                
-                nu_eff_max_cp = cp.max(cp.float32(nu) + nu_t_g)
-                nu_eff_max = float(nu_eff_max_cp) if float(nu_eff_max_cp) > 0 else float(nu)
-            else:
-                nu_eff_max = float(nu)
-            
-            # Advertencia si nu_eff es anormalmente alto
-            if nu_eff_max > 10.0 * nu and it % (guardado * 10) == 0:
-                ratio_nu = nu_eff_max / nu
-                print(f"\n[ADVERTENCIA] [Iter {it}] nu_efectiva muy alta: {nu_eff_max:.2e} ({ratio_nu:.1f}x nu molecular)")
-                print(f"    Esto puede reducir dt significativamente")
-            
-            C_visc = 0.25
-            if nu_eff_max > 1e-12:
-                dt_visc = float(C_visc * (min(mesh_gruesa.dx, mesh_gruesa.dy)**2) / nu_eff_max)
-            else:
-                dt_visc = float('inf')
-            
-            # Usar el más restrictivo, pero limitar crecimiento al doble del dt nominal
-            dt_use = min(dt_adv, dt_visc, dt * 2.0)
-            
-            # Seguridad: evitar dt muy pequeños que pueden estancar la simulación
-            if dt_use < 1e-8:
+                _nu_t = mesh_gruesa.compute_wale_viscosity()
+                del _nu_t
+            # Sincronizar GPU para asegurar que la JIT terminó
+            cp.cuda.Stream.null.synchronize()
+            print(f"[WARMUP] OK ({time.time() - _t_w:.1f}s)", flush=True)
+        except Exception as _e:
+            print(f"[WARMUP] omitido: {_e}", flush=True)
+
+        # ============================================================
+        # BUCLE PRINCIPAL: MALLA SIMPLE (SOLO GRUESA)
+        # ============================================================
+        for it in tqdm(range(iteraciones)):
+            t_paso_inicio = time.time()
+
+            # Recalcular dt cada iteración (CFL adaptativo + restricción viscosa)
+            t0 = time.time()
+            try:
+                # Calcular velocidad máxima SOLO en el fluido (excluir sólidos)
+                speed_g = cp.sqrt(mesh_gruesa.u * mesh_gruesa.u + mesh_gruesa.v * mesh_gruesa.v)
+                fluid_mask = ~mesh_gruesa.solid
+
+                if cp.any(fluid_mask):
+                    Umax_cp = cp.max(speed_g[fluid_mask])
+                    Umax = float(Umax_cp) if float(Umax_cp) > 1e-12 else float(np.sqrt(v0x**2 + v0y**2))
+                else:
+                    Umax = float(np.sqrt(v0x**2 + v0y**2))
+
+                # dt advectivo (CFL)
+                dt_adv = float(CFL * min(mesh_gruesa.dx, mesh_gruesa.dy) / max(Umax, 1e-12))
+
+                # dt viscoso (estabilidad difusiva)
+                if mesh_gruesa.usar_wale:
+                    nu_t_g = mesh_gruesa.compute_wale_viscosity()
+
+                    nu_t_max_permitido = 100.0 * nu
+                    nu_t_g = cp.minimum(nu_t_g, cp.float32(nu_t_max_permitido))
+
+                    nu_eff_max_cp = cp.max(cp.float32(nu) + nu_t_g)
+                    nu_eff_max = float(nu_eff_max_cp) if float(nu_eff_max_cp) > 0 else float(nu)
+                else:
+                    nu_eff_max = float(nu)
+
+                # Advertencia si nu_eff es anormalmente alto
+                if nu_eff_max > 10.0 * nu and it % (guardado * 10) == 0:
+                    ratio_nu = nu_eff_max / nu
+                    print(f"\n[ADVERTENCIA] [Iter {it}] nu_efectiva muy alta: {nu_eff_max:.2e} ({ratio_nu:.1f}x nu molecular)")
+                    print(f"    Esto puede reducir dt significativamente")
+
+                C_visc = 0.25
+                if nu_eff_max > 1e-12:
+                    dt_visc = float(C_visc * (min(mesh_gruesa.dx, mesh_gruesa.dy)**2) / nu_eff_max)
+                else:
+                    dt_visc = float('inf')
+
+                # Usar el más restrictivo, pero limitar crecimiento al doble del dt nominal
+                dt_use = min(dt_adv, dt_visc, dt * 2.0)
+
+                # Seguridad: evitar dt muy pequeños que pueden estancar la simulación
+                if dt_use < 1e-8:
+                    dt_use = dt
+
+            except Exception as e:
+                # En caso de error, usar dt nominal
                 dt_use = dt
-                
-        except Exception as e:
-            # En caso de error, usar dt nominal
-            dt_use = dt
-            
-        timing_stats['recalculo_dt'] += time.time() - t0
-        
-        # Advección
-        t0 = time.time()
-        mesh_gruesa.advect_velocities(dt_use)
-        mesh_gruesa.apply_boundaries(after_projection=False)
-        _diag_check("ADVECCIÓN")
-        timing_stats['adveccion'] += time.time() - t0
-        
-        # Difusión
-        t0 = time.time()
-        mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=mesh_gruesa.usar_wale)
-        mesh_gruesa.apply_boundaries(after_projection=False)
-        _diag_check("DIFUSIÓN")
-        timing_stats['difusion'] += time.time() - t0
-        
-        # Proyección
-        t0 = time.time()
-        mg_info = mesh_gruesa.project_multigrid(
-            rho, dt_use,
-            tol_div=None,          # usa tol_div_rel·U/Lx (adimensional)
-            tol_div_rel=divergencia,
-            max_outer=mg_max_outer,
-            cycles_per_outer=mg_cycles_per_outer,
-            niveles_max=mg_niveles_max,
-            pre_suavizado=mg_pre_suavizado,
-            post_suavizado=mg_post_suavizado,
-            guard_residual_every_outer=mg_guard_residual_every_outer,
-            adaptive_outer0_cycles=mg_adaptive_outer0_cycles,
-            apply_ibm_each_outer=mg_apply_ibm_each_outer,
-            rollback_on_nan=mg_rollback_on_nan,
-            compute_div_after=mg_compute_div_after,
-            verbose=False
-        )
-        #mg_info = mesh_gruesa.project_cg(rho,dt_use,tol_div=divergencia, verbose=False)
-        
-        
-        # Almacenar ciclos usados
-        mesh_gruesa.mg_cycles_vector[it] = mg_info['cycles']
-        mesh_gruesa.apply_boundaries(after_projection=True)
 
-        # Evitar sesgo de momento vertical en casos simetricos (v_in=0, slip arriba/abajo).
-        if (corregir_deriva_vertical and cfg_vertical_simetrica
-            and (it % corregir_deriva_cada == 0)):
-            v_bias = mesh_gruesa.remove_vertical_drift(
-                target_v_mean=0.0,
-                relax=factor_deriva_vertical,
-                max_abs_correction=0.02 * U_ref
+            timing_stats['recalculo_dt'] += time.time() - t0
+
+            # Advección
+            t0 = time.time()
+            mesh_gruesa.advect_velocities(dt_use)
+            mesh_gruesa.apply_boundaries(after_projection=False)
+            _diag_check("ADVECCIÓN")
+            timing_stats['adveccion'] += time.time() - t0
+
+            # Difusión
+            t0 = time.time()
+            mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=mesh_gruesa.usar_wale)
+            mesh_gruesa.apply_boundaries(after_projection=False)
+            _diag_check("DIFUSIÓN")
+            timing_stats['difusion'] += time.time() - t0
+
+            # Proyección
+            t0 = time.time()
+            mg_info = mesh_gruesa.project_multigrid(
+                rho, dt_use,
+                tol_div=None,          # usa tol_div_rel·U/Lx (adimensional)
+                tol_div_rel=divergencia,
+                max_outer=mg_max_outer,
+                cycles_per_outer=mg_cycles_per_outer,
+                niveles_max=mg_niveles_max,
+                pre_suavizado=mg_pre_suavizado,
+                post_suavizado=mg_post_suavizado,
+                guard_residual_every_outer=mg_guard_residual_every_outer,
+                adaptive_outer0_cycles=mg_adaptive_outer0_cycles,
+                apply_ibm_each_outer=mg_apply_ibm_each_outer,
+                rollback_on_nan=mg_rollback_on_nan,
+                compute_div_after=mg_compute_div_after,
+                usar_adjoint_correction=usar_adjoint_correction,
+                verbose=False
             )
-            if abs(v_bias) > umbral_deriva_vertical:
-                # Mantener BC tras la correccion suave del campo interior.
-                mesh_gruesa.apply_boundaries(after_projection=True)
+            #mg_info = mesh_gruesa.project_cg(rho,dt_use,tol_div=divergencia, verbose=False)
 
-        _diag_check("PROYECCIÓN")
-        timing_stats['proyeccion'] += time.time() - t0
-        
-        # ============================================================
-        # CLAMP DE VELOCIDADES Y PRESIÓN (red de seguridad contra blowup)
-        # ============================================================
-        mesh_gruesa.u = cp.clip(mesh_gruesa.u, -vel_clamp_max, vel_clamp_max)
-        mesh_gruesa.v = cp.clip(mesh_gruesa.v, -vel_clamp_max, vel_clamp_max)
-        # Presión: limitar a un rango razonable basado en presión dinámica
-        p_clamp_max = cp.float32(100.0 * rho * U_ref * U_ref + 1000.0)
-        mesh_gruesa.p = cp.clip(mesh_gruesa.p, -p_clamp_max, p_clamp_max)
-        
-        # ============================================================
-        # DETECCIÓN DE INESTABILIDAD (NaN o blowup de velocidad)
-        # ============================================================
-        if it % 10 == 0:
-            tiene_nan = (bool(cp.isnan(mesh_gruesa.u).any()) or
-                         bool(cp.isnan(mesh_gruesa.v).any()) or
-                         bool(cp.isnan(mesh_gruesa.p).any()))
-            
-            # Detectar blowup: velocidad máxima > umbral razonable
-            vel_max_actual = float(cp.max(cp.abs(mesh_gruesa.u)).item())
-            vel_max_v = float(cp.max(cp.abs(mesh_gruesa.v)).item())
-            vel_max_actual = max(vel_max_actual, vel_max_v)
-            blowup = vel_max_actual > vel_clamp_max * 0.9  # Cerca del clamp = inestable
-            
-            if tiene_nan or blowup:
-                motivo = "NaN detectado" if tiene_nan else f"Blowup de velocidad ({vel_max_actual:.1f} m/s)"
-                print(f"\n{'='*70}")
-                print(f"[ERROR] {motivo} en iteración {it} — simulación inestable")
-                print(f"{'='*70}")
-                print(f"   |u|_max={vel_max_actual:.2f}, umbral={vel_clamp_max:.2f}")
-                print(f"   dt_use={dt_use:.2e}")
-                if live_view and shm_data is not None:
+
+            # Almacenar ciclos usados
+            mesh_gruesa.mg_cycles_vector[it] = mg_info['cycles']
+            mesh_gruesa.apply_boundaries(after_projection=True)
+
+            # Evitar sesgo de momento vertical en casos simetricos (v_in=0, slip arriba/abajo).
+            if (corregir_deriva_vertical and cfg_vertical_simetrica
+                and (it % corregir_deriva_cada == 0)):
+                v_bias = mesh_gruesa.remove_vertical_drift(
+                    target_v_mean=0.0,
+                    relax=factor_deriva_vertical,
+                    max_abs_correction=0.02 * U_ref
+                )
+                if abs(v_bias) > umbral_deriva_vertical:
+                    # Mantener BC tras la correccion suave del campo interior.
+                    mesh_gruesa.apply_boundaries(after_projection=True)
+
+            _diag_check("PROYECCIÓN")
+            timing_stats['proyeccion'] += time.time() - t0
+
+            # ============================================================
+            # CLAMP DE VELOCIDADES Y PRESIÓN (red de seguridad contra blowup)
+            # ============================================================
+            mesh_gruesa.u = cp.clip(mesh_gruesa.u, -vel_clamp_max, vel_clamp_max)
+            mesh_gruesa.v = cp.clip(mesh_gruesa.v, -vel_clamp_max, vel_clamp_max)
+            # Presión: limitar a un rango razonable basado en presión dinámica
+            p_clamp_max = cp.float32(100.0 * rho * U_ref * U_ref + 1000.0)
+            mesh_gruesa.p = cp.clip(mesh_gruesa.p, -p_clamp_max, p_clamp_max)
+
+            # ============================================================
+            # DETECCIÓN DE INESTABILIDAD (NaN o blowup de velocidad)
+            # ============================================================
+            if it % 10 == 0:
+                tiene_nan = (bool(cp.isnan(mesh_gruesa.u).any()) or
+                             bool(cp.isnan(mesh_gruesa.v).any()) or
+                             bool(cp.isnan(mesh_gruesa.p).any()))
+
+                # Detectar blowup: velocidad máxima > umbral razonable
+                vel_max_actual = float(cp.max(cp.abs(mesh_gruesa.u)).item())
+                vel_max_v = float(cp.max(cp.abs(mesh_gruesa.v)).item())
+                vel_max_actual = max(vel_max_actual, vel_max_v)
+                blowup = vel_max_actual > vel_clamp_max * 0.9  # Cerca del clamp = inestable
+
+                if tiene_nan or blowup:
+                    motivo = "NaN detectado" if tiene_nan else f"Blowup de velocidad ({vel_max_actual:.1f} m/s)"
+                    print(f"\n{'='*70}")
+                    print(f"[ERROR] {motivo} en iteración {it} — simulación inestable")
+                    print(f"{'='*70}")
+                    print(f"   |u|_max={vel_max_actual:.2f}, umbral={vel_clamp_max:.2f}")
+                    print(f"   dt_use={dt_use:.2e}")
+                    raise RuntimeError(f"Simulación abortada: {motivo} en iteración {it}")
+
+            # ⭐ ACUMULAR TIEMPO FÍSICO después de completar el paso temporal
+            tiempo_fisico_acumulado += dt_use
+
+            # ============================================================
+            # CHEQUEO DE TRIGGERS DE CONTROL INTERACTIVO
+            # ============================================================
+            # Chequear trigger de plot (cada cierto número de iteraciones para no saturar I/O)
+            if it % 10 == 0:  # Verificar cada 10 iteraciones
+                if os.path.exists(trigger_plot):
+                    print("\n" + "="*70)
+                    print(f"[GRÁFICOS] Generando gráficos (iter {it})")
+                    print("="*70)
                     try:
-                        shm_data.close(); shm_data.unlink()
-                        shm_meta.close(); shm_meta.unlink()
-                    except Exception:
-                        pass
-                if shm_coords is not None:
-                    try: shm_coords.close(); shm_coords.unlink()
-                    except Exception: pass
-                raise RuntimeError(f"Simulación abortada: {motivo} en iteración {it}")
-        
-        # ⭐ ACUMULAR TIEMPO FÍSICO después de completar el paso temporal
-        tiempo_fisico_acumulado += dt_use
-        
-        # ============================================================
-        # CHEQUEO DE TRIGGERS DE CONTROL INTERACTIVO
-        # ============================================================
-        # Chequear trigger de plot (cada cierto número de iteraciones para no saturar I/O)
-        if it % 10 == 0:  # Verificar cada 10 iteraciones
-            if os.path.exists(trigger_plot):
-                print("\n" + "="*70)
-                print(f"[GRÁFICOS] Generando gráficos (iter {it})")
-                print("="*70)
-                try:
-                    generar_graficos_y_outputs(
-                        mesh_gruesa, iteraciones, guardado, it,
-                        tiempo_fisico_acumulado, rho, U_inf, chord, nu, mu,
-                        graficos=True, verbose=True
-                    )
-                    # Eliminar archivo trigger
-                    os.remove(trigger_plot)
-                    print(f"[OK] Gráficos generados. Continuando simulación...\n")
-                except Exception as e:
-                    print(f"[ERROR] Error al generar gráficos: {e}")
-                    try:
+                        generar_graficos_y_outputs(
+                            mesh_gruesa, iteraciones, guardado, it,
+                            tiempo_fisico_acumulado, rho, U_inf, chord, nu, mu,
+                            graficos=True, verbose=True
+                        )
+                        # Eliminar archivo trigger
                         os.remove(trigger_plot)
+                        print(f"[OK] Gráficos generados. Continuando simulación...\n")
+                    except Exception as e:
+                        print(f"[ERROR] Error al generar gráficos: {e}")
+                        try:
+                            os.remove(trigger_plot)
+                        except:
+                            pass
+
+                # Chequear trigger de stop
+                if os.path.exists(trigger_stop):
+                    print("\n" + "="*70)
+                    print(f"[STOP] TRIGGER DE STOP DETECTADO (iter {it})")
+                    print("="*70)
+                    print("Deteniendo simulación limpiamente...")
+                    interrupcion_solicitada = True
+                    try:
+                        os.remove(trigger_stop)
                     except:
                         pass
-            
-            # Chequear trigger de stop
-            if os.path.exists(trigger_stop):
-                print("\n" + "="*70)
-                print(f"[STOP] TRIGGER DE STOP DETECTADO (iter {it})")
-                print("="*70)
-                print("Deteniendo simulación limpiamente...")
-                interrupcion_solicitada = True
-                try:
-                    os.remove(trigger_stop)
-                except:
-                    pass
-            
-            # Chequear trigger de cambio de ángulo de ataque
-            if os.path.exists(trigger_alpha):
-                try:
-                    with open(trigger_alpha, 'r') as f:
-                        contenido = f.read().strip()
-                    nuevo_alpha = float(contenido)
-                    print("\n" + "="*70)
-                    print(f"[ALPHA] CAMBIO DE ÁNGULO DE ATAQUE (iter {it})")
-                    print(f"   alfa: {alpha_actual:.2f}deg -> {nuevo_alpha:.2f}deg")
-                    print("="*70)
-                    
-                    # Guardar resultado del alpha que termina (media temporal)
-                    _guardar_punto_polar(polar_data, mesh_gruesa, mu, rho, U_inf, chord,
-                                         alpha_actual, iter_inicio_alpha, it, guardado, polar_descarte)
+
+                # Chequear trigger de cambio de ángulo de ataque
+                if os.path.exists(trigger_alpha):
                     try:
-                        with open(archivo_polar, 'w') as fp:
-                            json.dump(polar_data, fp, indent=2)
-                        print(f"   Polar guardada: {len(polar_data)} puntos en {archivo_polar}")
-                    except Exception:
-                        pass
-                    
+                        with open(trigger_alpha, 'r') as f:
+                            contenido = f.read().strip()
+                        nuevo_alpha = float(contenido)
+                        print("\n" + "="*70)
+                        print(f"[ALPHA] CAMBIO DE ÁNGULO DE ATAQUE (iter {it})")
+                        print(f"   alfa: {alpha_actual:.2f}deg -> {nuevo_alpha:.2f}deg")
+                        print("="*70)
+
+                        # Guardar resultado del alpha que termina (media temporal)
+                        _guardar_punto_polar(polar_data, mesh_gruesa, mu, rho, U_inf, chord,
+                                             alpha_actual, iter_inicio_alpha, it, guardado, polar_descarte)
+                        try:
+                            with open(archivo_polar, 'w') as fp:
+                                json.dump(polar_data, fp, indent=2)
+                            print(f"   Polar guardada: {len(polar_data)} puntos en {archivo_polar}")
+                        except Exception:
+                            pass
+
+                        v0x, v0y = mesh_gruesa.cambiar_angulo_ataque(nuevo_alpha, U_inf)
+                        alpha_actual = nuevo_alpha
+                        iter_inicio_alpha = it
+
+                        print(f"   v0x={v0x:.4f}, v0y={v0y:.4f} m/s")
+                        print(f"   Continuando simulación...\n")
+                        os.remove(trigger_alpha)
+                    except Exception as e:
+                        print(f"[ADVERTENCIA] Error al cambiar alpha: {e}")
+                        try:
+                            os.remove(trigger_alpha)
+                        except:
+                            pass
+
+            # ============================================================
+            # CAMBIO PROGRAMADO DE ALPHA (plan_polar)
+            # ============================================================
+            if it in cambios_alpha_programados:
+                nuevo_alpha = cambios_alpha_programados[it]
+                if abs(nuevo_alpha - alpha_actual) > 0.001 or it == 0:
+                    # Guardar punto polar del alpha que termina (salvo primera iteración)
+                    if it > 0:
+                        _guardar_punto_polar(polar_data, mesh_gruesa, mu, rho, U_inf, chord,
+                                             alpha_actual, iter_inicio_alpha, it, guardado, polar_descarte)
+                        try:
+                            with open(archivo_polar, 'w') as fp:
+                                json.dump(polar_data, fp, indent=2)
+                        except Exception:
+                            pass
+
+                    print(f"\n[ALPHA] [PLAN POLAR] alfa: {alpha_actual:.2f}deg -> {nuevo_alpha:.2f}deg (iter {it})")
                     v0x, v0y = mesh_gruesa.cambiar_angulo_ataque(nuevo_alpha, U_inf)
                     alpha_actual = nuevo_alpha
                     iter_inicio_alpha = it
-                    
-                    print(f"   v0x={v0x:.4f}, v0y={v0y:.4f} m/s")
-                    print(f"   Continuando simulación...\n")
-                    os.remove(trigger_alpha)
-                except Exception as e:
-                    print(f"[ADVERTENCIA] Error al cambiar alpha: {e}")
-                    try:
-                        os.remove(trigger_alpha)
-                    except:
-                        pass
-        
-        # ============================================================
-        # CAMBIO PROGRAMADO DE ALPHA (plan_polar)
-        # ============================================================
-        if it in cambios_alpha_programados:
-            nuevo_alpha = cambios_alpha_programados[it]
-            if abs(nuevo_alpha - alpha_actual) > 0.001 or it == 0:
-                # Guardar punto polar del alpha que termina (salvo primera iteración)
-                if it > 0:
-                    _guardar_punto_polar(polar_data, mesh_gruesa, mu, rho, U_inf, chord,
-                                         alpha_actual, iter_inicio_alpha, it, guardado, polar_descarte)
-                    try:
-                        with open(archivo_polar, 'w') as fp:
-                            json.dump(polar_data, fp, indent=2)
-                    except Exception:
-                        pass
-                
-                print(f"\n[ALPHA] [PLAN POLAR] alfa: {alpha_actual:.2f}deg -> {nuevo_alpha:.2f}deg (iter {it})")
-                v0x, v0y = mesh_gruesa.cambiar_angulo_ataque(nuevo_alpha, U_inf)
-                alpha_actual = nuevo_alpha
-                iter_inicio_alpha = it
-        
-        # Si hay interrupción solicitada, salir del bucle
-        if interrupcion_solicitada:
-            print(f"\n[ADVERTENCIA] Simulación interrumpida en iteración {it}/{iteraciones}")
-            print(f"   Tiempo físico simulado: {tiempo_fisico_acumulado:.4f} s")
-            # Ajustar iteraciones efectivas para reportes
-            iteraciones_efectivas = it
-            break
-        
-        # Guardar resultados
-        t0 = time.time()
-        if it % guardado == 0:
-            forces = mesh_gruesa.compute_drag_lift(mu, rho=rho, n_extrap_layers=5)
-            cd_val = 2 * forces['Drag'] / (rho * U_inf**2 * chord)
-            cl_val = 2 * forces['Lift'] / (rho * U_inf**2 * chord)
-            
-            # Chequear NaN en coeficientes aerodinámicos
-            if np.isnan(cd_val) or np.isnan(cl_val):
-                print(f"\n{'='*70}")
-                print(f"[ERROR] NaN DETECTADO en Cd/Cl en iteración {it} — simulación inestable")
-                print(f"{'='*70}")
-                print(f"   Cd={cd_val}, Cl={cl_val}")
-                if live_view and shm_data is not None:
-                    try:
-                        shm_data.close(); shm_data.unlink()
-                        shm_meta.close(); shm_meta.unlink()
-                    except Exception:
-                        pass
-                if shm_coords is not None:
-                    try: shm_coords.close(); shm_coords.unlink()
-                    except Exception: pass
-                raise RuntimeError(f"Simulación abortada: NaN en Cd/Cl en iteración {it}")
-            
-            mesh_gruesa.cdvector[it // guardado] = cd_val
-            mesh_gruesa.clvector[it // guardado] = cl_val
-            try:
-                ratio = cl_val / cd_val if abs(cd_val) >= 1e-12 else np.nan
-            except Exception:
-                ratio = np.nan
-            mesh_gruesa.clcdvector[it // guardado] = ratio
-            _div_abs = mesh_gruesa.compute_divergence_mean()
-            _div_max_abs = mesh_gruesa.compute_divergence_max()
-            _div_scale = float(U_inf) / max(float(chord), 1e-30)  # escala convectiva al chord
-            mesh_gruesa.divvector[it // guardado] = _div_abs / max(_div_scale, 1e-30)
-            mesh_gruesa.divvector_max[it // guardado] = _div_max_abs / max(_div_scale, 1e-30)
-            mesh_gruesa.update_cp_profile(mu, rho)
 
-            # Diagnóstico local de balance de Lift por zonas de cuerda
-            if diagnostico_fuerzas and (it % max(1, int(diagnostico_fuerzas_cada)) == 0):
-                try:
-                    mesh_gruesa.diagnose_surface_force_balance(
-                        mu=mu, rho=rho, n_extrap_layers=5,
-                        nbins=diagnostico_fuerzas_bins,
-                        te_start=diagnostico_fuerzas_te_start,
-                        verbose=True,
-                        plot=diagnostico_fuerzas_plot
-                    )
-                except Exception as _e_diag:
-                    print(f"[ADVERTENCIA] Diagnóstico de fuerzas falló en iter {it}: {_e_diag}")
-            
-            # Publicar en memoria compartida (SIEMPRE metadatos para progreso)
-            if shm_meta is not None:
-                try:
-                    # Escribir metadatos SIEMPRE (cada iteración)
-                    struct.pack_into('i', shm_meta.buf, 8, it)
-                    struct.pack_into('f', shm_meta.buf, 12, float(cd_val))
-                    struct.pack_into('f', shm_meta.buf, 16, float(cl_val))
-                    struct.pack_into('f', shm_meta.buf, 20, float(alpha_actual))
-                    struct.pack_into('d', shm_meta.buf, 24, time.time())
-                    struct.pack_into('f', shm_meta.buf, 32, float(v0x))
-                    struct.pack_into('f', shm_meta.buf, 36, float(v0y))
-                except Exception:
-                    pass  # No interrumpir simulación por error de memoria compartida
-            
-            # Publicar speed+solid siempre para la GUI interna.
-            # Vorticidad solo cuando live_view está activo.
-            if shm_data is not None:
-                try:
-                    speed_np = cp.asnumpy(cp.sqrt(mesh_gruesa.u**2 + mesh_gruesa.v**2))
-                    solid_np = cp.asnumpy(mesh_gruesa.solid).astype(np.uint8)
-                    
-                    n_cells = mesh_gruesa.ny * mesh_gruesa.nx
-                    off_s = 0
-                    off_solid = n_cells * 4
-                    off_vort = off_solid + n_cells
-                    
-                    shm_data.buf[off_s:off_s + n_cells*4] = speed_np.tobytes()
-                    shm_data.buf[off_solid:off_solid + n_cells] = solid_np.tobytes()
+            # Si hay interrupción solicitada, salir del bucle
+            if interrupcion_solicitada:
+                print(f"\n[ADVERTENCIA] Simulación interrumpida en iteración {it}/{iteraciones}")
+                print(f"   Tiempo físico simulado: {tiempo_fisico_acumulado:.4f} s")
+                # Ajustar iteraciones efectivas para reportes
+                iteraciones_efectivas = it
+                break
 
-                    if live_view:
-                        dvdx = cp.zeros_like(mesh_gruesa.u)
-                        dudy = cp.zeros_like(mesh_gruesa.u)
-                        dvdx[:, 1:-1] = (mesh_gruesa.v[:, 2:] - mesh_gruesa.v[:, :-2]) / (2*mesh_gruesa.dx)
-                        dudy[1:-1, :] = (mesh_gruesa.u[2:, :] - mesh_gruesa.u[:-2, :]) / (2*mesh_gruesa.dy)
-                        vort_np = cp.asnumpy(dvdx - dudy).astype(np.float32)
-                        shm_data.buf[off_vort:off_vort + n_cells*4] = vort_np.tobytes()
+            # Guardar resultados
+            t0 = time.time()
+            if it % guardado == 0:
+                forces = mesh_gruesa.compute_drag_lift(mu, rho=rho, n_extrap_layers=5)
+                cd_val = 2 * forces['Drag'] / (rho * U_inf**2 * chord)
+                cl_val = 2 * forces['Lift'] / (rho * U_inf**2 * chord)
+
+                # Chequear NaN en coeficientes aerodinámicos
+                if np.isnan(cd_val) or np.isnan(cl_val):
+                    print(f"\n{'='*70}")
+                    print(f"[ERROR] NaN DETECTADO en Cd/Cl en iteración {it} — simulación inestable")
+                    print(f"{'='*70}")
+                    print(f"   Cd={cd_val}, Cl={cl_val}")
+                    raise RuntimeError(f"Simulación abortada: NaN en Cd/Cl en iteración {it}")
+
+                mesh_gruesa.cdvector[it // guardado] = cd_val
+                mesh_gruesa.clvector[it // guardado] = cl_val
+                try:
+                    ratio = cl_val / cd_val if abs(cd_val) >= 1e-12 else np.nan
                 except Exception:
-                    pass  # No interrumpir simulación por error de viewer
-            
-            if save_frames and frames_dir_grueso:
-                mesh_gruesa.save_frame(frames_dir_grueso, it, kind="velocity")
-                # Liberar memoria de figuras matplotlib cada cierto número de frames
-                if it % (guardado * 10) == 0:
-                    plt.close('all')
-        
-        if it % guardado == 0:
-            timing_stats['guardado'] += time.time() - t0
-        
-        # ============================================================
-        # CHEQUEO DE CONVERGENCIA A ESTADO ESTACIONARIO
-        # ============================================================
-        if it >= min_iters_before_check and it % check_convergence_every == 0:
-            # Calcular cambios relativos (norma L2)
-            if u_prev is not None:
-                # Máscara de fluido (excluir sólidos del cálculo)
-                fluid_mask = ~mesh_gruesa.solid
-                
-                # Cambio en u
-                du = mesh_gruesa.u - u_prev
-                norm_du = float(cp.sqrt(cp.mean(du[fluid_mask]**2)))
-                norm_u = float(cp.sqrt(cp.mean(mesh_gruesa.u[fluid_mask]**2)))
-                change_u = norm_du / (norm_u + 1e-12)  # Cambio relativo
-                
-                # Cambio en v
-                dv = mesh_gruesa.v - v_prev
-                norm_dv = float(cp.sqrt(cp.mean(dv[fluid_mask]**2)))
-                norm_v = float(cp.sqrt(cp.mean(mesh_gruesa.v[fluid_mask]**2)))
-                change_v = norm_dv / (norm_v + 1e-12)
-                
-                # Cambio en p
-                dp = mesh_gruesa.p - p_prev
-                norm_dp = float(cp.sqrt(cp.mean(dp[fluid_mask]**2)))
-                norm_p = float(cp.sqrt(cp.mean(mesh_gruesa.p[fluid_mask]**2)))
-                change_p = norm_dp / (norm_p + 1e-12)
-                
-                # Verificar convergencia
-                if change_u < tol_u and change_v < tol_v and change_p < tol_p:
-                    # Solo imprimir el mensaje la primera vez que se detecta convergencia
-                    if not converged_to_steady:
-                        print(f"\\n{'='*70}")
-                        print(f"[OK] ESTADO ESTACIONARIO ALCANZADO en iteracion {it}")
-                        print(f"{'='*70}")
-                        print(f"  Cambio relativo u: {change_u:.2e} < {tol_u:.2e}")
-                        print(f"  Cambio relativo v: {change_v:.2e} < {tol_v:.2e}")
-                        print(f"  Cambio relativo p: {change_p:.2e} < {tol_p:.2e}")
-                        print(f"  Tiempo simulado: {tiempo_fisico_acumulado:.4f} s")
-                        if not stop_on_convergence:
-                            print(f"  [INFO] Continuando hasta completar iteraciones (stop_on_convergence=False)")
-                        print(f"{'='*70}\\n")
-                        converged_to_steady = True
-                        
-                        # Ajustar vectores para que tengan el tamaño correcto
-                        # Rellenar el resto con el último valor válido
-                        if stop_on_convergence and it // guardado < len(mesh_gruesa.cdvector) - 1:
-                            last_idx = it // guardado
-                            mesh_gruesa.cdvector[last_idx+1:] = mesh_gruesa.cdvector[last_idx]
-                            mesh_gruesa.clvector[last_idx+1:] = mesh_gruesa.clvector[last_idx]
-                            mesh_gruesa.divvector[last_idx+1:] = mesh_gruesa.divvector[last_idx]
-                            mesh_gruesa.divvector_max[last_idx+1:] = mesh_gruesa.divvector_max[last_idx]
-                            mesh_gruesa.clcdvector[last_idx+1:] = mesh_gruesa.clcdvector[last_idx]
-                    
-                    # Salir del bucle solo si stop_on_convergence está activado
-                    if stop_on_convergence:
-                        break
-                
-                # Imprimir progreso ocasionalmente
-                elif it % (check_convergence_every * 10) == 0:
-                    print(f"\\n[Iter {it}] Convergencia a steady: u={change_u:.2e}, v={change_v:.2e}, p={change_p:.2e}")
-            
-            # Almacenar campos actuales como referencia para próximo chequeo
-            u_prev = mesh_gruesa.u.copy()
-            v_prev = mesh_gruesa.v.copy()
-            p_prev = mesh_gruesa.p.copy()
-        
-        t_paso_total = time.time() - t_paso_inicio
-        timing_stats['total_por_paso'].append(t_paso_total)
-    
+                    ratio = np.nan
+                mesh_gruesa.clcdvector[it // guardado] = ratio
+                _div_abs = mesh_gruesa.compute_divergence_mean()
+                _div_max_abs = mesh_gruesa.compute_divergence_max()
+                _div_scale = float(U_inf) / max(float(chord), 1e-30)  # escala convectiva al chord
+                mesh_gruesa.divvector[it // guardado] = _div_abs / max(_div_scale, 1e-30)
+                mesh_gruesa.divvector_max[it // guardado] = _div_max_abs / max(_div_scale, 1e-30)
+                mesh_gruesa.update_cp_profile(mu, rho)
+
+                # Diagnóstico local de balance de Lift por zonas de cuerda
+                if diagnostico_fuerzas and (it % max(1, int(diagnostico_fuerzas_cada)) == 0):
+                    try:
+                        mesh_gruesa.diagnose_surface_force_balance(
+                            mu=mu, rho=rho, n_extrap_layers=5,
+                            nbins=diagnostico_fuerzas_bins,
+                            te_start=diagnostico_fuerzas_te_start,
+                            verbose=True,
+                            plot=diagnostico_fuerzas_plot
+                        )
+                    except Exception as _e_diag:
+                        print(f"[ADVERTENCIA] Diagnóstico de fuerzas falló en iter {it}: {_e_diag}")
+
+                # Publicar en memoria compartida (SIEMPRE metadatos para progreso)
+                if shm_meta is not None:
+                    try:
+                        # Escribir metadatos SIEMPRE (cada iteración)
+                        struct.pack_into('i', shm_meta.buf, 8, it)
+                        struct.pack_into('f', shm_meta.buf, 12, float(cd_val))
+                        struct.pack_into('f', shm_meta.buf, 16, float(cl_val))
+                        struct.pack_into('f', shm_meta.buf, 20, float(alpha_actual))
+                        struct.pack_into('d', shm_meta.buf, 24, time.time())
+                        struct.pack_into('f', shm_meta.buf, 32, float(v0x))
+                        struct.pack_into('f', shm_meta.buf, 36, float(v0y))
+                    except Exception:
+                        pass  # No interrumpir simulación por error de memoria compartida
+
+                # Publicar speed+solid siempre para la GUI interna.
+                # Vorticidad solo cuando live_view está activo.
+                if shm_data is not None:
+                    try:
+                        speed_np = cp.asnumpy(cp.sqrt(mesh_gruesa.u**2 + mesh_gruesa.v**2))
+                        solid_np = cp.asnumpy(mesh_gruesa.solid).astype(np.uint8)
+
+                        n_cells = mesh_gruesa.ny * mesh_gruesa.nx
+                        off_s = 0
+                        off_solid = n_cells * 4
+                        off_vort = off_solid + n_cells
+
+                        shm_data.buf[off_s:off_s + n_cells*4] = speed_np.tobytes()
+                        shm_data.buf[off_solid:off_solid + n_cells] = solid_np.tobytes()
+
+                        if live_view:
+                            dvdx = cp.zeros_like(mesh_gruesa.u)
+                            dudy = cp.zeros_like(mesh_gruesa.u)
+                            dvdx[:, 1:-1] = (
+                                mesh_gruesa.d1x_W[1:-1][cp.newaxis, :] * mesh_gruesa.v[:, :-2]
+                                + mesh_gruesa.d1x_C[1:-1][cp.newaxis, :] * mesh_gruesa.v[:, 1:-1]
+                                + mesh_gruesa.d1x_E[1:-1][cp.newaxis, :] * mesh_gruesa.v[:, 2:]
+                            )
+                            dudy[1:-1, :] = (
+                                mesh_gruesa.d1y_S[1:-1][:, cp.newaxis] * mesh_gruesa.u[:-2, :]
+                                + mesh_gruesa.d1y_C[1:-1][:, cp.newaxis] * mesh_gruesa.u[1:-1, :]
+                                + mesh_gruesa.d1y_N[1:-1][:, cp.newaxis] * mesh_gruesa.u[2:, :]
+                            )
+                            vort_np = cp.asnumpy(dvdx - dudy).astype(np.float32)
+                            shm_data.buf[off_vort:off_vort + n_cells*4] = vort_np.tobytes()
+                    except Exception:
+                        pass  # No interrumpir simulación por error de viewer
+
+                frame_every = int(save_frames_cada) if save_frames_cada is not None else int(guardado)
+                frame_every = max(1, frame_every)
+                if save_frames and frames_dir_grueso and (it % frame_every == 0):
+                    mesh_gruesa.save_frame(frames_dir_grueso, it, kind="velocity")
+                    # Liberar memoria de figuras matplotlib cada cierto número de frames
+                    if it % (guardado * 10) == 0:
+                        plt.close('all')
+
+            if it % guardado == 0:
+                timing_stats['guardado'] += time.time() - t0
+
+            # ============================================================
+            # CHEQUEO DE CONVERGENCIA A ESTADO ESTACIONARIO
+            # ============================================================
+            if it >= min_iters_before_check and it % check_convergence_every == 0:
+                # Calcular cambios relativos (norma L2)
+                if u_prev is not None:
+                    # Máscara de fluido (excluir sólidos del cálculo)
+                    fluid_mask = ~mesh_gruesa.solid
+
+                    # Cambio en u
+                    du = mesh_gruesa.u - u_prev
+                    norm_du = float(cp.sqrt(cp.mean(du[fluid_mask]**2)))
+                    norm_u = float(cp.sqrt(cp.mean(mesh_gruesa.u[fluid_mask]**2)))
+                    change_u = norm_du / (norm_u + 1e-12)  # Cambio relativo
+
+                    # Cambio en v
+                    dv = mesh_gruesa.v - v_prev
+                    norm_dv = float(cp.sqrt(cp.mean(dv[fluid_mask]**2)))
+                    norm_v = float(cp.sqrt(cp.mean(mesh_gruesa.v[fluid_mask]**2)))
+                    change_v = norm_dv / (norm_v + 1e-12)
+
+                    # Cambio en p
+                    dp = mesh_gruesa.p - p_prev
+                    norm_dp = float(cp.sqrt(cp.mean(dp[fluid_mask]**2)))
+                    norm_p = float(cp.sqrt(cp.mean(mesh_gruesa.p[fluid_mask]**2)))
+                    change_p = norm_dp / (norm_p + 1e-12)
+
+                    # Verificar convergencia
+                    if change_u < tol_u and change_v < tol_v and change_p < tol_p:
+                        # Solo imprimir el mensaje la primera vez que se detecta convergencia
+                        if not converged_to_steady:
+                            print(f"\\n{'='*70}")
+                            print(f"[OK] ESTADO ESTACIONARIO ALCANZADO en iteracion {it}")
+                            print(f"{'='*70}")
+                            print(f"  Cambio relativo u: {change_u:.2e} < {tol_u:.2e}")
+                            print(f"  Cambio relativo v: {change_v:.2e} < {tol_v:.2e}")
+                            print(f"  Cambio relativo p: {change_p:.2e} < {tol_p:.2e}")
+                            print(f"  Tiempo simulado: {tiempo_fisico_acumulado:.4f} s")
+                            if not stop_on_convergence:
+                                print(f"  [INFO] Continuando hasta completar iteraciones (stop_on_convergence=False)")
+                            print(f"{'='*70}\\n")
+                            converged_to_steady = True
+
+                            # Ajustar vectores para que tengan el tamaño correcto
+                            # Rellenar el resto con el último valor válido
+                            if stop_on_convergence and it // guardado < len(mesh_gruesa.cdvector) - 1:
+                                last_idx = it // guardado
+                                mesh_gruesa.cdvector[last_idx+1:] = mesh_gruesa.cdvector[last_idx]
+                                mesh_gruesa.clvector[last_idx+1:] = mesh_gruesa.clvector[last_idx]
+                                mesh_gruesa.divvector[last_idx+1:] = mesh_gruesa.divvector[last_idx]
+                                mesh_gruesa.divvector_max[last_idx+1:] = mesh_gruesa.divvector_max[last_idx]
+                                mesh_gruesa.clcdvector[last_idx+1:] = mesh_gruesa.clcdvector[last_idx]
+
+                        # Salir del bucle solo si stop_on_convergence está activado
+                        if stop_on_convergence:
+                            break
+
+                    # Imprimir progreso ocasionalmente
+                    elif it % (check_convergence_every * 10) == 0:
+                        print(f"\\n[Iter {it}] Convergencia a steady: u={change_u:.2e}, v={change_v:.2e}, p={change_p:.2e}")
+
+                # Almacenar campos actuales como referencia para próximo chequeo
+                u_prev = mesh_gruesa.u.copy()
+                v_prev = mesh_gruesa.v.copy()
+                p_prev = mesh_gruesa.p.copy()
+
+            t_paso_total = time.time() - t_paso_inicio
+            timing_stats['total_por_paso'].append(t_paso_total)
+
+    finally:
+        _cleanup_runtime_resources()
+        _restore_signal_handler()
+
     # ============================================================
     # FIN DEL BUCLE PRINCIPAL
     # ============================================================
@@ -5683,7 +5795,7 @@ def main(
         mesh_gruesa.clcdvector = mesh_gruesa.clcdvector[:idx_final]
         mesh_gruesa.mg_cycles_vector = mesh_gruesa.mg_cycles_vector[:it+1]
         iteraciones = it  # Actualizar para reportes
-    
+
 
     # ============================================================
     # REPORTE DE CONVERGENCIA A ESTADO ESTACIONARIO
@@ -5715,21 +5827,21 @@ def main(
             print(f"  Si buscas estado estacionario, considera aumentar iteraciones")
             print(f"  o relajar tolerancias (tol_u, tol_v, tol_p).")
         print("="*70)
-    
+
     # ============================================================
     # REPORTE DE TIMING
     # ============================================================
     print("\n" + "="*70)
     print("ESTADÍSTICAS DE RENDIMIENTO")
     print("="*70)
-    
+
     num_pasos = len(timing_stats['total_por_paso'])
     if num_pasos > 0:
         tiempo_medio_paso = sum(timing_stats['total_por_paso']) / num_pasos
         print(f"\nTiempo promedio por paso dt: {tiempo_medio_paso:.4f} s")
         print(f"Pasos simulados: {num_pasos}")
         print(f"Tiempo total simulación: {sum(timing_stats['total_por_paso']):.2f} s\n")
-        
+
         print("Desglose por componente (tiempo total | % del total):")
         print("-" * 70)
         componentes = [
@@ -5739,29 +5851,29 @@ def main(
             ('Proyección', 'proyeccion'),
             ('Guardado/fuerzas', 'guardado')
         ]
-        
+
         tiempo_total = sum(timing_stats['total_por_paso'])
         for nombre, clave in componentes:
             t = timing_stats[clave]
             pct = 100 * t / tiempo_total if tiempo_total > 0 else 0
             print(f"  {nombre:.<30} {t:>8.2f} s  ({pct:>5.1f}%)")
-        
+
         # Calcular tiempo no contabilizado
         tiempo_contabilizado = sum(timing_stats[k] for _, k in componentes)
         timing_stats['otros'] = tiempo_total - tiempo_contabilizado
         if timing_stats['otros'] > 0.01:
             pct_otros = 100 * timing_stats['otros'] / tiempo_total
             print(f"  {'Otros (overhead)':.<30} {timing_stats['otros']:>8.2f} s  ({pct_otros:>5.1f}%)")
-        
+
         print("-" * 70)
-        
+
         # Identificar cuellos de botella
         print("\n[ANALISIS]:")
         max_componente = max(componentes, key=lambda x: timing_stats[x[1]])
         max_nombre, max_clave = max_componente
         max_tiempo = timing_stats[max_clave]
         max_pct = 100 * max_tiempo / tiempo_total
-        
+
         print(f"   Componente más costoso: {max_nombre}")
         print(f"   Consume: {max_tiempo:.2f} s ({max_pct:.1f}% del tiempo total)")
         print(f"   Tiempo promedio por paso: {max_tiempo/num_pasos:.4f} s")
@@ -5777,9 +5889,9 @@ def main(
                 print(f"   Ciclos MG por paso: media={c_mean:.2f}  p95={c_p95:.2f}  max={c_max:.0f}")
         except Exception:
             pass
-    
+
     print("="*70 + "\n")
-    
+
     # Guardar punto polar del último alpha simulado (media temporal)
     _guardar_punto_polar(polar_data, mesh_gruesa, mu, rho, U_inf, chord,
                          alpha_actual, iter_inicio_alpha, iteraciones, guardado, polar_descarte)
@@ -5811,26 +5923,6 @@ def main(
         tiempo_fisico_acumulado, rho, U_inf, chord, nu, mu,
         graficos=graficos, verbose=True
     )
-    
-    # Liberar memoria compartida del live view
-    if shm_data is not None:
-        try:
-            shm_data.close()
-            shm_data.unlink()
-        except:
-            pass
-    if shm_meta is not None:
-        try:
-            shm_meta.close()
-            shm_meta.unlink()
-        except:
-            pass
-    if shm_coords is not None:
-        try:
-            shm_coords.close()
-            shm_coords.unlink()
-        except:
-            pass
 
     mesh_gruesa._timing_stats = timing_stats
     mesh_gruesa._chord = float(chord)
@@ -5842,9 +5934,9 @@ def main(
     return mesh_gruesa
 
 if __name__ == "__main__":
-    mesh = main(    
+    mesh = main(
         Lx=12,
-        Ly=8,  
+        Ly=8,
         cx=2,
         CFL=0.5,
         alpha_deg=0,
@@ -5857,12 +5949,12 @@ if __name__ == "__main__":
         nu=1/100000,
         filepath="profiles/NACA_0012",
         chord=1.0,
-        dx_min=0.0003,
+        dx_min=0.001,
         ancho_zona_fina_x=1.2,
         ancho_zona_fina_y=1,
         factor_expansion=1.1,
         graficos=True,
-        save_frames=False, 
+        save_frames=False,
         frames_dir_grueso="",
         usar_wale=True,
         wale_Cw=0.1,   # 2D-tuned (estandar 3D=0.325 sobre-disipa en 2D)
@@ -5872,6 +5964,6 @@ if __name__ == "__main__":
         mg_modo_turbo=False,
         mg_modo_turbo_hd=True,
         mg_modo_turbo_ultra=False
-        
-        
+
+
     )
