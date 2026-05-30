@@ -328,6 +328,9 @@ class Mesh:
         # --- Ghost-Cell IBM ---
         self._ghost_cell_ready = False
         self._ghost_mask = None
+        self.ibm_wall_mode = "ghost_noslip"
+        self._projection_u_face_x = None
+        self._projection_v_face_y = None
 
         # Ángulo de ataque del perfil (para transformación Drag/Lift)
         self.alpha_deg = 0.0
@@ -758,6 +761,63 @@ class Mesh:
         }
         ''', 'velocity_correction')
 
+        # Variante diagnóstica: junto al sólido usa diferencias one-sided
+        # en vez de anular la componente del gradiente de presión.
+        self._velocity_correction_one_sided_kernel = cp.RawKernel(r'''
+        extern "C" __global__ void velocity_correction_one_sided(
+            float* __restrict__ u, float* __restrict__ v,
+            const float* __restrict__ p,
+            const bool* __restrict__ solid,
+            float coef,
+            const float* __restrict__ d1x_W,
+            const float* __restrict__ d1x_C,
+            const float* __restrict__ d1x_E,
+            const float* __restrict__ d1y_S,
+            const float* __restrict__ d1y_C,
+            const float* __restrict__ d1y_N,
+            const float* __restrict__ X_1d,
+            const float* __restrict__ Y_1d,
+            int nx, int ny
+        ) {
+            int idx = blockDim.x * blockIdx.x + threadIdx.x;
+            if (idx >= nx * ny) return;
+            int j = idx % nx;
+            int i = idx / nx;
+            if (i <= 0 || i >= ny-1 || j <= 0 || j >= nx-1 || solid[idx]) return;
+            int E = i*nx + (j+1);
+            int W = i*nx + (j-1);
+            int N = (i+1)*nx + j;
+            int S = (i-1)*nx + j;
+            bool sE = solid[E], sW = solid[W], sN = solid[N], sS = solid[S];
+
+            float pC = p[idx];
+            float dp_dx = 0.0f;
+            if (!sE && !sW) {
+                dp_dx = d1x_W[j]*p[W] + d1x_C[j]*pC + d1x_E[j]*p[E];
+            } else if (!sE && sW) {
+                float dx = fmaxf(X_1d[j+1] - X_1d[j], 1.0e-30f);
+                dp_dx = (p[E] - pC) / dx;
+            } else if (sE && !sW) {
+                float dx = fmaxf(X_1d[j] - X_1d[j-1], 1.0e-30f);
+                dp_dx = (pC - p[W]) / dx;
+            }
+
+            float dp_dy = 0.0f;
+            if (!sN && !sS) {
+                dp_dy = d1y_S[i]*p[S] + d1y_C[i]*pC + d1y_N[i]*p[N];
+            } else if (!sN && sS) {
+                float dy = fmaxf(Y_1d[i+1] - Y_1d[i], 1.0e-30f);
+                dp_dy = (p[N] - pC) / dy;
+            } else if (sN && !sS) {
+                float dy = fmaxf(Y_1d[i] - Y_1d[i-1], 1.0e-30f);
+                dp_dy = (pC - p[S]) / dy;
+            }
+
+            u[idx] -= coef * dp_dx;
+            v[idx] -= coef * dp_dy;
+        }
+        ''', 'velocity_correction_one_sided')
+
         # ============================================================
         # Kernel: Gradiente adjunto D^T·p  (transpuesto del operador divergencia)
         # Garantiza que D(D^T p) = (DD^T)p sea simétrico → CG converge.
@@ -1151,6 +1211,8 @@ class Mesh:
 
     def reforzar_impermeabilidad(self):
         """Anula componente normal de velocidad en la capa de fluido adyacente al sólido."""
+        if str(getattr(self, "ibm_wall_mode", "ghost_noslip")) == "solid_zero_only":
+            return
         if not getattr(self, '_normales_validas', False) or self._nx_hat is None:
             self._precomputar_normales_impermeabilidad()
         if not getattr(self, '_normales_validas', False) or self._mask_interfaz is None:
@@ -1303,6 +1365,18 @@ class Mesh:
         donde u_imagen se interpola bilinealmente desde el campo fluido
         en el punto simétrico al ghost respecto a la pared real.
         """
+        mode = str(getattr(self, "ibm_wall_mode", "ghost_noslip"))
+        if mode not in {"ghost_noslip", "slip_only", "solid_zero_only"}:
+            raise ValueError(
+                "ibm_wall_mode invalido: "
+                f"{mode!r}. Usa 'ghost_noslip', 'slip_only' o 'solid_zero_only'."
+            )
+
+        if mode in {"slip_only", "solid_zero_only"}:
+            self.u[self.solid] = 0.0
+            self.v[self.solid] = 0.0
+            return
+
         if not self._ghost_cell_ready:
             self.u[self.solid] = 0.0
             self.v[self.solid] = 0.0
@@ -1883,6 +1957,313 @@ class Mesh:
         )
         return div
 
+    def _ensure_projection_face_buffers(self):
+        """Reserva y reutiliza buffers de caras para la proyección por flujo."""
+        shape_u = (self.ny, max(self.nx - 1, 0))
+        shape_v = (max(self.ny - 1, 0), self.nx)
+        if self._projection_u_face_x is None or self._projection_u_face_x.shape != shape_u:
+            self._projection_u_face_x = cp.zeros(shape_u, dtype=cp.float32)
+        if self._projection_v_face_y is None or self._projection_v_face_y.shape != shape_v:
+            self._projection_v_face_y = cp.zeros(shape_v, dtype=cp.float32)
+        return self._projection_u_face_x, self._projection_v_face_y
+
+    def _build_projection_faces(self, u=None, v=None):
+        """
+        Construye velocidades normales en caras para la ruta compatible por flujo.
+
+        - Caras fluido-fluido: interpolación lineal entre centros adyacentes.
+        - Caras fluido-sólido o sólido-sólido: flujo normal impuesto a cero.
+        """
+        if u is None:
+            u = self.u
+        if v is None:
+            v = self.v
+
+        u_face_x, v_face_y = self._ensure_projection_face_buffers()
+        u_face_x.fill(cp.float32(0.0))
+        v_face_y.fill(cp.float32(0.0))
+
+        free = ~self.solid
+        eps = cp.float32(1e-30)
+
+        if self.nx > 1:
+            dx_face = self.X_1d[1:] - self.X_1d[:-1]
+            x_face = self.X_1d[:-1] + cp.float32(0.5) * dx_face
+            dist_w = cp.maximum(x_face - self.X_1d[:-1], eps)
+            dist_e = cp.maximum(self.X_1d[1:] - x_face, eps)
+            denom = cp.maximum(dist_w + dist_e, eps)
+            w_w = (dist_e / denom)[cp.newaxis, :]
+            w_e = (dist_w / denom)[cp.newaxis, :]
+            fluid_pair_x = free[:, :-1] & free[:, 1:]
+            u_face_x[:] = cp.where(
+                fluid_pair_x,
+                w_w * u[:, :-1] + w_e * u[:, 1:],
+                cp.float32(0.0),
+            )
+
+        if self.ny > 1:
+            dy_face = self.Y_1d[1:] - self.Y_1d[:-1]
+            y_face = self.Y_1d[:-1] + cp.float32(0.5) * dy_face
+            dist_s = cp.maximum(y_face - self.Y_1d[:-1], eps)
+            dist_n = cp.maximum(self.Y_1d[1:] - y_face, eps)
+            denom = cp.maximum(dist_s + dist_n, eps)
+            w_s = (dist_n / denom)[:, cp.newaxis]
+            w_n = (dist_s / denom)[:, cp.newaxis]
+            fluid_pair_y = free[:-1, :] & free[1:, :]
+            v_face_y[:] = cp.where(
+                fluid_pair_y,
+                w_s * v[:-1, :] + w_n * v[1:, :],
+                cp.float32(0.0),
+            )
+
+        return u_face_x, v_face_y
+
+    def _compute_flux_divergence_field_faces(
+        self,
+        u_face_x,
+        v_face_y,
+        out=None,
+        boundary_u_w=None,
+        boundary_u_e=None,
+        boundary_v_s=None,
+        boundary_v_n=None,
+    ):
+        """Divergencia por balance de flujo en volúmenes de control centrados."""
+        if out is None:
+            div = cp.empty_like(self.p, dtype=cp.float32)
+        else:
+            div = out
+
+        if boundary_u_w is None:
+            boundary_u_w = cp.zeros((self.ny,), dtype=cp.float32)
+        if boundary_u_e is None:
+            boundary_u_e = cp.zeros((self.ny,), dtype=cp.float32)
+        if boundary_v_s is None:
+            boundary_v_s = cp.zeros((self.nx,), dtype=cp.float32)
+        if boundary_v_n is None:
+            boundary_v_n = cp.zeros((self.nx,), dtype=cp.float32)
+
+        west_flux = cp.empty_like(self.u, dtype=cp.float32)
+        east_flux = cp.empty_like(self.u, dtype=cp.float32)
+        south_flux = cp.empty_like(self.v, dtype=cp.float32)
+        north_flux = cp.empty_like(self.v, dtype=cp.float32)
+
+        west_flux[:, 0] = boundary_u_w
+        east_flux[:, -1] = boundary_u_e
+        south_flux[0, :] = boundary_v_s
+        north_flux[-1, :] = boundary_v_n
+
+        if self.nx > 1:
+            west_flux[:, 1:] = u_face_x
+            east_flux[:, :-1] = u_face_x
+        else:
+            west_flux[:, 0] = boundary_u_w
+            east_flux[:, 0] = boundary_u_e
+
+        if self.ny > 1:
+            south_flux[1:, :] = v_face_y
+            north_flux[:-1, :] = v_face_y
+        else:
+            south_flux[0, :] = boundary_v_s
+            north_flux[0, :] = boundary_v_n
+
+        div[:] = (
+            (east_flux - west_flux) / cp.maximum(self.vol_x[cp.newaxis, :], cp.float32(1e-30))
+            + (north_flux - south_flux) / cp.maximum(self.vol_y[:, cp.newaxis], cp.float32(1e-30))
+        )
+        div[self.solid] = cp.float32(0.0)
+        return div
+
+    def _compute_flux_divergence_field_uv(self, u=None, v=None, out=None):
+        """Divergencia por flujo construyendo primero velocidades normales en caras."""
+        if u is None:
+            u = self.u
+        if v is None:
+            v = self.v
+        u_face_x, v_face_y = self._build_projection_faces(u=u, v=v)
+        return self._compute_flux_divergence_field_faces(
+            u_face_x,
+            v_face_y,
+            out=out,
+            boundary_u_w=u[:, 0],
+            boundary_u_e=u[:, -1],
+            boundary_v_s=v[0, :],
+            boundary_v_n=v[-1, :],
+        )
+
+    def _apply_pressure_correction_to_faces(self, u_face_x, v_face_y, p, coef):
+        """Corrige velocidades de cara con el gradiente de presión discreto."""
+        free = ~self.solid
+        eps = cp.float32(1e-30)
+
+        if self.nx > 1:
+            fluid_pair_x = free[:, :-1] & free[:, 1:]
+            dx_face = cp.maximum(self.X_1d[1:] - self.X_1d[:-1], eps)
+            u_face_x[:] = cp.where(
+                fluid_pair_x,
+                u_face_x - coef * (p[:, 1:] - p[:, :-1]) / dx_face[cp.newaxis, :],
+                cp.float32(0.0),
+            )
+
+        if self.ny > 1:
+            fluid_pair_y = free[:-1, :] & free[1:, :]
+            dy_face = cp.maximum(self.Y_1d[1:] - self.Y_1d[:-1], eps)
+            v_face_y[:] = cp.where(
+                fluid_pair_y,
+                v_face_y - coef * (p[1:, :] - p[:-1, :]) / dy_face[:, cp.newaxis],
+                cp.float32(0.0),
+            )
+
+    def _reconstruct_centered_velocity_from_faces(self, u_face_x, v_face_y, u_prev=None, v_prev=None):
+        """
+        Reconstruye u,v centradas desde caras vecinas.
+
+        Si una cara está bloqueada por sólido, usa la disponible; si ambas faltan,
+        conserva el valor previo para que IBM/impermeabilidad rematen la interfaz.
+        """
+        if u_prev is None:
+            u_prev = self.u
+        if v_prev is None:
+            v_prev = self.v
+
+        free = ~self.solid
+        u_new = u_prev.copy()
+        v_new = v_prev.copy()
+
+        west_face = cp.empty_like(u_prev, dtype=cp.float32)
+        east_face = cp.empty_like(u_prev, dtype=cp.float32)
+        west_face[:, 0] = u_prev[:, 0]
+        east_face[:, -1] = u_prev[:, -1]
+        if self.nx > 1:
+            west_face[:, 1:] = u_face_x
+            east_face[:, :-1] = u_face_x
+        else:
+            west_face[:, 0] = u_prev[:, 0]
+            east_face[:, 0] = u_prev[:, 0]
+
+        west_avail = free.copy()
+        east_avail = free.copy()
+        if self.nx > 1:
+            west_avail[:, 1:] = free[:, 1:] & free[:, :-1]
+            east_avail[:, :-1] = free[:, :-1] & free[:, 1:]
+        denom_x = cp.maximum(self.dx_w + self.dx_e, cp.float32(1e-30))[cp.newaxis, :]
+        u_both = (
+            self.dx_e[cp.newaxis, :] * west_face
+            + self.dx_w[cp.newaxis, :] * east_face
+        ) / denom_x
+        use_both = free & west_avail & east_avail
+        use_west = free & west_avail & (~east_avail)
+        use_east = free & east_avail & (~west_avail)
+        u_new = cp.where(use_both, u_both, u_new)
+        u_new = cp.where(use_west, west_face, u_new)
+        u_new = cp.where(use_east, east_face, u_new)
+
+        south_face = cp.empty_like(v_prev, dtype=cp.float32)
+        north_face = cp.empty_like(v_prev, dtype=cp.float32)
+        south_face[0, :] = v_prev[0, :]
+        north_face[-1, :] = v_prev[-1, :]
+        if self.ny > 1:
+            south_face[1:, :] = v_face_y
+            north_face[:-1, :] = v_face_y
+        else:
+            south_face[0, :] = v_prev[0, :]
+            north_face[0, :] = v_prev[0, :]
+
+        south_avail = free.copy()
+        north_avail = free.copy()
+        if self.ny > 1:
+            south_avail[1:, :] = free[1:, :] & free[:-1, :]
+            north_avail[:-1, :] = free[:-1, :] & free[1:, :]
+        denom_y = cp.maximum(self.dy_s + self.dy_n, cp.float32(1e-30))[:, cp.newaxis]
+        v_both = (
+            self.dy_n[:, cp.newaxis] * south_face
+            + self.dy_s[:, cp.newaxis] * north_face
+        ) / denom_y
+        use_both = free & south_avail & north_avail
+        use_south = free & south_avail & (~north_avail)
+        use_north = free & north_avail & (~south_avail)
+        v_new = cp.where(use_both, v_both, v_new)
+        v_new = cp.where(use_south, south_face, v_new)
+        v_new = cp.where(use_north, north_face, v_new)
+
+        return u_new, v_new
+
+    def compute_divergence_flux_mean(self):
+        """Media de |div_flux| en celdas de fluido usando balance de caras."""
+        div = self._compute_flux_divergence_field_uv()
+        free = ~self.solid
+        return float(cp.mean(cp.abs(div[free])))
+
+    def compute_divergence_flux_max(self):
+        """Máximo de |div_flux| en celdas de fluido."""
+        div = self._compute_flux_divergence_field_uv()
+        free = ~self.solid
+        return float(cp.max(cp.abs(div[free])))
+
+    def compute_wall_leak_metrics(self):
+        """Retorna (media, máximo) de |u·n|/U_ref en la interfaz fluido-sólido."""
+        if not getattr(self, '_normales_validas', False) or self._mask_interfaz is None:
+            self._precomputar_normales_impermeabilidad()
+        mask = getattr(self, '_mask_interfaz', None)
+        if mask is None or not bool(cp.any(mask)):
+            return 0.0, 0.0
+
+        u_ref = float(getattr(self, '_U_ref', getattr(self, '_vel_ref', 1.0)))
+        u_ref = max(u_ref, 1e-30)
+        un = cp.abs(self.u * self._nx_hat + self.v * self._ny_hat)
+        leak = un[mask] / cp.float32(u_ref)
+        return float(cp.mean(leak)), float(cp.max(leak))
+
+    def compute_projection_compatibility_error(self):
+        """
+        Métrica offline ||D(G(p)) - L(p)|| / ||L(p)|| con un campo suave de prueba.
+        """
+        x = self.XX / max(float(self.Lx), 1e-30)
+        y = self.YY / max(float(self.Ly), 1e-30)
+        p_test = cp.cos(cp.float32(np.pi) * x) * cp.cos(cp.float32(np.pi) * y)
+        p_test = cp.where(self.solid, cp.float32(0.0), p_test.astype(cp.float32))
+
+        u_face_x, v_face_y = self._ensure_projection_face_buffers()
+        u_face_x.fill(cp.float32(0.0))
+        v_face_y.fill(cp.float32(0.0))
+        if self.nx > 1:
+            dx_face = cp.maximum(self.X_1d[1:] - self.X_1d[:-1], cp.float32(1e-30))
+            fluid_pair_x = (~self.solid[:, :-1]) & (~self.solid[:, 1:])
+            u_face_x[:] = cp.where(
+                fluid_pair_x,
+                (p_test[:, 1:] - p_test[:, :-1]) / dx_face[cp.newaxis, :],
+                cp.float32(0.0),
+            )
+        if self.ny > 1:
+            dy_face = cp.maximum(self.Y_1d[1:] - self.Y_1d[:-1], cp.float32(1e-30))
+            fluid_pair_y = (~self.solid[:-1, :]) & (~self.solid[1:, :])
+            v_face_y[:] = cp.where(
+                fluid_pair_y,
+                (p_test[1:, :] - p_test[:-1, :]) / dy_face[:, cp.newaxis],
+                cp.float32(0.0),
+            )
+
+        dg = self._compute_flux_divergence_field_faces(
+            u_face_x,
+            v_face_y,
+            boundary_u_w=cp.zeros((self.ny,), dtype=cp.float32),
+            boundary_u_e=cp.zeros((self.ny,), dtype=cp.float32),
+            boundary_v_s=cp.zeros((self.nx,), dtype=cp.float32),
+            boundary_v_n=cp.zeros((self.nx,), dtype=cp.float32),
+        )
+        lp = self._laplacian_kernel_masked(
+            self.solid.ravel(),
+            p_test.ravel(),
+            self.d2x_W, self.d2x_C, self.d2x_E,
+            self.d2y_S, self.d2y_C, self.d2y_N,
+            cp.int32(self.nx), cp.int32(self.ny), size=p_test.size,
+        ).reshape(self.p.shape)
+
+        free = ~self.solid
+        num = float(cp.linalg.norm((dg - lp)[free]))
+        den = float(cp.linalg.norm(lp[free]))
+        return num / max(den, 1e-30)
+
     def compute_wale_viscosity(self, Cw=None, eps=1e-16):
         """
         Calcula la viscosidad sub-malla ν_t según el modelo WALE (Nicoud & Ducros).
@@ -2013,10 +2394,38 @@ class Mesh:
         except Exception:
             pass
 
+    def _validate_projection_variant(self, projection_variant):
+        valid = {"legacy_centered", "compatible_flux"}
+        if projection_variant not in valid:
+            raise ValueError(
+                f"projection_variant invalido: {projection_variant!r}. "
+                f"Valores validos: {sorted(valid)}"
+            )
+        return projection_variant
+
+    def _validate_mg_pressure_accumulation(self, mg_pressure_accumulation):
+        valid = {"last", "outer_sum"}
+        if mg_pressure_accumulation not in valid:
+            raise ValueError(
+                f"mg_pressure_accumulation invalido: {mg_pressure_accumulation!r}. "
+                f"Valores validos: {sorted(valid)}"
+            )
+        return mg_pressure_accumulation
+
+    def _validate_wall_pressure_gradient_mode(self, wall_pressure_gradient_mode):
+        valid = {"masked", "one_sided"}
+        if wall_pressure_gradient_mode not in valid:
+            raise ValueError(
+                f"wall_pressure_gradient_mode invalido: {wall_pressure_gradient_mode!r}. "
+                f"Valores validos: {sorted(valid)}"
+            )
+        return wall_pressure_gradient_mode
+
     def project_cg(self, rho_sim, dt, tol_div=1e-1, tol_residual=1e-6,
                    max_iter=500, min_iter=5, check_every=50,
                    verbose=False, print_every=100,
-                   max_outer=5, modo_adaptativo=True):
+                   max_outer=5, modo_adaptativo=True,
+                   projection_variant="legacy_centered"):
         """
         Proyección incompresible con CG simétrico + defect-correction.
 
@@ -2029,6 +2438,21 @@ class Mesh:
         - Global revert: si todo empeoró, restaurar estado inicial
         - Iteraciones CG adaptativas según div/tol_div
         """
+        projection_variant = self._validate_projection_variant(projection_variant)
+        if projection_variant == "compatible_flux":
+            return self._project_cg_compatible_flux(
+                rho_sim, dt,
+                tol_div=tol_div,
+                tol_residual=tol_residual,
+                max_iter=max_iter,
+                min_iter=min_iter,
+                check_every=check_every,
+                verbose=verbose,
+                print_every=print_every,
+                max_outer=max_outer,
+                modo_adaptativo=modo_adaptativo,
+            )
+
         rho_f = cp.float32(rho_sim)
         dt_f = cp.float32(dt)
         ny, nx = self.p.shape
@@ -2295,7 +2719,10 @@ class Mesh:
                           apply_ibm_each_outer=True,
                           rollback_on_nan=True,
                           compute_div_after=True,
-                          usar_adjoint_correction=False):
+                          usar_adjoint_correction=False,
+                          projection_variant="legacy_centered",
+                          mg_pressure_accumulation="outer_sum",
+                          wall_pressure_gradient_mode="masked"):
         """
         Proyección incompresible con defect-correction iterativo + multigrid.
         Smoother: Red-Black Gauss-Seidel SOR (CUDA kernel in-place).
@@ -2328,6 +2755,34 @@ class Mesh:
             compute_div_after: calcula div_after exacto al final para reporte.
                                Si False, usa estimación del último outer.
         """
+        projection_variant = self._validate_projection_variant(projection_variant)
+        mg_pressure_accumulation = self._validate_mg_pressure_accumulation(
+            mg_pressure_accumulation
+        )
+        wall_pressure_gradient_mode = self._validate_wall_pressure_gradient_mode(
+            wall_pressure_gradient_mode
+        )
+        if projection_variant == "compatible_flux":
+            return self._project_multigrid_compatible_flux(
+                rho_sim, dt,
+                tol_div=tol_div,
+                tol_div_rel=tol_div_rel,
+                max_outer=max_outer,
+                cycles_per_outer=cycles_per_outer,
+                niveles_max=niveles_max,
+                pre_suavizado=pre_suavizado,
+                post_suavizado=post_suavizado,
+                omega=omega,
+                verbose=verbose,
+                modo_adaptativo=modo_adaptativo,
+                guard_residual_every_outer=guard_residual_every_outer,
+                adaptive_outer0_cycles=adaptive_outer0_cycles,
+                apply_ibm_each_outer=apply_ibm_each_outer,
+                rollback_on_nan=rollback_on_nan,
+                compute_div_after=compute_div_after,
+                usar_adjoint_correction=usar_adjoint_correction,
+            )
+
         # ================================================================
         # Constantes y pre-cómputos
         # ================================================================
@@ -2383,7 +2838,11 @@ class Mesh:
         rb_kernel = self._rb_gs_sor_kernel
         restrict_k = self._restrict_kernel
         prolong_k = self._prolongate_add_kernel
-        vc_kernel = self._velocity_correction_kernel
+        vc_kernel = (
+            self._velocity_correction_one_sided_kernel
+            if wall_pressure_gradient_mode == "one_sided"
+            else self._velocity_correction_kernel
+        )
         adj_kernel = self._adjoint_gradient_kernel
 
         # Buffers para gradiente adjunto (lazy alloc, reuso entre llamadas)
@@ -2604,6 +3063,11 @@ class Mesh:
         # Bucle externo de defect-correction
         # ================================================================
         p_last = cp.zeros((ny, nx), dtype=cp.float32)   # presión del último outer
+        p_acumulada = (
+            cp.zeros((ny, nx), dtype=cp.float32)
+            if mg_pressure_accumulation == "outer_sum"
+            else None
+        )
         rhs = cp.zeros((ny, nx), dtype=cp.float32)
         p_corr = cp.zeros((ny, nx), dtype=cp.float32)
         rhs_flat_ref = rhs.ravel()
@@ -2759,13 +3223,23 @@ class Mesh:
                 self.u -= coef_eff * self._grad_u_buf
                 self.v -= coef_eff * self._grad_v_buf
             else:
-                vc_kernel(
-                    (grid_k,), (block_sz,),
-                    (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
-                     coef_eff,
-                     self.d1x_W, self.d1x_C, self.d1x_E,
-                     self.d1y_S, self.d1y_C, self.d1y_N,
-                     nx_i32, ny_i32))
+                if wall_pressure_gradient_mode == "one_sided":
+                    vc_kernel(
+                        (grid_k,), (block_sz,),
+                        (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
+                         coef_eff,
+                         self.d1x_W, self.d1x_C, self.d1x_E,
+                         self.d1y_S, self.d1y_C, self.d1y_N,
+                         self.X_1d, self.Y_1d,
+                         nx_i32, ny_i32))
+                else:
+                    vc_kernel(
+                        (grid_k,), (block_sz,),
+                        (self.u.ravel(), self.v.ravel(), p_corr.ravel(), solid_flat,
+                         coef_eff,
+                         self.d1x_W, self.d1x_C, self.d1x_E,
+                         self.d1y_S, self.d1y_C, self.d1y_N,
+                         nx_i32, ny_i32))
             # Restaurar capas de salida (la proyeccion no actua alli).
             for (_name, out_slice), u_buf, v_buf in outflow_layers:
                 self.u[out_slice] = u_buf
@@ -2787,6 +3261,8 @@ class Mesh:
                 break
 
             p_last[:] = p_corr
+            if p_acumulada is not None:
+                p_acumulada += p_corr
 
             if verbose:
                 div_tmp = self._compute_divergence_field(out=div_work)
@@ -2803,8 +3279,9 @@ class Mesh:
         # ================================================================
         # Finalización
         # ================================================================
-        if float(cp.max(cp.abs(p_last))) > 0.0:
-            self.p = p_last
+        p_final = p_acumulada if p_acumulada is not None else p_last
+        if float(cp.max(cp.abs(p_final))) > 0.0:
+            self.p = p_final
 
         self._aplicar_bc_presion_neumann()
         if hay_dirichlet:
@@ -2837,6 +3314,611 @@ class Mesh:
         if verbose:
             print(f"[MG] div_media: {div_mean_before:.4e}→{div_mean_after:.4e}  "
                   f"div_max: {div_max_before:.4e}→{div_max_after:.4e}  cycles={total_cycles}")
+
+        return {
+            'iterations': total_cycles,
+            'cycles': total_cycles,
+            'outers': outer + 1 if n_outer > 0 else 0,
+            'converged': converged or (div_eff_after < tol_div),
+            'div_before': div_mean_before,
+            'div_after': div_mean_after,
+            'n_outer_used': n_outer,
+        }
+
+    def _project_cg_compatible_flux(self, rho_sim, dt, tol_div=1e-1, tol_residual=1e-6,
+                                    max_iter=500, min_iter=5, check_every=50,
+                                    verbose=False, print_every=100,
+                                    max_outer=5, modo_adaptativo=True):
+        """Variante CG que usa divergencia/corrección en caras para la proyección."""
+        rho_f = cp.float32(rho_sim)
+        dt_f = cp.float32(dt)
+        ny, nx = self.p.shape
+        coef_f = dt_f / rho_f
+
+        free = ~self.solid
+        solid_flat = self.solid.ravel()
+        free_flat = free.ravel()
+        vol_flat = self._vol_2d_flat
+        block_sz = 256
+        total_cells = ny * nx
+        nx_i32 = cp.int32(nx)
+        ny_i32 = cp.int32(ny)
+
+        try:
+            hay_dirichlet = bool(cp.any(self.fixed_pressure_mask))
+        except Exception:
+            hay_dirichlet = False
+
+        self.apply_boundaries(after_projection=False)
+        u_face_x, v_face_y = self._build_projection_faces()
+        div_before = self._compute_flux_divergence_field_faces(
+            u_face_x, v_face_y,
+            boundary_u_w=self.u[:, 0],
+            boundary_u_e=self.u[:, -1],
+            boundary_v_s=self.v[0, :],
+            boundary_v_n=self.v[-1, :],
+        )
+        n_free = float(cp.sum(free))
+        inv_n_free = 1.0 / max(n_free, 1.0)
+        div_mean_before = float(cp.sum(cp.abs(div_before))) * inv_n_free
+        if verbose:
+            print(f"[CG-flux] Divergencia inicial: {div_mean_before:.6e}")
+
+        if div_mean_before < tol_div:
+            n_outer = 2
+            maintenance_mode = True
+        else:
+            maintenance_mode = False
+            if modo_adaptativo:
+                n_outer = max(3, max_outer // 2) if div_mean_before < tol_div * 3.0 else max_outer
+            else:
+                n_outer = max_outer
+
+        def _aplicar_A(vec_flat):
+            Lx = self._laplacian_kernel_masked(
+                solid_flat, vec_flat,
+                self.d2x_W, self.d2x_C, self.d2x_E,
+                self.d2y_S, self.d2y_C, self.d2y_N,
+                nx_i32, ny_i32, size=vec_flat.size)
+            return -(Lx * vol_flat)
+
+        def _aplicar_Minv(res_flat):
+            r_unscaled = res_flat / vol_flat
+            z_L = self._precond_jacobi_kernel_masked(
+                solid_flat, r_unscaled,
+                self.d2x_W, self.d2x_C, self.d2x_E,
+                self.d2y_S, self.d2y_C, self.d2y_N,
+                nx_i32, ny_i32, size=r_unscaled.size)
+            return -z_L
+
+        p_acumulada = cp.zeros((ny, nx), dtype=cp.float32)
+        total_iters = 0
+        converged = False
+        div_mean_current = div_mean_before
+        u_initial = self.u.copy()
+        v_initial = self.v.copy()
+
+        for outer in range(n_outer):
+            self.apply_boundaries(after_projection=False)
+            u_face_x, v_face_y = self._build_projection_faces()
+            div_field = self._compute_flux_divergence_field_faces(
+                u_face_x, v_face_y,
+                boundary_u_w=self.u[:, 0],
+                boundary_u_e=self.u[:, -1],
+                boundary_v_s=self.v[0, :],
+                boundary_v_n=self.v[-1, :],
+            )
+            div_mean_current = float(cp.sum(cp.abs(div_field))) * inv_n_free
+
+            if div_mean_current < tol_div:
+                if maintenance_mode and outer >= 1:
+                    converged = True
+                    break
+                if (not maintenance_mode) and outer > 0:
+                    converged = True
+                    break
+
+            if maintenance_mode:
+                max_inner = max(100, max_iter // 4)
+            elif modo_adaptativo:
+                if div_mean_current < tol_div * 2.0:
+                    max_inner = max(100, max_iter // 2)
+                elif div_mean_current < tol_div * 5.0:
+                    max_inner = max(200, (max_iter * 2) // 3)
+                else:
+                    max_inner = max_iter
+            else:
+                max_inner = max_iter
+
+            rhs = cp.zeros((ny, nx), dtype=cp.float32)
+            rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_field[1:-1, 1:-1]
+            rhs_flat = rhs.ravel()
+
+            if not hay_dirichlet:
+                vrs = cp.sum(rhs_flat[free_flat] * vol_flat[free_flat])
+                vt = cp.sum(vol_flat[free_flat])
+                if float(vt) > 0:
+                    rhs_flat[free_flat] -= vrs / vt
+
+            rhs_M = -(rhs_flat * vol_flat)
+            x = cp.zeros(total_cells, dtype=cp.float32)
+            if hay_dirichlet:
+                x[self.fixed_pressure_mask.ravel()] = self.fixed_pressure_value
+
+            Ax = _aplicar_A(x)
+            r = rhs_M - Ax
+            if hay_dirichlet:
+                r[self.fixed_pressure_mask.ravel()] = 0.0
+            z = _aplicar_Minv(r)
+            p_dir = z.copy()
+            rz = float(cp.dot(r, z))
+            recompute_every = 50
+
+            for it_cg in range(max_inner):
+                Ap = _aplicar_A(p_dir)
+                pAp = float(cp.dot(p_dir, Ap))
+                if abs(pAp) < 1e-30:
+                    break
+                alpha_f = rz / pAp
+                x += cp.float32(alpha_f) * p_dir
+                r -= cp.float32(alpha_f) * Ap
+
+                if (it_cg + 1) % recompute_every == 0:
+                    r = rhs_M - _aplicar_A(x)
+
+                if hay_dirichlet:
+                    r[self.fixed_pressure_mask.ravel()] = 0.0
+                elif (it_cg + 1) % recompute_every == 0:
+                    mean_x = float(cp.sum(x[free_flat] * vol_flat[free_flat]) /
+                                   cp.sum(vol_flat[free_flat]))
+                    x[free_flat] -= cp.float32(mean_x)
+                    r = rhs_M - _aplicar_A(x)
+
+                if it_cg >= min_iter and it_cg % check_every == 0:
+                    res_norm = float(cp.sqrt(cp.dot(r, r)))
+                    if verbose and it_cg % print_every == 0:
+                        print(f"  [CG-flux outer={outer+1}] it={it_cg+1:5d}  res={res_norm:.6e}")
+                    if res_norm < tol_residual:
+                        break
+
+                z = _aplicar_Minv(r)
+                rz_new = float(cp.dot(r, z))
+                if abs(rz) < 1e-30:
+                    break
+                beta = rz_new / rz
+                rz = rz_new
+                p_dir = z + cp.float32(beta) * p_dir
+
+            total_iters += it_cg + 1
+            p_corr = x.reshape(ny, nx)
+            if hay_dirichlet:
+                p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
+
+            u_prev = self.u.copy()
+            v_prev = self.v.copy()
+            self._apply_pressure_correction_to_faces(u_face_x, v_face_y, p_corr, cp.float32(float(coef_f)))
+            self.u, self.v = self._reconstruct_centered_velocity_from_faces(
+                u_face_x, v_face_y, u_prev=u_prev, v_prev=v_prev)
+            self.apply_boundaries(after_projection=True)
+            self.apply_ghost_cell_bc()
+            self.reforzar_impermeabilidad()
+
+            if bool(cp.isnan(self.u).any() or cp.isnan(self.v).any()):
+                self.u[:] = u_initial
+                self.v[:] = v_initial
+                p_acumulada[:] = 0.0
+                break
+
+            p_acumulada += p_corr
+            if verbose:
+                div_check = self._compute_flux_divergence_field_uv()
+                div_after_corr = float(cp.sum(cp.abs(div_check))) * inv_n_free
+                print(f"[CG-flux] Outer {outer+1}/{n_outer} ({it_cg+1} iters): div={div_after_corr:.6e}")
+
+            u_initial[:] = self.u
+            v_initial[:] = self.v
+
+        if float(cp.max(cp.abs(p_acumulada))) > 0.0:
+            self.p = p_acumulada
+        self._aplicar_bc_presion_neumann()
+        if hay_dirichlet:
+            self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
+
+        self.apply_boundaries(after_projection=True)
+        self.apply_ghost_cell_bc()
+        self.reforzar_impermeabilidad()
+
+        if not hay_dirichlet:
+            try:
+                self._anchor_pressure()
+            except Exception:
+                pass
+
+        div_after = self._compute_flux_divergence_field_uv()
+        div_mean_after = float(cp.sum(cp.abs(div_after))) * inv_n_free
+        return {
+            'iterations': total_iters,
+            'cycles': total_iters,
+            'outers': outer + 1,
+            'converged': converged or (div_mean_after < tol_div),
+            'div_before': div_mean_before,
+            'div_after': div_mean_after,
+            'n_outer_used': n_outer,
+        }
+
+    def _project_multigrid_compatible_flux(self, rho_sim, dt, tol_div=None,
+                                           tol_div_rel=1e-3,
+                                           max_outer=8, cycles_per_outer=5,
+                                           niveles_max=0, pre_suavizado=3, post_suavizado=3,
+                                           omega=1.15, verbose=False,
+                                           modo_adaptativo=True,
+                                           guard_residual_every_outer=True,
+                                           adaptive_outer0_cycles=False,
+                                           apply_ibm_each_outer=True,
+                                           rollback_on_nan=True,
+                                           compute_div_after=True,
+                                           usar_adjoint_correction=False):
+        """Variante MG que usa D/G de flujo compatibles con la corrección en caras."""
+        rho_f = cp.float32(rho_sim)
+        dt_f = cp.float32(dt)
+        ny, nx = self.p.shape
+        coef_f = dt_f / rho_f
+
+        block_sz = 256
+        nx_i32 = cp.int32(nx)
+        ny_i32 = cp.int32(ny)
+
+        if tol_div is None:
+            try:
+                U_ref = float(cp.max(cp.abs(self.u))) + 1e-30
+                L_ref = float(self.Lx)
+                tol_div = float(tol_div_rel) * U_ref / max(L_ref, 1e-30)
+            except Exception:
+                tol_div = 1e-2
+
+        if not self._mg_initialized:
+            self._init_mg_hierarchy(niveles_max)
+
+        n_levels = self._mg_niveles
+        free = self._mg_free
+        free_flat = self._mg_free_flat
+        n_free = self._mg_n_free
+        inv_n_free = 1.0 / max(float(n_free), 1.0)
+
+        try:
+            hay_dirichlet = bool(cp.any(self.fixed_pressure_mask))
+        except Exception:
+            hay_dirichlet = False
+
+        solid_flat = self._mg_solids_flat[0]
+        rb_kernel = self._rb_gs_sor_kernel
+        restrict_k = self._restrict_kernel
+        prolong_k = self._prolongate_add_kernel
+        omega_f32 = cp.float32(omega)
+        p0_i32 = cp.int32(0)
+        p1_i32 = cp.int32(1)
+        omega_coarse_f32 = cp.float32(1.0)
+
+        def _smooth(p_arr, rhs, lvl, n_sweeps):
+            kd = self._mg_kdims[lvl]
+            sol = self._mg_solids_flat[lvl]
+            nx_l = kd['nx_i']
+            ny_l = kd['ny_i']
+            grid_l = (kd['grid'],)
+            p_flat = p_arr.ravel()
+            rhs_flat = rhs.ravel()
+            d2xW = self._mg_d2x_W[lvl]
+            d2xC = self._mg_d2x_C[lvl]
+            d2xE = self._mg_d2x_E[lvl]
+            d2yS = self._mg_d2y_S[lvl]
+            d2yC = self._mg_d2y_C[lvl]
+            d2yN = self._mg_d2y_N[lvl]
+            om = omega_f32 if lvl == 0 else omega_coarse_f32
+            for s in range(n_sweeps):
+                first = p0_i32 if (s % 2 == 0) else p1_i32
+                second = p1_i32 if (s % 2 == 0) else p0_i32
+                rb_kernel(grid_l, (256,),
+                          (sol, p_flat, rhs_flat,
+                           d2xW, d2xC, d2xE, d2yS, d2yC, d2yN,
+                           om, nx_l, ny_l, first))
+                rb_kernel(grid_l, (256,),
+                          (sol, p_flat, rhs_flat,
+                           d2xW, d2xC, d2xE, d2yS, d2yC, d2yN,
+                           om, nx_l, ny_l, second))
+
+        def _aplicar_bc_mg(p_nivel, lvl):
+            ny_n, nx_n = p_nivel.shape
+            if hay_dirichlet:
+                dm = self._mg_dirichlet[lvl]
+                fl = ~self._mg_solids[lvl]
+                if nx_n >= 2:
+                    mk = fl[:, 0] & ~dm[:, 0]
+                    p_nivel[mk, 0] = p_nivel[mk, 1]
+                    mk = fl[:, -1] & ~dm[:, -1]
+                    p_nivel[mk, -1] = p_nivel[mk, -2]
+                if ny_n >= 2:
+                    mk = fl[0, :] & ~dm[0, :]
+                    p_nivel[0, mk] = p_nivel[1, mk]
+                    mk = fl[-1, :] & ~dm[-1, :]
+                    p_nivel[-1, mk] = p_nivel[-2, mk]
+                if lvl == 0:
+                    p_nivel[dm] = self.fixed_pressure_value
+                else:
+                    p_nivel[dm] = cp.float32(0.0)
+            else:
+                if nx_n >= 2:
+                    p_nivel[:, 0] = p_nivel[:, 1]
+                    p_nivel[:, -1] = p_nivel[:, -2]
+                if ny_n >= 2:
+                    p_nivel[0, :] = p_nivel[1, :]
+                    p_nivel[-1, :] = p_nivel[-2, :]
+
+        def _residual_norm(p, rhs_r, lvl=0):
+            kd = self._mg_kdims[lvl]
+            Lp = self._laplacian_kernel_masked(
+                self._mg_solids_flat[lvl], p.ravel(),
+                self._mg_d2x_W[lvl], self._mg_d2x_C[lvl], self._mg_d2x_E[lvl],
+                self._mg_d2y_S[lvl], self._mg_d2y_C[lvl], self._mg_d2y_N[lvl],
+                kd['nx_i'], kd['ny_i'], size=kd['total'])
+            return float(cp.linalg.norm(rhs_r - Lp))
+
+        nlvl_use = min(n_levels, 2)
+        coarse_solve_iters = 20
+
+        def _v_cycle(p_arr, rhs, _dbg=False):
+            if _dbg:
+                r_antes = _residual_norm(p_arr, rhs.ravel())
+                print(f"  [DBG] ||r|| inicial={r_antes:.4e}  ||rhs||={float(cp.linalg.norm(rhs)):.4e}")
+
+            p_lv = [None] * (nlvl_use + 1)
+            rhs_lv = [None] * (nlvl_use + 1)
+            p_lv[0] = p_arr
+            rhs_lv[0] = rhs
+
+            for lvl in range(nlvl_use):
+                _smooth(p_lv[lvl], rhs_lv[lvl], lvl, pre_suavizado)
+                _aplicar_bc_mg(p_lv[lvl], lvl)
+
+                kd = self._mg_kdims[lvl]
+                sol = self._mg_solids_flat[lvl]
+                Lp = self._laplacian_kernel_masked(
+                    sol, p_lv[lvl].ravel(),
+                    self._mg_d2x_W[lvl], self._mg_d2x_C[lvl], self._mg_d2x_E[lvl],
+                    self._mg_d2y_S[lvl], self._mg_d2y_C[lvl], self._mg_d2y_N[lvl],
+                    kd['nx_i'], kd['ny_i'], size=kd['total'])
+                res_buf = self._mg_bufs[lvl]['res']
+                cp.subtract(rhs_lv[lvl].ravel(), Lp, out=res_buf.ravel())
+
+                kd_c = self._mg_kdims[lvl + 1]
+                if kd_c['ny'] < 2 or kd_c['nx'] < 2:
+                    for lu in range(lvl, -1, -1):
+                        _smooth(p_lv[lu], rhs_lv[lu], lu, post_suavizado)
+                        _aplicar_bc_mg(p_lv[lu], lu)
+                    return
+
+                rhs_c = self._mg_bufs[lvl + 1]['rhs']
+                restrict_k(
+                    (kd_c['grid'],), (256,),
+                    (res_buf.ravel(), rhs_c.ravel(),
+                     cp.int32(kd['nx']), cp.int32(kd['ny']),
+                     cp.int32(kd_c['nx']), cp.int32(kd_c['ny']),
+                     cp.int32(self._mg_x_start[lvl + 1]),
+                     cp.int32(self._mg_y_start[lvl + 1])))
+                rhs_lv[lvl + 1] = rhs_c
+
+                e_c = self._mg_bufs[lvl + 1]['error']
+                e_c[:] = 0.0
+                p_lv[lvl + 1] = e_c
+
+            _smooth(p_lv[nlvl_use], rhs_lv[nlvl_use], nlvl_use, coarse_solve_iters)
+            _aplicar_bc_mg(p_lv[nlvl_use], nlvl_use)
+
+            for lvl in range(nlvl_use - 1, -1, -1):
+                kd_c = self._mg_kdims[lvl + 1]
+                kd_f = self._mg_kdims[lvl]
+                wx = self._mg_prolong_wx[lvl]
+                wy = self._mg_prolong_wy[lvl]
+                prolong_k(
+                    (kd_f['grid'],), (256,),
+                    (p_lv[lvl + 1].ravel(), p_lv[lvl].ravel(), wx, wy,
+                     cp.int32(kd_c['nx']), cp.int32(kd_c['ny']),
+                     cp.int32(kd_f['nx']), cp.int32(kd_f['ny']),
+                     cp.int32(self._mg_x_start[lvl + 1]),
+                     cp.int32(self._mg_y_start[lvl + 1])))
+                p_lv[lvl][self._mg_solids[lvl]] = cp.float32(0.0)
+                _smooth(p_lv[lvl], rhs_lv[lvl], lvl, post_suavizado)
+                _aplicar_bc_mg(p_lv[lvl], lvl)
+
+        self.apply_boundaries(after_projection=False)
+        u_face_x, v_face_y = self._build_projection_faces()
+        div_work = cp.empty((ny, nx), dtype=cp.float32)
+        div_abs_work = cp.empty((ny, nx), dtype=cp.float32)
+        div_before_field = self._compute_flux_divergence_field_faces(
+            u_face_x, v_face_y,
+            out=div_work,
+            boundary_u_w=self.u[:, 0],
+            boundary_u_e=self.u[:, -1],
+            boundary_v_s=self.v[0, :],
+            boundary_v_n=self.v[-1, :],
+        )
+        cp.abs(div_before_field, out=div_abs_work)
+        div_mean_before = float(cp.sum(div_abs_work)) * inv_n_free
+        div_max_before = float(cp.max(div_abs_work))
+        div_eff_before = max(div_mean_before, div_max_before * 0.01)
+
+        if modo_adaptativo:
+            if div_eff_before < tol_div * 0.8:
+                n_outer = 1
+                n_cycles = 1
+            elif div_eff_before < tol_div:
+                n_outer = 2
+                n_cycles = max(2, cycles_per_outer // 2)
+            elif div_eff_before < tol_div * 3.0:
+                n_outer = max(3, max_outer // 2)
+                n_cycles = cycles_per_outer
+            else:
+                n_outer = max_outer
+                n_cycles = cycles_per_outer
+        else:
+            n_outer = max_outer
+            n_cycles = cycles_per_outer
+
+        p_last = cp.zeros((ny, nx), dtype=cp.float32)
+        rhs = cp.zeros((ny, nx), dtype=cp.float32)
+        p_corr = cp.zeros((ny, nx), dtype=cp.float32)
+        rhs_flat_ref = rhs.ravel()
+        total_cycles = 0
+        converged = False
+        div_mean_current = div_mean_before
+        div_max_current = div_max_before
+        div_eff_current = div_eff_before
+
+        if rollback_on_nan:
+            u_initial = self.u.copy()
+            v_initial = self.v.copy()
+        else:
+            u_initial = None
+            v_initial = None
+
+        def _bc_type(side):
+            bc = self.boundaries.get(side)
+            return bc[0] if bc is not None else None
+
+        outflow_layers = []
+        if nx > 2 and _bc_type("left") == "outflow":
+            outflow_layers.append(((slice(None), 1), cp.empty((ny,), dtype=cp.float32), cp.empty((ny,), dtype=cp.float32)))
+        if nx > 2 and _bc_type("right") == "outflow":
+            outflow_layers.append(((slice(None), -2), cp.empty((ny,), dtype=cp.float32), cp.empty((ny,), dtype=cp.float32)))
+        if ny > 2 and _bc_type("bottom") == "outflow":
+            outflow_layers.append(((1, slice(None)), cp.empty((nx,), dtype=cp.float32), cp.empty((nx,), dtype=cp.float32)))
+        if ny > 2 and _bc_type("top") == "outflow":
+            outflow_layers.append(((-2, slice(None)), cp.empty((nx,), dtype=cp.float32), cp.empty((nx,), dtype=cp.float32)))
+
+        for outer in range(n_outer):
+            self.apply_boundaries(after_projection=False)
+            u_face_x, v_face_y = self._build_projection_faces()
+            div_field = self._compute_flux_divergence_field_faces(
+                u_face_x, v_face_y,
+                out=div_work,
+                boundary_u_w=self.u[:, 0],
+                boundary_u_e=self.u[:, -1],
+                boundary_v_s=self.v[0, :],
+                boundary_v_n=self.v[-1, :],
+            )
+            cp.abs(div_field, out=div_abs_work)
+            div_mean_current = float(cp.sum(div_abs_work)) * inv_n_free
+            div_max_current = float(cp.max(div_abs_work))
+            div_eff_current = max(div_mean_current, div_max_current * 0.01)
+
+            if div_eff_current < tol_div and outer > 0:
+                converged = True
+                break
+
+            if modo_adaptativo and (outer > 0 or adaptive_outer0_cycles):
+                ratio = div_mean_current / max(tol_div, 1e-30)
+                if ratio < 1.0:
+                    cycles_this = 1
+                elif ratio < 2.0:
+                    cycles_this = max(2, n_cycles // 2)
+                else:
+                    cycles_this = n_cycles
+            else:
+                cycles_this = n_cycles
+
+            rhs.fill(cp.float32(0.0))
+            rhs[1:-1, 1:-1] = (rho_f / dt_f) * div_field[1:-1, 1:-1]
+            for out_slice, _u_buf, _v_buf in outflow_layers:
+                rhs[out_slice] = cp.float32(0.0)
+
+            if not hay_dirichlet:
+                vrs = cp.sum(rhs_flat_ref[free_flat] * self._vol_2d_flat[free_flat])
+                vt = cp.sum(self._vol_2d_flat[free_flat])
+                if float(vt) > 0:
+                    rhs_flat_ref[free_flat] -= vrs / vt
+
+            p_corr.fill(cp.float32(0.0))
+            if hay_dirichlet:
+                p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
+
+            do_guard_check = guard_residual_every_outer or (outer == 0)
+            if do_guard_check:
+                r_antes = _residual_norm(p_corr, rhs_flat_ref)
+
+            for cyc_i in range(cycles_this):
+                _v_cycle(p_corr, rhs, _dbg=(verbose and outer == 0 and cyc_i < 2))
+            total_cycles += cycles_this
+
+            if do_guard_check:
+                r_despues = _residual_norm(p_corr, rhs_flat_ref)
+                if r_despues > r_antes * 1.5:
+                    p_corr[:] = 0.0
+                    if hay_dirichlet:
+                        p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
+                    gs_sweeps = max(300, cycles_this * (pre_suavizado + post_suavizado + 50))
+                    _smooth(p_corr, rhs, 0, gs_sweeps)
+                    _aplicar_bc_mg(p_corr, 0)
+
+            if hay_dirichlet:
+                p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
+            if not hay_dirichlet:
+                p_free = p_corr[free]
+                if p_free.size > 0:
+                    p_corr -= cp.mean(p_free)
+
+            for out_slice, u_buf, v_buf in outflow_layers:
+                u_buf[:] = self.u[out_slice]
+                v_buf[:] = self.v[out_slice]
+            u_prev = self.u.copy()
+            v_prev = self.v.copy()
+            self._apply_pressure_correction_to_faces(u_face_x, v_face_y, p_corr, coef_f)
+            self.u, self.v = self._reconstruct_centered_velocity_from_faces(
+                u_face_x, v_face_y, u_prev=u_prev, v_prev=v_prev)
+            for out_slice, u_buf, v_buf in outflow_layers:
+                self.u[out_slice] = u_buf
+                self.v[out_slice] = v_buf
+
+            if apply_ibm_each_outer:
+                self.apply_boundaries(after_projection=True)
+                self.apply_ghost_cell_bc()
+                self.reforzar_impermeabilidad()
+
+            if bool(cp.isnan(self.u).any() or cp.isnan(self.v).any()):
+                if rollback_on_nan and u_initial is not None:
+                    self.u[:] = u_initial
+                    self.v[:] = v_initial
+                break
+
+            p_last[:] = p_corr
+            if rollback_on_nan and u_initial is not None:
+                u_initial[:] = self.u
+                v_initial[:] = self.v
+
+        if float(cp.max(cp.abs(p_last))) > 0.0:
+            self.p = p_last
+        self._aplicar_bc_presion_neumann()
+        if hay_dirichlet:
+            self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
+
+        self.apply_boundaries(after_projection=True)
+        self.apply_ghost_cell_bc()
+        self.reforzar_impermeabilidad()
+
+        if not hay_dirichlet:
+            try:
+                self._anchor_pressure()
+            except Exception:
+                pass
+
+        if compute_div_after:
+            div_after_field = self._compute_flux_divergence_field_uv(out=div_work)
+            cp.abs(div_after_field, out=div_abs_work)
+            div_mean_after = float(cp.sum(div_abs_work)) * inv_n_free
+            div_max_after = float(cp.max(div_abs_work))
+            div_eff_after = max(div_mean_after, div_max_after * 0.01)
+        else:
+            div_mean_after = div_mean_current
+            div_max_after = div_max_current
+            div_eff_after = div_eff_current
 
         return {
             'iterations': total_cycles,
@@ -4144,6 +5226,7 @@ class Mesh:
             eps = cp.float32(1e-12)
             denom = 0.5 * cp.float32(rho) * (U_ref**2) + eps
             cp_face = (p_wall - p_ref) / denom
+            cp_force_face = p_wall_force / denom
 
             Xb = x_face[boundary]; Yb = y_face[boundary]
             Cp_b = cp_face[boundary]
@@ -4165,12 +5248,123 @@ class Mesh:
                     "Tx_v_face": Tx_v[boundary], "Ty_v_face": Ty_v[boundary],
                     "ds_face": ds[boundary],
                     "nx_face": nx_face[boundary], "ny_face": ny_face[boundary],
+                    "x_face": x_face[boundary], "y_face": y_face[boundary],
                     "p_wall_face": p_wall[boundary],
                     "p_wall_force_face": p_wall_force[boundary],
                     "p_bg_face": p_bg_face[boundary],
+                    "Cp_raw_face": cp_face[boundary],
+                    "Cp_force_face": cp_force_face[boundary],
+                    "p_ref_cp": float(p_ref),
+                    "U_ref_cp": float(U_ref),
+                    "q_ref_cp": float(denom),
                 })
 
         return result
+
+    def extract_surface_force_audit(self, mu, rho=1.0, chord=1.0, n_extrap_layers=5):
+        """
+        Devuelve filas por cara usando exactamente la misma tracción de presión
+        que compute_drag_lift(). Sirve para reconciliar Cp, Lift_p y fuerzas.
+        """
+        data = self.compute_surface_forces_definitive(
+            mu=mu,
+            rho=rho,
+            return_per_face=True,
+            return_cp=True,
+            n_extrap_layers=n_extrap_layers,
+        )
+        Xb = data.get("x_face", data.get("Xb", None))
+        if Xb is None or Xb.size == 0:
+            return {"rows": [], "summary": {"n_surface_faces": 0}}
+
+        Yb = data.get("y_face", data.get("Yb"))
+        ds = data["ds_face"]
+        nx_f = data["nx_face"]
+        ny_f = data["ny_face"]
+        Tx_p = data["Tx_p_face"]
+        Ty_p = data["Ty_p_face"]
+        Tx_v = data["Tx_v_face"]
+        Ty_v = data["Ty_v_face"]
+
+        alpha_rad = self._get_freestream_angle_rad()
+        cos_a = cp.float32(np.cos(alpha_rad))
+        sin_a = cp.float32(np.sin(alpha_rad))
+        dFx_p = Tx_p * ds
+        dFy_p = Ty_p * ds
+        dFx_v = Tx_v * ds
+        dFy_v = Ty_v * ds
+        dLift_p = -dFx_p * sin_a + dFy_p * cos_a
+        dDrag_p = dFx_p * cos_a + dFy_p * sin_a
+        dLift_v = -dFx_v * sin_a + dFy_v * cos_a
+        dDrag_v = dFx_v * cos_a + dFy_v * sin_a
+
+        x_min = cp.min(Xb)
+        x_max = cp.max(Xb)
+        chord_geom = cp.maximum(x_max - x_min, cp.float32(1e-12))
+        x_over_c = cp.clip((Xb - x_min) / chord_geom, cp.float32(0.0), cp.float32(1.0))
+        side_upper = ny_f > cp.float32(0.0)
+
+        q_force = cp.float32(0.5 * float(rho)) * cp.float32(max(float(getattr(self, "_U_ref", 1.0)), 1e-30)) ** 2
+        q_force = cp.maximum(q_force, cp.float32(1e-30))
+        chord_f = cp.float32(max(float(chord), 1e-30))
+
+        arrays = {
+            "x": Xb,
+            "y": Yb,
+            "x_over_c": x_over_c,
+            "nx": nx_f,
+            "ny": ny_f,
+            "ds": ds,
+            "p_wall": data["p_wall_face"],
+            "p_wall_force": data["p_wall_force_face"],
+            "p_bg": data["p_bg_face"],
+            "Cp_raw": data["Cp_raw_face"],
+            "Cp_force": data["Cp_force_face"],
+            "dFx_p": dFx_p,
+            "dFy_p": dFy_p,
+            "dLift_p": dLift_p,
+            "dDrag_p": dDrag_p,
+            "dFx_v": dFx_v,
+            "dFy_v": dFy_v,
+            "dLift_v": dLift_v,
+            "dDrag_v": dDrag_v,
+            "side_upper": side_upper,
+        }
+        arrays_np = {k: cp.asnumpy(v).ravel() for k, v in arrays.items()}
+        order = np.argsort(arrays_np["x_over_c"])
+        rows = []
+        for face_id, pos in enumerate(order):
+            row = {"surface_face_id": int(face_id)}
+            for key, values in arrays_np.items():
+                value = values[pos]
+                if key == "side_upper":
+                    row["side"] = "upper" if bool(value) else "lower"
+                else:
+                    row[key] = float(value) if np.isfinite(value) else float("nan")
+            rows.append(row)
+
+        lift_p = float(cp.sum(dLift_p))
+        drag_p = float(cp.sum(dDrag_p))
+        lift_v = float(cp.sum(dLift_v))
+        drag_v = float(cp.sum(dDrag_v))
+        cp_force = data["Cp_force_face"]
+        summary = {
+            "n_surface_faces": int(Xb.size),
+            "Lift_p_audit": lift_p,
+            "Drag_p_audit": drag_p,
+            "Lift_v_audit": lift_v,
+            "Drag_v_audit": drag_v,
+            "Cl_from_Cp_force_consistent": lift_p / float(q_force * chord_f),
+            "Cd_from_Cp_force_consistent": drag_p / float(q_force * chord_f),
+            "Cp_force_min": float(cp.min(cp_force)),
+            "Cp_force_max": float(cp.max(cp_force)),
+            "Cp_force_consistent_range": float(cp.max(cp_force) - cp.min(cp_force)),
+            "pressure_debias_model": data.get("pressure_debias_model", ""),
+            "pressure_debias_a": data.get("pressure_debias_a", float("nan")),
+            "pressure_debias_b": data.get("pressure_debias_b", float("nan")),
+            "pressure_debias_c": data.get("pressure_debias_c", float("nan")),
+        }
+        return {"rows": rows, "summary": summary}
 
     def diagnose_surface_force_balance(self, mu, rho=1.0, n_extrap_layers=5,
                                        nbins=30, te_start=0.85,
@@ -4345,6 +5539,159 @@ class Mesh:
             "te_start": te_start,
             "nbins": nbins,
         }
+
+    def extract_le_ibm_diagnostics(self, mu=1.0, rho=1.0, x_over_c_max=0.15, n_layers=5):
+        """
+        Extrae muestras locales del borde de ataque para diagnosticar si IBM,
+        normales o proyeccion estan amortiguando el pico de succion.
+        """
+        boundary = self._solid_boundary_mask(use_diagonals=True)
+        if not bool(cp.any(boundary)):
+            return []
+
+        sd, nx_all, ny_all = self._signed_distance_and_normals()
+        JJ, II = self.JJ, self.II
+        eps = cp.float32(1e-12)
+
+        dx_loc = self.vol_x[cp.newaxis, :]
+        dy_loc = self.vol_y[:, cp.newaxis]
+        ds = cp.sqrt((ny_all * dx_loc) ** 2 + (nx_all * dy_loc) ** 2) + eps
+
+        j_face = JJ + cp.float32(0.5) * nx_all
+        i_face = II + cp.float32(0.5) * ny_all
+        x_face = self._bilinear_interpolate(self.XX, j_face, i_face)
+        y_face = self._bilinear_interpolate(self.YY, j_face, i_face)
+
+        x_b = x_face[boundary]
+        if x_b.size == 0:
+            return []
+        x_min = cp.min(x_b)
+        x_max = cp.max(x_b)
+        chord = cp.maximum(x_max - x_min, cp.float32(1e-12))
+        x_over_c = cp.clip((x_face - x_min) / chord, cp.float32(0.0), cp.float32(1.0))
+        le_mask = boundary & (x_over_c <= cp.float32(float(x_over_c_max)))
+        if not bool(cp.any(le_mask)):
+            return []
+
+        n_layers = int(max(1, n_layers))
+        positions = cp.array([0.5 + k for k in range(n_layers)], dtype=cp.float32)
+        p_layers = []
+        u_layers = []
+        v_layers = []
+        for pos in positions:
+            jf = JJ + pos * nx_all
+            iface = II + pos * ny_all
+            p_layers.append(self._bilinear_interpolate(self.p, jf, iface))
+            u_layers.append(self._bilinear_interpolate(self.u, jf, iface))
+            v_layers.append(self._bilinear_interpolate(self.v, jf, iface))
+
+        if n_layers >= 2:
+            n_layers_f = cp.float32(n_layers)
+            sum_x = cp.sum(positions)
+            sum_x2 = cp.sum(positions * positions)
+            sum_y = cp.zeros_like(p_layers[0], dtype=cp.float32)
+            sum_xy = cp.zeros_like(p_layers[0], dtype=cp.float32)
+            for k, pos in enumerate(positions):
+                sum_y += p_layers[k]
+                sum_xy += pos * p_layers[k]
+            denom_fit = n_layers_f * sum_x2 - sum_x * sum_x
+            denom_fit = cp.where(cp.abs(denom_fit) < cp.float32(1e-12), cp.float32(1e-12), denom_fit)
+            slope = (n_layers_f * sum_xy - sum_x * sum_y) / denom_fit
+            p_wall = (sum_y - slope * sum_x) / n_layers_f
+        else:
+            p_wall = p_layers[0]
+
+        band = max(1, int(min(self.nx, self.ny) * 0.05))
+        mask_edges = cp.zeros_like(self.p, dtype=cp.bool_)
+        mask_edges[:band, :] = True
+        mask_edges[-band:, :] = True
+        mask_edges[:, :band] = True
+        mask_edges[:, -band:] = True
+        mask_edges = mask_edges & (~self.solid)
+        try:
+            p_ref = cp.mean(self.p[mask_edges])
+            U_ref = cp.sqrt(cp.mean(self.u[mask_edges] ** 2 + self.v[mask_edges] ** 2))
+        except Exception:
+            p_ref = cp.mean(self.p)
+            U_ref = cp.sqrt(cp.mean(self.u ** 2 + self.v ** 2))
+        denom_cp = cp.float32(0.5 * float(rho)) * U_ref * U_ref + eps
+        cp_face = (p_wall - p_ref) / denom_cp
+
+        u_f = u_layers[0]
+        v_f = v_layers[0]
+        u_n = u_f * nx_all + v_f * ny_all
+        u_t = u_f * (-ny_all) + v_f * nx_all
+        u_abs = cp.sqrt(u_f * u_f + v_f * v_f)
+        u_ref_attr = cp.float32(max(float(getattr(self, "_U_ref", getattr(self, "_vel_ref", 1.0))), 1e-30))
+
+        direct_zero_full = cp.zeros_like(self.solid, dtype=cp.bool_)
+        image_x = cp.full_like(self.p, cp.nan, dtype=cp.float32)
+        image_y = cp.full_like(self.p, cp.nan, dtype=cp.float32)
+        image_in_fluid = cp.zeros_like(self.solid, dtype=cp.bool_)
+        if getattr(self, "_ghost_cell_ready", False):
+            if hasattr(self, "_ghost_direct_zero"):
+                direct_zero_full[self._ghost_i, self._ghost_j] = self._ghost_direct_zero
+            if hasattr(self, "_image_j_idx") and hasattr(self, "_image_i_idx"):
+                image_x[self._ghost_i, self._ghost_j] = self._bilinear_interpolate(
+                    self.XX, self._image_j_idx, self._image_i_idx
+                )
+                image_y[self._ghost_i, self._ghost_j] = self._bilinear_interpolate(
+                    self.YY, self._image_j_idx, self._image_i_idx
+                )
+                j0 = cp.clip(cp.floor(self._image_j_idx).astype(cp.int32), 0, self.nx - 2)
+                i0 = cp.clip(cp.floor(self._image_i_idx).astype(cp.int32), 0, self.ny - 2)
+                ok = (
+                    (~self.solid[i0, j0])
+                    & (~self.solid[i0, j0 + 1])
+                    & (~self.solid[i0 + 1, j0])
+                    & (~self.solid[i0 + 1, j0 + 1])
+                )
+                image_in_fluid[self._ghost_i, self._ghost_j] = ok
+
+        idx_i, idx_j = cp.where(le_mask)
+        cols = {
+            "i": idx_i,
+            "j": idx_j,
+            "x": x_face[le_mask],
+            "y": y_face[le_mask],
+            "x_over_c": x_over_c[le_mask],
+            "side_flag": ny_all[le_mask] > cp.float32(0.0),
+            "Cp": cp_face[le_mask],
+            "p_wall": p_wall[le_mask],
+            "u_t": u_t[le_mask],
+            "u_n": u_n[le_mask],
+            "u_abs": u_abs[le_mask],
+            "u_n_over_U": u_n[le_mask] / u_ref_attr,
+            "nx": nx_all[le_mask],
+            "ny": ny_all[le_mask],
+            "ds": ds[le_mask],
+            "sdf": sd[le_mask],
+            "is_ghost": self._ghost_mask[le_mask] if getattr(self, "_ghost_mask", None) is not None else cp.zeros_like(idx_i, dtype=cp.bool_),
+            "ghost_direct_zero": direct_zero_full[le_mask],
+            "image_x": image_x[le_mask],
+            "image_y": image_y[le_mask],
+            "image_in_fluid": image_in_fluid[le_mask],
+        }
+        for k in range(n_layers):
+            label = str(0.5 + k).replace(".", "p")
+            cols[f"p_layer_{label}"] = p_layers[k][le_mask]
+
+        cpu_cols = {k: cp.asnumpy(v).ravel() for k, v in cols.items()}
+        order = np.argsort(cpu_cols["x_over_c"])
+        rows = []
+        for pos in order:
+            row = {}
+            for key, values in cpu_cols.items():
+                value = values[pos]
+                if key in {"i", "j"}:
+                    row[key] = int(value)
+                elif key in {"side_flag", "is_ghost", "ghost_direct_zero", "image_in_fluid"}:
+                    row[key] = bool(value)
+                else:
+                    row[key] = float(value) if np.isfinite(value) else float("nan")
+            row["side"] = "upper" if row.pop("side_flag") else "lower"
+            rows.append(row)
+        return rows
 
     def update_cp_profile(self, mu=1.0, rho=1.0):
         """
@@ -4782,6 +6129,11 @@ def main(
     flujo_inclinado_signo=-1.0,
     flujo_inclinado_angulo_deg=None,
     flujo_inclinado_bc="auto_farfield",
+    projection_variant="legacy_centered",
+    mg_pressure_accumulation="outer_sum",
+    wall_pressure_gradient_mode="masked",
+    ibm_wall_mode="ghost_noslip",
+    ibm_sdf_smooth_passes=None,
 
     # Diagnóstico detallado de spikes (costoso; usar solo al depurar)
     debug_spikes=False,
@@ -4808,6 +6160,14 @@ def main(
 
     # Calcular viscosidad dinámica
     mu = rho * nu
+    projection_variant = str(projection_variant)
+    mg_pressure_accumulation = str(mg_pressure_accumulation)
+    wall_pressure_gradient_mode = str(wall_pressure_gradient_mode)
+    ibm_wall_mode = str(ibm_wall_mode)
+    if ibm_wall_mode not in {"ghost_noslip", "slip_only", "solid_zero_only"}:
+        raise ValueError(
+            "ibm_wall_mode debe ser 'ghost_noslip', 'slip_only' o 'solid_zero_only'"
+        )
 
     # Modo equivalente fisicamente a rotar la geometria, pero mas benigno para
     # IBM cartesiano: el perfil queda alineado con la malla y se inclina el inflow.
@@ -4928,6 +6288,12 @@ def main(
     mesh_gruesa = Mesh(Lx, Ly, p0, v0x, v0y, dx_min, dy_min if dy_min else dx_min,
                        usar_wale=usar_wale, X_1d=X_1d, Y_1d=Y_1d)
     mesh_gruesa._wale_Cw = float(wale_Cw)
+    mesh_gruesa.ibm_wall_mode = ibm_wall_mode
+    if ibm_sdf_smooth_passes is not None:
+        mesh_gruesa._sdf_smooth_passes = int(ibm_sdf_smooth_passes)
+    mesh_gruesa._validate_projection_variant(projection_variant)
+    mesh_gruesa._validate_mg_pressure_accumulation(mg_pressure_accumulation)
+    mesh_gruesa._validate_wall_pressure_gradient_mode(wall_pressure_gradient_mode)
 
     # Ángulo de geometría: en plan_polar o flujo inclinado se carga a 0° y se rota el inflow.
     alpha_geom = 0.0 if (
@@ -5015,8 +6381,17 @@ def main(
     mesh_gruesa.clvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.divvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.divvector_max = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_gruesa.divvector_flux = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_gruesa.divvector_flux_max = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_gruesa.wall_leak_mean_vector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_gruesa.wall_leak_max_vector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.clcdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
+    mesh_gruesa.projection_variant = projection_variant
+    mesh_gruesa.mg_pressure_accumulation = mg_pressure_accumulation
+    mesh_gruesa.wall_pressure_gradient_mode = wall_pressure_gradient_mode
+    mesh_gruesa.ibm_wall_mode = ibm_wall_mode
+    mesh_gruesa._projection_compat_error = float("nan")
 
     # Estadísticas
     print(f"Malla: {mesh_gruesa.nx} x {mesh_gruesa.ny} ({mesh_gruesa.nx * mesh_gruesa.ny:,} celdas)")
@@ -5139,6 +6514,7 @@ def main(
 
     # Velocidad libre (módulo constante)
     U_inf = np.sqrt(v0x**2 + v0y**2)
+    mesh_gruesa._U_ref = float(U_inf)
     alpha_actual = alpha_deg  # Ángulo de ataque actual
 
     # Registro polar: almacena Cd/Cl convergido para cada alpha
@@ -5161,6 +6537,10 @@ def main(
             mesh_gruesa.clvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.divvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.divvector_max = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
+            mesh_gruesa.divvector_flux = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
+            mesh_gruesa.divvector_flux_max = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
+            mesh_gruesa.wall_leak_mean_vector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
+            mesh_gruesa.wall_leak_max_vector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.clcdvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
 
@@ -5448,9 +6828,13 @@ def main(
                 rollback_on_nan=mg_rollback_on_nan,
                 compute_div_after=mg_compute_div_after,
                 usar_adjoint_correction=usar_adjoint_correction,
+                projection_variant=projection_variant,
+                mg_pressure_accumulation=mg_pressure_accumulation,
+                wall_pressure_gradient_mode=wall_pressure_gradient_mode,
                 verbose=False
             )
-            #mg_info = mesh_gruesa.project_cg(rho,dt_use,tol_div=divergencia, verbose=False)
+            #mg_info = mesh_gruesa.project_cg(rho, dt_use, tol_div=divergencia,
+            #                                 projection_variant=projection_variant, verbose=False)
 
 
             # Almacenar ciclos usados
@@ -5632,9 +7016,16 @@ def main(
                 mesh_gruesa.clcdvector[it // guardado] = ratio
                 _div_abs = mesh_gruesa.compute_divergence_mean()
                 _div_max_abs = mesh_gruesa.compute_divergence_max()
+                _div_flux_abs = mesh_gruesa.compute_divergence_flux_mean()
+                _div_flux_max_abs = mesh_gruesa.compute_divergence_flux_max()
+                _wall_leak_mean, _wall_leak_max = mesh_gruesa.compute_wall_leak_metrics()
                 _div_scale = float(U_inf) / max(float(chord), 1e-30)  # escala convectiva al chord
                 mesh_gruesa.divvector[it // guardado] = _div_abs / max(_div_scale, 1e-30)
                 mesh_gruesa.divvector_max[it // guardado] = _div_max_abs / max(_div_scale, 1e-30)
+                mesh_gruesa.divvector_flux[it // guardado] = _div_flux_abs / max(_div_scale, 1e-30)
+                mesh_gruesa.divvector_flux_max[it // guardado] = _div_flux_max_abs / max(_div_scale, 1e-30)
+                mesh_gruesa.wall_leak_mean_vector[it // guardado] = _wall_leak_mean
+                mesh_gruesa.wall_leak_max_vector[it // guardado] = _wall_leak_max
                 mesh_gruesa.update_cp_profile(mu, rho)
 
                 # Diagnóstico local de balance de Lift por zonas de cuerda
@@ -5792,6 +7183,10 @@ def main(
         mesh_gruesa.clvector = mesh_gruesa.clvector[:idx_final]
         mesh_gruesa.divvector = mesh_gruesa.divvector[:idx_final]
         mesh_gruesa.divvector_max = mesh_gruesa.divvector_max[:idx_final]
+        mesh_gruesa.divvector_flux = mesh_gruesa.divvector_flux[:idx_final]
+        mesh_gruesa.divvector_flux_max = mesh_gruesa.divvector_flux_max[:idx_final]
+        mesh_gruesa.wall_leak_mean_vector = mesh_gruesa.wall_leak_mean_vector[:idx_final]
+        mesh_gruesa.wall_leak_max_vector = mesh_gruesa.wall_leak_max_vector[:idx_final]
         mesh_gruesa.clcdvector = mesh_gruesa.clcdvector[:idx_final]
         mesh_gruesa.mg_cycles_vector = mesh_gruesa.mg_cycles_vector[:it+1]
         iteraciones = it  # Actualizar para reportes

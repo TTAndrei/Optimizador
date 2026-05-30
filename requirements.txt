@@ -15,6 +15,7 @@ scikit-learn
 
 # Utilidades
 tqdm
+pytest
 
 # GPU (CUDA 13.x - RTX 3070 Ti)
 # cupy instala la version correspondiente a tu CUDA:

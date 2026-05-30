@@ -7,8 +7,8 @@ consistencia entre lift de superficie, Cp LES y Cp inviscido.
 
 Uso:
     python scripts/diagnostico_lift_naca0012.py --quick
-    python scripts/diagnostico_lift_naca0012.py --full
-    python scripts/diagnostico_lift_naca0012.py --full --cases current_a10 strict_a10
+    python scripts/diagnostico_lift_naca0012.py --full --case-family reduced_compare
+    python scripts/diagnostico_lift_naca0012.py --full --case-family reduced_compare --cases reduced_fixed_flow_a0 reduced_fixed_flow_a5 reduced_fixed_flow_a10
 """
 from __future__ import annotations
 
@@ -44,6 +44,9 @@ OUT_JSON = OUT_DIR / "summary.json"
 OUT_CSV = OUT_DIR / "summary.csv"
 OUT_PLAN = OUT_DIR / "plan.json"
 OUT_VALIDATION = OUT_DIR / "validation.json"
+OUT_COMPARISON = OUT_DIR / "projection_variant_comparison.csv"
+OUT_LIFT_SUMMARY = OUT_DIR / "lift_diagnosis.csv"
+OUT_FIXED_ROTATED_COMPARISON = OUT_DIR / "fixed_vs_rotated_lift.csv"
 OUT_FIELDS = OUT_DIR / "fields"
 
 DISCARD_FRACS = (0.30, 0.50, 0.70)
@@ -111,11 +114,17 @@ VERY_STRICT_PROJECTION = {
     "mg_cycles_per_outer": 6,
 }
 
+VALID_PROJECTION_VARIANTS = ("legacy_centered", "compatible_flux")
+DEFAULT_PROJECTION_VARIANTS = ("legacy_centered",)
+FIXED_FLOW_POSITIVE_ALPHA_SIGN = 1.0
+
 
 @dataclass(frozen=True)
 class Case:
     case_id: str
+    base_case_id: str
     group: str
+    family: str
     description: str
     cfg: dict[str, Any]
     discard_frac: float = DEFAULT_DISCARD_FRAC
@@ -123,14 +132,14 @@ class Case:
 
 def _case(case_id: str, group: str, description: str,
           overrides: dict[str, Any] | None = None,
+          family: str | None = None,
           discard_frac: float = DEFAULT_DISCARD_FRAC) -> Case:
     cfg = {**BASE_CFG, **CURRENT_PROJECTION}
     if overrides:
         cfg.update(overrides)
-    return Case(case_id, group, description, cfg, discard_frac)
+    return Case(case_id, case_id, group, family or group, description, cfg, discard_frac)
 
-
-def build_cases(mode: str) -> list[Case]:
+def build_legacy_cases(mode: str) -> list[Case]:
     quick = [
         _case("current_a0", "baseline", "Configuracion actual, alpha=0",
               {"alpha_deg": 0.0}),
@@ -241,6 +250,79 @@ def build_cases(mode: str) -> list[Case]:
     return quick + full
 
 
+def projection_variant_suffix(variant: str) -> str:
+    if variant == "legacy_centered":
+        return "__pv_legacy"
+    if variant == "compatible_flux":
+        return "__pv_compat"
+    raise ValueError(f"projection_variant desconocido: {variant}")
+
+
+def projection_variant_short_label(variant: str) -> str:
+    if variant == "legacy_centered":
+        return "legacy"
+    if variant == "compatible_flux":
+        return "compat"
+    return str(variant)
+
+
+def build_reduced_compare_templates(mode: str) -> list[Case]:
+    alphas = [0.0] if mode == "quick" else [0.0, 5.0, 10.0]
+    templates: list[Case] = []
+    for alpha in alphas:
+        alpha_tag = int(alpha) if float(alpha).is_integer() else alpha
+        templates.append(_case(
+            f"reduced_fixed_flow_a{alpha_tag}",
+            "reduced_compare",
+            f"Perfil fijo + flujo inclinado +alpha, alpha={alpha:g}",
+            family="fixed_flow",
+            overrides={
+                "alpha_deg": alpha,
+                "usar_flujo_inclinado": True,
+                "flujo_inclinado_signo": FIXED_FLOW_POSITIVE_ALPHA_SIGN,
+                "flujo_inclinado_bc": "auto_farfield",
+            },
+        ))
+        templates.append(_case(
+            f"reduced_rotated_geom_a{alpha_tag}",
+            "reduced_compare",
+            f"Geometria girada + flujo horizontal, alpha={alpha:g}",
+            family="rotated_geom",
+            overrides={"alpha_deg": alpha},
+        ))
+    return templates
+
+
+def expand_projection_variants(cases: list[Case], projection_variants: list[str]) -> list[Case]:
+    expanded: list[Case] = []
+    for case in cases:
+        for variant in projection_variants:
+            suffix = projection_variant_suffix(variant)
+            cfg = dict(case.cfg)
+            cfg["projection_variant"] = variant
+            expanded.append(Case(
+                case_id=f"{case.base_case_id}{suffix}",
+                base_case_id=case.base_case_id,
+                group=case.group,
+                family=case.family,
+                description=f"{case.description} [{projection_variant_short_label(variant)}]",
+                cfg=cfg,
+                discard_frac=case.discard_frac,
+            ))
+    return expanded
+
+
+def build_cases(mode: str, case_family: str, projection_variants: list[str]) -> list[Case]:
+    if case_family == "reduced_compare":
+        return expand_projection_variants(
+            build_reduced_compare_templates(mode),
+            projection_variants,
+        )
+    if case_family == "legacy_full":
+        return expand_projection_variants(build_legacy_cases(mode), projection_variants)
+    raise SystemExit(f"case_family no soportada: {case_family}")
+
+
 def load_done() -> dict[str, dict[str, Any]]:
     if not OUT_JSON.exists():
         return {}
@@ -264,9 +346,10 @@ def save_csv(done: dict[str, dict[str, Any]], cases: list[Case]) -> None:
     if not rows:
         return
     fixed = [
-        "case_id", "group", "status", "description",
+        "case_id", "base_case_id", "group", "family", "status", "description",
         "alpha_deg", "Re", "dx_min", "iteraciones", "discard_frac",
-        "usar_wale", "wale_Cw", "projection_label", "usar_adjoint_correction",
+        "usar_wale", "wale_Cw", "projection_label", "projection_variant",
+        "usar_adjoint_correction",
         "usar_flujo_inclinado", "flujo_inclinado_signo",
         "flujo_inclinado_angulo_deg", "flujo_inclinado_bc",
         "nx", "ny", "n_cells",
@@ -275,7 +358,12 @@ def save_csv(done: dict[str, dict[str, Any]], cases: list[Case]) -> None:
         "Ef_mean", "Ef_final",
         "Cl_p", "Cl_v", "Cd_p", "Cd_v",
         "Cl_from_Cp_LES", "Cl_bl", "Cd_bl", "Ef_bl", "Cl_inviscid",
+        "Cl_final_over_inviscid", "Cl_from_Cp_LES_over_inviscid",
+        "Cl_final_minus_Cp_LES", "lift_probable_cause",
         "div_mean", "div_final", "div_max_mean", "div_max_final",
+        "div_flux_mean", "div_flux_final", "div_flux_max", "div_flux_max_final",
+        "wall_leak_mean", "wall_leak_mean_final", "wall_leak_max", "wall_leak_max_final",
+        "projection_compat_error",
         "mg_cycles_mean", "mg_cycles_max", "nu_t_over_nu_mean",
         "nu_t_over_nu_max", "elapsed_s", "its_per_s",
         "field_velocity_final", "field_vectors_final", "field_zoom_final",
@@ -297,7 +385,9 @@ def save_plan(done: dict[str, dict[str, Any]], cases: list[Case]) -> None:
         entries.append({
             "n": i,
             "case_id": c.case_id,
+            "base_case_id": c.base_case_id,
             "group": c.group,
+            "family": c.family,
             "status": row.get("status", "pending"),
             "description": c.description,
             "alpha_deg": c.cfg["alpha_deg"],
@@ -306,6 +396,7 @@ def save_plan(done: dict[str, dict[str, Any]], cases: list[Case]) -> None:
             "usar_wale": c.cfg["usar_wale"],
             "wale_Cw": c.cfg.get("wale_Cw"),
             "projection_label": projection_label(c.cfg),
+            "projection_variant": c.cfg.get("projection_variant", "legacy_centered"),
             "usar_flujo_inclinado": bool(c.cfg.get("usar_flujo_inclinado", False)),
             "flujo_inclinado_signo": c.cfg.get("flujo_inclinado_signo"),
             "flujo_inclinado_angulo_deg": c.cfg.get("flujo_inclinado_angulo_deg"),
@@ -324,21 +415,23 @@ def save_plan(done: dict[str, dict[str, Any]], cases: list[Case]) -> None:
 
 
 def projection_label(cfg: dict[str, Any]) -> str:
+    variant = str(cfg.get("projection_variant", "legacy_centered"))
+    variant_tag = projection_variant_short_label(variant)
     if cfg.get("usar_adjoint_correction"):
-        return "strict_adjoint"
+        return f"strict_adjoint__pv_{variant_tag}"
     if cfg.get("mg_modo_turbo_hd"):
-        return "turbo_hd"
+        return f"turbo_hd__pv_{variant_tag}"
     if cfg.get("mg_modo_turbo_ultra"):
-        return "turbo_ultra"
+        return f"turbo_ultra__pv_{variant_tag}"
     div = float(cfg.get("divergencia", 0.10))
     outer = int(cfg.get("mg_max_outer", 8))
     cycles = int(cfg.get("mg_cycles_per_outer", 5))
     levels = int(cfg.get("mg_niveles_max", 1))
     if div <= 0.005 and outer >= 12:
-        return f"very_strict_l{levels}"
+        return f"very_strict_l{levels}__pv_{variant_tag}"
     if div <= 0.01 and outer >= 8:
-        return f"strict_l{levels}"
-    return f"custom_l{levels}_div{div:g}_o{outer}_c{cycles}"
+        return f"strict_l{levels}__pv_{variant_tag}"
+    return f"custom_l{levels}_div{div:g}_o{outer}_c{cycles}__pv_{variant_tag}"
 
 
 def _gpu_to_np(arr: Any) -> np.ndarray:
@@ -573,7 +666,9 @@ def run_case(case: Case) -> dict[str, Any]:
 
     row: dict[str, Any] = {
         "case_id": case.case_id,
+        "base_case_id": case.base_case_id,
         "group": case.group,
+        "family": case.family,
         "status": "ok",
         "description": case.description,
         "alpha_deg": alpha,
@@ -585,6 +680,7 @@ def run_case(case: Case) -> dict[str, Any]:
         "usar_wale": bool(cfg["usar_wale"]),
         "wale_Cw": finite_or_nan(cfg.get("wale_Cw")),
         "projection_label": projection_label(cfg),
+        "projection_variant": str(cfg.get("projection_variant", "legacy_centered")),
         "usar_adjoint_correction": bool(cfg.get("usar_adjoint_correction", False)),
         "usar_flujo_inclinado": bool(cfg.get("usar_flujo_inclinado", False)),
         "flujo_inclinado_signo": finite_or_nan(cfg.get("flujo_inclinado_signo")),
@@ -620,6 +716,24 @@ def run_case(case: Case) -> dict[str, Any]:
         "div_max_mean": div_max_mean,
         "div_max_final": div_max_final,
     })
+    div_flux_mean, div_flux_final, _ = summarize_vector(
+        getattr(mesh, "divvector_flux", None), case.discard_frac)
+    div_flux_max_mean, div_flux_max_final, _ = summarize_vector(
+        getattr(mesh, "divvector_flux_max", None), case.discard_frac)
+    wall_leak_mean, wall_leak_mean_final, _ = summarize_vector(
+        getattr(mesh, "wall_leak_mean_vector", None), case.discard_frac)
+    wall_leak_max, wall_leak_max_final, _ = summarize_vector(
+        getattr(mesh, "wall_leak_max_vector", None), case.discard_frac)
+    row.update({
+        "div_flux_mean": div_flux_mean,
+        "div_flux_final": div_flux_final,
+        "div_flux_max": div_flux_max_mean,
+        "div_flux_max_final": div_flux_max_final,
+        "wall_leak_mean": wall_leak_mean,
+        "wall_leak_mean_final": wall_leak_mean_final,
+        "wall_leak_max": wall_leak_max,
+        "wall_leak_max_final": wall_leak_max_final,
+    })
 
     cycles_np = _gpu_to_np(getattr(mesh, "mg_cycles_vector", None))
     cycles_np = cycles_np[np.isfinite(cycles_np)]
@@ -632,6 +746,11 @@ def run_case(case: Case) -> dict[str, Any]:
     nu_t_mean, nu_t_max = extract_nut_stats(mesh, nu)
     row["nu_t_over_nu_mean"] = nu_t_mean
     row["nu_t_over_nu_max"] = nu_t_max
+    try:
+        row["projection_compat_error"] = finite_or_nan(mesh.compute_projection_compatibility_error())
+    except Exception as exc:
+        row["projection_compat_error"] = float("nan")
+        row["projection_compat_warn"] = f"compat check failed: {exc}"
 
     bl: dict[str, Any] | None = None
     try:
@@ -693,7 +812,9 @@ def error_row(case: Case, exc: BaseException) -> dict[str, Any]:
     cfg = case.cfg
     return {
         "case_id": case.case_id,
+        "base_case_id": case.base_case_id,
         "group": case.group,
+        "family": case.family,
         "status": "error",
         "description": case.description,
         "alpha_deg": cfg.get("alpha_deg"),
@@ -702,6 +823,7 @@ def error_row(case: Case, exc: BaseException) -> dict[str, Any]:
         "usar_wale": cfg.get("usar_wale"),
         "wale_Cw": cfg.get("wale_Cw"),
         "projection_label": projection_label(cfg),
+        "projection_variant": str(cfg.get("projection_variant", "legacy_centered")),
         "usar_adjoint_correction": bool(cfg.get("usar_adjoint_correction", False)),
         "usar_flujo_inclinado": bool(cfg.get("usar_flujo_inclinado", False)),
         "flujo_inclinado_signo": cfg.get("flujo_inclinado_signo"),
@@ -738,9 +860,87 @@ def case_hint(row: dict[str, Any], done: dict[str, dict[str, Any]]) -> str:
     return ""
 
 
+def _same_sign(a: float, b: float, eps: float = 1e-6) -> bool:
+    if not math.isfinite(a) or not math.isfinite(b):
+        return False
+    if abs(a) < eps or abs(b) < eps:
+        return True
+    return (a > 0.0) == (b > 0.0)
+
+
+def _relative_lift_error(value: float, target: float) -> float:
+    if not math.isfinite(value) or not math.isfinite(target) or abs(target) < 1e-12:
+        return float("nan")
+    return abs(value - target) / abs(target)
+
+
+def lift_probable_cause(row: dict[str, Any], done: dict[str, dict[str, Any]]) -> str:
+    if row.get("status") != "ok":
+        return "case_failed"
+
+    alpha = finite_or_nan(row.get("alpha_deg"))
+    variant = str(row.get("projection_variant", "legacy_centered"))
+    family = str(row.get("family", row.get("group", "")))
+    cl_final = finite_or_nan(row.get("Cl_final"))
+    cl_cp = finite_or_nan(row.get("Cl_from_Cp_LES"))
+    cl_inv = finite_or_nan(row.get("Cl_inviscid"))
+    closure_ny = abs(finite_or_nan(row.get("surface_closure_ny_rel")))
+    perimeter_diff = abs(finite_or_nan(row.get("surface_perimeter_diff_rel")))
+
+    if family in {"fixed_flow", "rotated_geom"} and abs(alpha) > 1e-9:
+        counterpart_family = "rotated_geom" if family == "fixed_flow" else "fixed_flow"
+        counterpart = next(
+            (
+                candidate for candidate in done.values()
+                if candidate.get("status") == "ok"
+                and str(candidate.get("family", candidate.get("group", ""))) == counterpart_family
+                and abs(finite_or_nan(candidate.get("alpha_deg")) - alpha) < 1e-9
+                and str(candidate.get("projection_variant", "legacy_centered")) == variant
+            ),
+            None,
+        )
+        if counterpart is not None:
+            other_cl = finite_or_nan(counterpart.get("Cl_final"))
+            if math.isfinite(cl_final) and math.isfinite(other_cl) and not _same_sign(cl_final, other_cl):
+                return "sign_error_fixed_flow"
+
+    cp_err = _relative_lift_error(cl_cp, cl_inv)
+    if math.isfinite(cp_err) and cp_err > 0.45:
+        return "pressure_field_low_lift"
+
+    if math.isfinite(cl_final) and math.isfinite(cl_cp) and math.isfinite(cl_inv):
+        mismatch = abs(cl_final - cl_cp) / max(abs(cl_inv), 1e-12)
+        if mismatch > 0.25:
+            return "force_integration_mismatch"
+
+    if (
+        (math.isfinite(closure_ny) and closure_ny > 0.01)
+        or (math.isfinite(perimeter_diff) and perimeter_diff > 0.01)
+    ):
+        return "geometry_ibm_bias"
+
+    return "lift_consistent"
+
+
+def attach_lift_diagnostics(done: dict[str, dict[str, Any]]) -> None:
+    for row in done.values():
+        cl_final = finite_or_nan(row.get("Cl_final"))
+        cl_cp = finite_or_nan(row.get("Cl_from_Cp_LES"))
+        cl_inv = finite_or_nan(row.get("Cl_inviscid"))
+        if math.isfinite(cl_inv) and abs(cl_inv) > 1e-12:
+            row["Cl_final_over_inviscid"] = finite_or_nan(cl_final / cl_inv)
+            row["Cl_from_Cp_LES_over_inviscid"] = finite_or_nan(cl_cp / cl_inv)
+        else:
+            row["Cl_final_over_inviscid"] = float("nan")
+            row["Cl_from_Cp_LES_over_inviscid"] = float("nan")
+        row["Cl_final_minus_Cp_LES"] = finite_or_nan(cl_final - cl_cp)
+        row["lift_probable_cause"] = lift_probable_cause(row, done)
+
+
 def attach_hints(done: dict[str, dict[str, Any]]) -> None:
     for row in done.values():
         row["diagnosis_hint"] = case_hint(row, done)
+    attach_lift_diagnostics(done)
 
 
 def validate_results(done: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -754,7 +954,10 @@ def validate_results(done: dict[str, dict[str, Any]]) -> dict[str, Any]:
     add("no_failed_cases", len(error_rows) == 0,
         f"{len(error_rows)} casos fallidos")
 
-    key_cols = ["Cl_mean", "Cd_mean", "Cl_p", "Cl_v", "Cl_from_Cp_LES"]
+    key_cols = [
+        "Cl_mean", "Cd_mean", "Cl_p", "Cl_v", "Cl_from_Cp_LES",
+        "div_flux_final", "wall_leak_max_final",
+    ]
     bad = []
     for row in ok_rows:
         for key in key_cols:
@@ -769,6 +972,46 @@ def validate_results(done: dict[str, dict[str, Any]]) -> dict[str, Any]:
         cl0 = finite_or_nan(row0.get("Cl_mean"))
         add("alpha0_symmetry", abs(cl0) < 0.02,
             f"current_a0 Cl_mean={cl0:+.6f}")
+
+    reduced_zero_rows = [
+        r for r in ok_rows
+        if r.get("group") == "reduced_compare"
+        and abs(finite_or_nan(r.get("alpha_deg"))) < 1e-9
+    ]
+    if reduced_zero_rows:
+        bad_zero = [
+            f"{r['case_id']} Cl_final={finite_or_nan(r.get('Cl_final')):+.6f}"
+            for r in reduced_zero_rows
+            if abs(finite_or_nan(r.get("Cl_final"))) >= 0.02
+        ]
+        add("reduced_alpha0_near_zero", len(bad_zero) == 0,
+            ", ".join(bad_zero[:8]) if bad_zero else "alpha=0 con |Cl_final| < 0.02")
+
+    fixed_rotated_pairs: dict[tuple[float, str], dict[str, dict[str, Any]]] = {}
+    for row in ok_rows:
+        family = str(row.get("family", row.get("group", "")))
+        if family not in {"fixed_flow", "rotated_geom"}:
+            continue
+        alpha = finite_or_nan(row.get("alpha_deg"))
+        if abs(alpha) < 1e-9:
+            continue
+        variant = str(row.get("projection_variant", "legacy_centered"))
+        fixed_rotated_pairs.setdefault((alpha, variant), {})[family] = row
+    sign_bad = []
+    for (alpha, variant), pair in fixed_rotated_pairs.items():
+        fixed = pair.get("fixed_flow")
+        rotated = pair.get("rotated_geom")
+        if fixed is None or rotated is None:
+            continue
+        fixed_cl = finite_or_nan(fixed.get("Cl_final"))
+        rotated_cl = finite_or_nan(rotated.get("Cl_final"))
+        if not _same_sign(fixed_cl, rotated_cl):
+            sign_bad.append(
+                f"alpha={alpha:g} {variant}: fixed={fixed_cl:+.6f}, rotated={rotated_cl:+.6f}"
+            )
+    if fixed_rotated_pairs:
+        add("fixed_flow_rotated_same_lift_sign", len(sign_bad) == 0,
+            ", ".join(sign_bad[:8]) if sign_bad else "fixed_flow y rotated_geom tienen el mismo signo")
 
     inv_rows = [
         r for r in ok_rows
@@ -793,6 +1036,139 @@ def validate_results(done: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "n_ok_rows": len(ok_rows),
         "n_error_rows": len(error_rows),
     }
+
+
+def save_projection_variant_comparison(done: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [r for r in done.values() if r.get("status") == "ok"]
+    grouped: dict[tuple[str, float], dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        family = str(row.get("family", row.get("group", "")))
+        alpha = finite_or_nan(row.get("alpha_deg"))
+        variant = str(row.get("projection_variant", "legacy_centered"))
+        grouped.setdefault((family, alpha), {})[variant] = row
+
+    out_rows: list[dict[str, Any]] = []
+    for (family, alpha), variants in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1])):
+        legacy = variants.get("legacy_centered")
+        compat = variants.get("compatible_flux")
+        if legacy is None and compat is None:
+            continue
+        out_rows.append({
+            "family": family,
+            "alpha_deg": alpha,
+            "Cl_final_legacy": finite_or_nan((legacy or {}).get("Cl_final")),
+            "Cl_final_compat": finite_or_nan((compat or {}).get("Cl_final")),
+            "Cd_final_legacy": finite_or_nan((legacy or {}).get("Cd_final")),
+            "Cd_final_compat": finite_or_nan((compat or {}).get("Cd_final")),
+            "div_flux_final_legacy": finite_or_nan((legacy or {}).get("div_flux_final")),
+            "div_flux_final_compat": finite_or_nan((compat or {}).get("div_flux_final")),
+            "wall_leak_max_legacy": finite_or_nan((legacy or {}).get("wall_leak_max_final")),
+            "wall_leak_max_compat": finite_or_nan((compat or {}).get("wall_leak_max_final")),
+        })
+
+    if out_rows:
+        fieldnames = list(out_rows[0].keys())
+        with OUT_COMPARISON.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(out_rows)
+    return out_rows
+
+
+def save_lift_diagnosis(done: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [
+        r for r in done.values()
+        if r.get("status") == "ok"
+        and str(r.get("family", r.get("group", ""))) in {"fixed_flow", "rotated_geom"}
+    ]
+    out_rows: list[dict[str, Any]] = []
+    for row in sorted(
+        rows,
+        key=lambda r: (
+            finite_or_nan(r.get("alpha_deg")),
+            str(r.get("family", "")),
+            str(r.get("projection_variant", "legacy_centered")),
+        ),
+    ):
+        out_rows.append({
+            "case_id": row.get("case_id"),
+            "family": row.get("family"),
+            "alpha_deg": finite_or_nan(row.get("alpha_deg")),
+            "projection_variant": row.get("projection_variant", "legacy_centered"),
+            "Cl_final": finite_or_nan(row.get("Cl_final")),
+            "Cl_from_Cp_LES": finite_or_nan(row.get("Cl_from_Cp_LES")),
+            "Cl_inviscid": finite_or_nan(row.get("Cl_inviscid")),
+            "Cl_final_over_inviscid": finite_or_nan(row.get("Cl_final_over_inviscid")),
+            "Cl_from_Cp_LES_over_inviscid": finite_or_nan(row.get("Cl_from_Cp_LES_over_inviscid")),
+            "Cl_final_minus_Cp_LES": finite_or_nan(row.get("Cl_final_minus_Cp_LES")),
+            "Cl_p": finite_or_nan(row.get("Cl_p")),
+            "Cl_v": finite_or_nan(row.get("Cl_v")),
+            "surface_closure_ny_rel": finite_or_nan(row.get("surface_closure_ny_rel")),
+            "surface_perimeter_diff_rel": finite_or_nan(row.get("surface_perimeter_diff_rel")),
+            "lift_probable_cause": row.get("lift_probable_cause", ""),
+        })
+
+    if out_rows:
+        fieldnames = list(out_rows[0].keys())
+        with OUT_LIFT_SUMMARY.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(out_rows)
+    return out_rows
+
+
+def save_fixed_vs_rotated_comparison(done: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [r for r in done.values() if r.get("status") == "ok"]
+    grouped: dict[tuple[float, str], dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        family = str(row.get("family", row.get("group", "")))
+        if family not in {"fixed_flow", "rotated_geom"}:
+            continue
+        alpha = finite_or_nan(row.get("alpha_deg"))
+        variant = str(row.get("projection_variant", "legacy_centered"))
+        grouped.setdefault((alpha, variant), {})[family] = row
+
+    out_rows: list[dict[str, Any]] = []
+    for (alpha, variant), pair in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1])):
+        fixed = pair.get("fixed_flow")
+        rotated = pair.get("rotated_geom")
+        if fixed is None or rotated is None:
+            continue
+        fixed_cp = finite_or_nan(fixed.get("Cl_from_Cp_LES"))
+        rotated_cp = finite_or_nan(rotated.get("Cl_from_Cp_LES"))
+        fixed_cl = finite_or_nan(fixed.get("Cl_final"))
+        rotated_cl = finite_or_nan(rotated.get("Cl_final"))
+        fixed_closure = finite_or_nan(fixed.get("surface_closure_ny_rel"))
+        rotated_closure = finite_or_nan(rotated.get("surface_closure_ny_rel"))
+        fixed_perimeter = finite_or_nan(fixed.get("surface_perimeter_diff_rel"))
+        rotated_perimeter = finite_or_nan(rotated.get("surface_perimeter_diff_rel"))
+        out_rows.append({
+            "alpha_deg": alpha,
+            "projection_variant": variant,
+            "fixed_case_id": fixed.get("case_id"),
+            "rotated_case_id": rotated.get("case_id"),
+            "Cl_from_Cp_LES_fixed": fixed_cp,
+            "Cl_from_Cp_LES_rotated": rotated_cp,
+            "dCl_from_Cp_LES_fixed_minus_rotated": finite_or_nan(fixed_cp - rotated_cp),
+            "Cl_final_fixed": fixed_cl,
+            "Cl_final_rotated": rotated_cl,
+            "dCl_final_fixed_minus_rotated": finite_or_nan(fixed_cl - rotated_cl),
+            "surface_closure_ny_rel_fixed": fixed_closure,
+            "surface_closure_ny_rel_rotated": rotated_closure,
+            "d_surface_closure_ny_rel_fixed_minus_rotated": finite_or_nan(fixed_closure - rotated_closure),
+            "surface_perimeter_diff_rel_fixed": fixed_perimeter,
+            "surface_perimeter_diff_rel_rotated": rotated_perimeter,
+            "d_surface_perimeter_diff_rel_fixed_minus_rotated": finite_or_nan(fixed_perimeter - rotated_perimeter),
+            "same_Cl_final_sign": _same_sign(fixed_cl, rotated_cl),
+        })
+
+    if out_rows:
+        fieldnames = list(out_rows[0].keys())
+        with OUT_FIXED_ROTATED_COMPARISON.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(out_rows)
+    return out_rows
 
 
 def generate_figures(done: dict[str, dict[str, Any]]) -> None:
@@ -861,8 +1237,14 @@ def select_cases(cases: list[Case], ids: list[str] | None) -> list[Case]:
     if not ids:
         return cases
     wanted = set(ids)
-    selected = [c for c in cases if c.case_id in wanted]
-    missing = sorted(wanted - {c.case_id for c in selected})
+    selected = [c for c in cases if c.case_id in wanted or c.base_case_id in wanted]
+    matched: set[str] = set()
+    for c in selected:
+        if c.case_id in wanted:
+            matched.add(c.case_id)
+        if c.base_case_id in wanted:
+            matched.add(c.base_case_id)
+    missing = sorted(wanted - matched)
     if missing:
         raise SystemExit(f"Case ids no encontrados: {', '.join(missing)}")
     return selected
@@ -878,7 +1260,14 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--full", action="store_true",
                       help="ejecuta toda la matriz diagnostica")
     parser.add_argument("--cases", nargs="*",
-                        help="limita la ejecucion a case_id concretos")
+                        help="limita la ejecucion a case_id concretos (base o expandido)")
+    parser.add_argument("--case-family", default="reduced_compare",
+                        choices=["reduced_compare", "legacy_full"],
+                        help="familia de casos a ejecutar")
+    parser.add_argument("--projection-variants", nargs="+",
+                        default=list(DEFAULT_PROJECTION_VARIANTS),
+                        choices=list(VALID_PROJECTION_VARIANTS),
+                        help="variantes de proyeccion a expandir por cada caso base")
     parser.add_argument("--force", action="store_true",
                         help="recalcula los casos aunque ya esten en summary.json")
     parser.add_argument("--list-cases", action="store_true",
@@ -909,7 +1298,7 @@ def main() -> int:
     mode = "full" if args.full else "quick"
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    all_cases = build_cases(mode)
+    all_cases = build_cases(mode, args.case_family, list(args.projection_variants))
     cases = select_cases(all_cases, args.cases)
 
     if args.list_cases:
@@ -919,11 +1308,13 @@ def main() -> int:
                 f"alpha={float(c.cfg['alpha_deg']):>5.1f} "
                 f"dx={float(c.cfg['dx_min']):.4g} "
                 f"iter={int(c.cfg['iteraciones']):>5d} "
+                f"family={c.family:<12} "
                 f"wale={int(bool(c.cfg['usar_wale']))} "
                 f"Cw={float(c.cfg.get('wale_Cw', float('nan'))):.4g} "
                 f"fixed_geom={int(bool(c.cfg.get('usar_flujo_inclinado', False)))} "
                 f"flow_sign={float(c.cfg.get('flujo_inclinado_signo', float('nan'))):>4.1f} "
                 f"flow_bc={c.cfg.get('flujo_inclinado_bc', '')} "
+                f"pv={c.cfg.get('projection_variant', 'legacy_centered')} "
                 f"proj={projection_label(c.cfg)}"
             )
         return 0
@@ -938,7 +1329,7 @@ def main() -> int:
 
     print(f"\nDiagnostico lift NACA0012 Re=1e6")
     print(f"Salida: {OUT_DIR.relative_to(ROOT_DIR)}")
-    print(f"Modo: {mode} | casos seleccionados: {len(cases)}")
+    print(f"Modo: {mode} | family={args.case_family} | casos seleccionados: {len(cases)}")
 
     for idx, case in enumerate(cases, 1):
         if not args.force and done.get(case.case_id, {}).get("status") == "ok":
@@ -952,6 +1343,8 @@ def main() -> int:
                 f"  Cl={row['Cl_mean']:+.5f} Cd={row['Cd_mean']:.5f} "
                 f"Cl_inv={row.get('Cl_inviscid', float('nan')):+.5f} "
                 f"div={row.get('div_mean', float('nan')):.4g} "
+                f"div_flux={row.get('div_flux_final', float('nan')):.4g} "
+                f"wall={row.get('wall_leak_max_final', float('nan')):.4g} "
                 f"({row['elapsed_s']:.1f}s)"
             )
         except Exception as exc:
@@ -972,11 +1365,21 @@ def main() -> int:
     if not args.no_figures:
         generate_figures(done)
 
+    comparison_rows = save_projection_variant_comparison(done)
+    lift_rows = save_lift_diagnosis(done)
+    fixed_rotated_rows = save_fixed_vs_rotated_comparison(done)
+
     validation = validate_results({cid: done[cid] for cid in done if cid in {c.case_id for c in cases}})
     with OUT_VALIDATION.open("w", encoding="utf-8") as f:
         json.dump(validation, f, indent=2, ensure_ascii=True)
 
     print(f"\nResumen: {OUT_CSV.relative_to(ROOT_DIR)}")
+    if comparison_rows:
+        print(f"Comparativa variantes: {OUT_COMPARISON.relative_to(ROOT_DIR)}")
+    if lift_rows:
+        print(f"Diagnostico lift: {OUT_LIFT_SUMMARY.relative_to(ROOT_DIR)}")
+    if fixed_rotated_rows:
+        print(f"Fixed vs rotated: {OUT_FIXED_ROTATED_COMPARISON.relative_to(ROOT_DIR)}")
     print(f"Validacion: {'OK' if validation['ok'] else 'FALLO'}")
     for check in validation["checks"]:
         mark = "OK" if check["ok"] else "FAIL"
