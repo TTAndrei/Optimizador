@@ -13,10 +13,14 @@ from pathlib import Path
 import numpy as np
 import cupy as cp
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(ROOT_DIR))
 from Simulador2D import main as simular_main
+from sim_defaults import PROJECTION_DEFAULTS, add_force_consistent_metrics
 
-OUT = Path(__file__).parent / "benchmark_mg_results.json"
+OUT = ROOT_DIR / "results" / "benchmark_mg_results.json"
 
 # Configs base: combinaciones de max_outer / cycles / div
 BASE = [
@@ -50,6 +54,7 @@ CFG_BASE = dict(
     mostrar_malla=False, stop_on_convergence=False,
     corregir_deriva_vertical=False,
     usar_wale=True, wale_Cw=0.15,
+    **PROJECTION_DEFAULTS,
 )
 
 ITER_N = int(os.environ.get("ITER", "500"))
@@ -90,6 +95,9 @@ def run_config(cfg: dict) -> dict:
         id=cfg["id"], desc=cfg["desc"],
         max_outer=cfg["max_outer"], cycles_per_outer=cfg["cycles"],
         divergencia=cfg["div"], niveles=cfg["niveles"],
+        projection_variant=kwargs["projection_variant"],
+        mg_pressure_accumulation=kwargs["mg_pressure_accumulation"],
+        wall_pressure_gradient_mode=kwargs["wall_pressure_gradient_mode"],
         its_per_sec=round(its_per_sec, 2),
         div_mean_norm=round(float(np.mean(div_mean_ss)), 4) if len(div_mean_ss) else None,
         div_max_norm=round(float(np.mean(div_max_ss)), 4)   if len(div_max_ss)  else None,
@@ -98,6 +106,7 @@ def run_config(cfg: dict) -> dict:
         Cd_mean=round(float(np.mean(cd_ss)), 4) if len(cd_ss) else None,
         Cd_std=round(float(np.std(cd_ss)),  4)  if len(cd_ss) else None,
     )
+    add_force_consistent_metrics(out, mesh, kwargs)
 
     try:
         _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -105,11 +114,14 @@ def run_config(cfg: dict) -> dict:
             sys.path.insert(0, _root)
         from bl_correction import compute_corrected_forces
         bl = compute_corrected_forces(mesh, filepath=CFG_BASE["filepath"],
-                                      alpha_deg=float(CFG_BASE["alpha_deg"]))
+                                      alpha_deg=float(CFG_BASE["alpha_deg"]),
+                                      Cd_p_source="both")
         out.update({
             "Cl_bl":      round(float(bl["Cl"]), 4),
             "Cd_bl":      round(float(bl["Cd"]), 4),
+            "Cd_bl_geom": round(float(bl.get("Cd_bl_geom", float("nan"))), 4),
             "Cd_p_bl":    round(float(bl["Cd_p"]), 4),
+            "Cd_p_geom":  round(float(bl.get("Cd_p_geom", float("nan"))), 4),
             "Cd_visc_bl": round(float(bl["Cd_visc"]), 4),
             "Ef_bl":      round(float(bl["Ef"]), 4),
         })
@@ -122,7 +134,7 @@ def run_config(cfg: dict) -> dict:
 
 
 def print_table(results: list[dict]) -> None:
-    header = f"{'ID':<7} {'Desc':<26} {'mo':>3} {'cpo':>4} {'div':>6} {'lvl':>3} {'it/s':>6} {'div_mean':>9} {'div_max':>9} {'Cl':>7} {'Cd':>7}"
+    header = f"{'ID':<7} {'Desc':<26} {'mo':>3} {'cpo':>4} {'div':>6} {'lvl':>3} {'it/s':>6} {'div_mean':>9} {'div_max':>9} {'ClF':>7} {'Cd':>7}"
     print("\n" + "="*len(header))
     print(header)
     print("-"*len(header))
@@ -130,7 +142,7 @@ def print_table(results: list[dict]) -> None:
         print(f"{r['id']:<7} {r['desc']:<26} {r['max_outer']:>3} {r['cycles_per_outer']:>4} "
               f"{r['divergencia']:>6.3f} {r['niveles']:>3} {r['its_per_sec']:>6.1f} "
               f"{r['div_mean_norm'] or 0:>9.4f} {r['div_max_norm'] or 0:>9.3f} "
-              f"{r['Cl_mean'] or 0:>7.4f} {r['Cd_mean'] or 0:>7.4f}")
+              f"{r.get('Cl_from_Cp_force_consistent', r.get('Cl_mean')) or 0:>7.4f} {r['Cd_mean'] or 0:>7.4f}")
     print("="*len(header))
     print("Columnas: mo=max_outer  cpo=cycles_per_outer  div=tol_div_rel  lvl=mg_niveles_max")
     print("div_mean/max normalizados por U_inf/chord\n")
@@ -147,7 +159,8 @@ def main() -> None:
             r = run_config(cfg)
             results.append(r)
             print(f"  -> it/s={r['its_per_sec']:.1f}  div_mean={r['div_mean_norm']:.4f}  "
-                  f"div_max={r['div_max_norm']:.3f}  Cl={r['Cl_mean']:.4f}  Cd={r['Cd_mean']:.4f}",
+                  f"div_max={r['div_max_norm']:.3f}  "
+                  f"ClF={r.get('Cl_from_Cp_force_consistent', r['Cl_mean']):.4f}  Cd={r['Cd_mean']:.4f}",
                   flush=True)
         except Exception as e:
             import traceback

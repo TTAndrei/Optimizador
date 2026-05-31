@@ -10,15 +10,24 @@ Salida:
 from __future__ import annotations
 import csv
 import json
+import os
+import sys
 from pathlib import Path
+
+ROOT      = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TMPDIR", "/tmp")) / "matplotlib-cache"))
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-ROOT      = Path(__file__).resolve().parent.parent
+from sim_defaults import preferred_cl_column, preferred_cd_column
+
 BENCH     = ROOT / "results" / "benchmark_mg_results.json"
 XFOIL     = ROOT / "data" / "ComparativasReales" / "NACA0012_100k_Xfoil.csv"
-OUT_DIR   = ROOT / "results"
+OUT_DIR   = ROOT / "results" / "comparativas"
 ALPHA_REF = 10.0
 
 NIVEL_COLORS = {0: "#2196F3", 1: "#FF5722", 2: "#4CAF50"}
@@ -57,7 +66,21 @@ def load_xfoil_at_alpha(alpha_target: float) -> dict:
 def load_bench() -> list[dict]:
     with open(BENCH, encoding="utf-8") as f:
         rows = json.load(f)
-    return [r for r in rows if "error" not in r and r.get("Cl_mean") is not None]
+    clean = []
+    for r in rows:
+        if "error" in r:
+            continue
+        cl_key = preferred_cl_column(set(r.keys()))
+        cd_key = preferred_cd_column(set(r.keys()), prefer_bl=True)
+        if r.get(cl_key) is None or r.get(cd_key) is None:
+            continue
+        rr = dict(r)
+        rr["Cl_eval"] = rr[cl_key]
+        rr["Cd_eval"] = rr[cd_key]
+        rr["Cl_eval_column"] = cl_key
+        rr["Cd_eval_column"] = cd_key
+        clean.append(rr)
+    return clean
 
 
 def split_id(id_str: str) -> tuple[str, int]:
@@ -73,8 +96,8 @@ def fig_comparacion(rows: list[dict], ref: dict) -> None:
 
     by_id = {r["id"]: r for r in rows}
     metrics = [
-        ("Cl_mean", "Cl",    ref["Cl"]),
-        ("Cd_mean", "Cd",    ref["Cd"]),
+        ("Cl_eval", "Cl",    ref["Cl"]),
+        ("Cd_eval", "Cd",    ref["Cd"]),
         ("Ef",      "Cl/Cd", ref["Ef"]),
     ]
 
@@ -94,8 +117,8 @@ def fig_comparacion(rows: list[dict], ref: dict) -> None:
                 if r is None:
                     vals.append(np.nan)
                 elif key == "Ef":
-                    vals.append(r["Cl_mean"] / r["Cd_mean"]
-                                if r.get("Cd_mean") else np.nan)
+                    vals.append(r["Cl_eval"] / r["Cd_eval"]
+                                if r.get("Cd_eval") else np.nan)
                 else:
                     vals.append(r.get(key, np.nan))
             ax.bar(x + (j - 1) * w, vals, w,
@@ -109,6 +132,7 @@ def fig_comparacion(rows: list[dict], ref: dict) -> None:
         ax.legend(fontsize=8)
 
     fig.tight_layout()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / "comparativa_benchmark_vs_xfoil.png"
     fig.savefig(out, dpi=180)
     plt.close(fig)
@@ -130,11 +154,11 @@ def fig_errores(rows: list[dict], ref: dict) -> None:
     w = 0.25
 
     series = [
-        ("err_Cl",    lambda r: r["Cl_mean"] - ref["Cl"],
+        ("err_Cl",    lambda r: r["Cl_eval"] - ref["Cl"],
          "Cl - Cl_xf  (abs)"),
-        ("err_Cd_pct",lambda r: 100 * (r["Cd_mean"] - ref["Cd"]) / ref["Cd"],
+        ("err_Cd_pct",lambda r: 100 * (r["Cd_eval"] - ref["Cd"]) / ref["Cd"],
          "(Cd - Cd_xf) / Cd_xf  [%]"),
-        ("ratio_Cd",  lambda r: r["Cd_mean"] / ref["Cd"],
+        ("ratio_Cd",  lambda r: r["Cd_eval"] / ref["Cd"],
          "Cd_sim / Cd_xf"),
     ]
 
@@ -158,6 +182,7 @@ def fig_errores(rows: list[dict], ref: dict) -> None:
         ax.legend(fontsize=8)
 
     fig.tight_layout()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / "comparativa_benchmark_vs_xfoil_ratios.png"
     fig.savefig(out, dpi=180)
     plt.close(fig)
@@ -169,12 +194,12 @@ def fig_correlacion(rows: list[dict], ref: dict) -> None:
     fig, ax = plt.subplots(figsize=(9, 7))
     for r in rows:
         _, lvl = split_id(r["id"])
-        ef = r["Cl_mean"] / r["Cd_mean"]
-        ax.scatter(r["Cd_mean"], r["Cl_mean"],
+        ef = r["Cl_eval"] / r["Cd_eval"]
+        ax.scatter(r["Cd_eval"], r["Cl_eval"],
                    color=NIVEL_COLORS[lvl], s=80,
                    edgecolor="black", linewidth=0.5)
         ax.annotate(f"{r['id']}\nEf={ef:.1f}",
-                    (r["Cd_mean"], r["Cl_mean"]),
+                    (r["Cd_eval"], r["Cl_eval"]),
                     fontsize=7, xytext=(5, 5), textcoords="offset points")
     ax.scatter([ref["Cd"]], [ref["Cl"]], color="red", s=200, marker="*",
                edgecolor="black", linewidth=1, label=f"XFoil (Ef={ref['Ef']:.1f})", zorder=5)
@@ -188,6 +213,7 @@ def fig_correlacion(rows: list[dict], ref: dict) -> None:
                               markerfacecolor="red", markersize=15, label="XFoil"))
     ax.legend(handles=handles, fontsize=9)
     fig.tight_layout()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / "comparativa_benchmark_vs_xfoil_polar.png"
     fig.savefig(out, dpi=180)
     plt.close(fig)
@@ -204,7 +230,7 @@ def print_tabla(rows: list[dict], ref: dict) -> None:
                                               split_id(r["id"])[1]))
     ratios_cl, ratios_cd = [], []
     for r in rows_sorted:
-        cl, cd = r["Cl_mean"], r["Cd_mean"]
+        cl, cd = r["Cl_eval"], r["Cd_eval"]
         ef = cl / cd if cd else float("nan")
         dcl = cl - ref["Cl"]; dcd = cd - ref["Cd"]
         rcl = cl / ref["Cl"]; rcd = cd / ref["Cd"]

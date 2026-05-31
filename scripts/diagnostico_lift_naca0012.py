@@ -37,6 +37,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TMPDIR", "/tmp"))
 
 from Simulador2D import main as sim_main  # noqa: E402
 from bl_correction import cl_from_delta_cp, compute_corrected_forces  # noqa: E402
+from sim_defaults import PROJECTION_DEFAULTS  # noqa: E402
 
 
 OUT_DIR = ROOT_DIR / "results" / "diagnosticos" / "diagnostico_lift_naca0012"
@@ -82,6 +83,7 @@ BASE_CFG: dict[str, Any] = dict(
     mostrar_malla=False,
     stop_on_convergence=False,
     corregir_deriva_vertical=False,
+    **PROJECTION_DEFAULTS,
 )
 
 CURRENT_PROJECTION = dict(
@@ -349,6 +351,7 @@ def save_csv(done: dict[str, dict[str, Any]], cases: list[Case]) -> None:
         "case_id", "base_case_id", "group", "family", "status", "description",
         "alpha_deg", "Re", "dx_min", "iteraciones", "discard_frac",
         "usar_wale", "wale_Cw", "projection_label", "projection_variant",
+        "mg_pressure_accumulation", "wall_pressure_gradient_mode",
         "usar_adjoint_correction",
         "usar_flujo_inclinado", "flujo_inclinado_signo",
         "flujo_inclinado_angulo_deg", "flujo_inclinado_bc",
@@ -681,6 +684,8 @@ def run_case(case: Case) -> dict[str, Any]:
         "wale_Cw": finite_or_nan(cfg.get("wale_Cw")),
         "projection_label": projection_label(cfg),
         "projection_variant": str(cfg.get("projection_variant", "legacy_centered")),
+        "mg_pressure_accumulation": str(cfg.get("mg_pressure_accumulation", "outer_sum")),
+        "wall_pressure_gradient_mode": str(cfg.get("wall_pressure_gradient_mode", "masked")),
         "usar_adjoint_correction": bool(cfg.get("usar_adjoint_correction", False)),
         "usar_flujo_inclinado": bool(cfg.get("usar_flujo_inclinado", False)),
         "flujo_inclinado_signo": finite_or_nan(cfg.get("flujo_inclinado_signo")),
@@ -762,11 +767,15 @@ def run_case(case: Case) -> dict[str, Any]:
             chord=chord,
             v_inf=u_inf,
             Re=reynolds,
+            Cd_p_source="both",
         )
         row.update({
             "Cl_bl": finite_or_nan(bl.get("Cl")),
             "Cd_bl": finite_or_nan(bl.get("Cd")),
+            "Cd_bl_geom": finite_or_nan(bl.get("Cd_bl_geom")),
             "Cd_p_bl": finite_or_nan(bl.get("Cd_p")),
+            "Cd_p_geom": finite_or_nan(bl.get("Cd_p_geom")),
+            "Cd_p_ibm_bl": finite_or_nan(bl.get("Cd_p_ibm")),
             "Cd_visc_bl": finite_or_nan(bl.get("Cd_visc")),
             "Ef_bl": finite_or_nan(bl.get("Ef")),
             "Cl_inviscid": finite_or_nan(bl.get("Cl_inviscid")),
@@ -824,6 +833,8 @@ def error_row(case: Case, exc: BaseException) -> dict[str, Any]:
         "wale_Cw": cfg.get("wale_Cw"),
         "projection_label": projection_label(cfg),
         "projection_variant": str(cfg.get("projection_variant", "legacy_centered")),
+        "mg_pressure_accumulation": str(cfg.get("mg_pressure_accumulation", "outer_sum")),
+        "wall_pressure_gradient_mode": str(cfg.get("wall_pressure_gradient_mode", "masked")),
         "usar_adjoint_correction": bool(cfg.get("usar_adjoint_correction", False)),
         "usar_flujo_inclinado": bool(cfg.get("usar_flujo_inclinado", False)),
         "flujo_inclinado_signo": cfg.get("flujo_inclinado_signo"),

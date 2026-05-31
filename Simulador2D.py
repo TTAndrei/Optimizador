@@ -4165,6 +4165,14 @@ class Mesh:
         # Almacenar ángulo de ataque y ángulo de geometría
         self.alpha_deg = alpha_deg
         self.alpha_geometry = alpha_deg
+        self._airfoil_filepath = filepath
+        self._airfoil_chord = float(chord)
+        self._airfoil_x_offset = float(x_offset)
+        self._airfoil_y_offset = float(y_offset)
+        self._airfoil_alpha_geometry = float(alpha_deg)
+        self._airfoil_min_te_height = float(min_te_height)
+        self._airfoil_polygon_x = np.asarray(x_final, dtype=np.float64)
+        self._airfoil_polygon_y = np.asarray(y_final, dtype=np.float64)
 
         if plot:
             plt.figure(figsize=(6, 3))
@@ -4980,7 +4988,18 @@ class Mesh:
     #       compute_surface_forces_layers, compute_drag_lift_layers
     #       ELIMINADOS — usar compute_surface_forces_definitive y compute_drag_lift
 
-    def compute_drag_lift(self, mu, rho=1.0, n_extrap_layers=5):
+    def _validate_pressure_debias_mode(self, pressure_debias_mode):
+        valid = {"none", "mean_only", "affine_only", "affine+mean"}
+        mode = "affine+mean" if pressure_debias_mode is None else str(pressure_debias_mode)
+        if mode not in valid:
+            raise ValueError(
+                f"pressure_debias_mode invalido: {pressure_debias_mode!r}. "
+                f"Opciones validas: {sorted(valid)}"
+            )
+        return mode
+
+    def compute_drag_lift(self, mu, rho=1.0, n_extrap_layers=5,
+                          pressure_debias_mode=None, correct_pressure_offset=True):
         """
         Calcula Drag y Lift en el sistema aerodinámico (relativo al flujo libre).
         Hace la transformación de coordenadas desde fuerzas en ejes del cuerpo (Fx, Fy)
@@ -4989,7 +5008,13 @@ class Mesh:
         Drag: paralelo al flujo libre
         Lift: perpendicular al flujo libre
         """
-        res = self.compute_surface_forces_definitive(mu, rho=rho, n_extrap_layers=n_extrap_layers)
+        res = self.compute_surface_forces_definitive(
+            mu,
+            rho=rho,
+            n_extrap_layers=n_extrap_layers,
+            pressure_debias_mode=pressure_debias_mode,
+            correct_pressure_offset=correct_pressure_offset,
+        )
 
         # Descomponer en ejes viento usando ángulo real del flujo libre
         alpha_rad = self._get_freestream_angle_rad()
@@ -5021,7 +5046,7 @@ class Mesh:
             "Fx": Fx, "Fy": Fy
         }
     def compute_surface_forces_definitive(self, mu, rho=1.0, return_per_face=False, return_cp=True, n_extrap_layers=5,
-                                          correct_pressure_offset=True):
+                                          correct_pressure_offset=True, pressure_debias_mode=None):
         """
         Versión definitiva de la integral de esfuerzos sobre el perfil.
         - Usa extrapolación de presión y viscosidad desde múltiples capas para capturar gradientes lejanos en flujos turbulentos.
@@ -5034,8 +5059,9 @@ class Mesh:
             return_per_face: si True devuelve arrays por-cara
             return_cp: si True calcula Cp
             n_extrap_layers: capas para extrapolación (2-10 recomendado)
-            correct_pressure_offset: si True aplica de-bias de presión para fuerzas
-                                    (plano afín de fondo + offset residual sobre contorno)
+            correct_pressure_offset: compatibilidad; False equivale a pressure_debias_mode="none".
+            pressure_debias_mode: "affine+mean" (default actual), "none",
+                                  "mean_only" o "affine_only".
 
         Retorna diccionario con Fx,Fy, etc.
         """
@@ -5143,13 +5169,17 @@ class Mesh:
         # Corrección opcional de presión de fondo para reducir sesgo espurio:
         # 1) quitar plano afín p_bg=a+b*x+c*y estimado en bordes (far-field)
         # 2) quitar offset residual medio ponderado en el contorno discreto
+        if pressure_debias_mode is None:
+            pressure_debias_mode = "affine+mean" if correct_pressure_offset else "none"
+        pressure_debias_mode = self._validate_pressure_debias_mode(pressure_debias_mode)
+
         p_wall_force = p_wall
         p_bg_face = cp.zeros_like(p_wall, dtype=cp.float32)
-        debias_model = "none"
+        debias_model = pressure_debias_mode
         debias_a = 0.0
         debias_b = 0.0
         debias_c = 0.0
-        if correct_pressure_offset:
+        if pressure_debias_mode in {"affine_only", "affine+mean"}:
             # Ajuste de presión de fondo con muestras de borde
             try:
                 band_bg = max(1, int(min(self.nx, self.ny) * 0.05))
@@ -5174,13 +5204,19 @@ class Mesh:
                         + cp.float32(debias_c) * y_face
                     )
                     p_wall_force = p_wall - p_bg_face
-                    debias_model = "affine+mean"
                 else:
-                    debias_model = "mean_only"
+                    debias_model = "mean_only" if pressure_debias_mode == "affine+mean" else "none"
             except Exception:
-                debias_model = "mean_only"
+                debias_model = "mean_only" if pressure_debias_mode == "affine+mean" else "none"
 
-            # Offset residual sobre el contorno discreto (cerrado de fuerza)
+        if pressure_debias_mode in {"mean_only", "affine+mean"} and debias_model != "none":
+            # Offset residual sobre el contorno discreto (cerrado de fuerza).
+            wds = w * ds
+            wds_sum = cp.sum(wds)
+            if float(wds_sum) > 0.0:
+                p_mean_resid = cp.sum(p_wall_force * wds) / (wds_sum + cp.float32(1e-30))
+                p_wall_force = p_wall_force - p_mean_resid
+        elif pressure_debias_mode == "mean_only":
             wds = w * ds
             wds_sum = cp.sum(wds)
             if float(wds_sum) > 0.0:
@@ -5202,7 +5238,7 @@ class Mesh:
             "Fx": float(Fx), "Fy": float(Fy),
             "Fx_p": float(Fx_p), "Fy_p": float(Fy_p),
             "Fx_v": float(Fx_v), "Fy_v": float(Fy_v),
-            "pressure_offset_correction": bool(correct_pressure_offset),
+            "pressure_offset_correction": pressure_debias_mode != "none",
             "pressure_debias_model": debias_model,
             "pressure_debias_a": float(debias_a),
             "pressure_debias_b": float(debias_b),
@@ -5261,7 +5297,8 @@ class Mesh:
 
         return result
 
-    def extract_surface_force_audit(self, mu, rho=1.0, chord=1.0, n_extrap_layers=5):
+    def extract_surface_force_audit(self, mu, rho=1.0, chord=1.0, n_extrap_layers=5,
+                                    pressure_debias_mode=None, correct_pressure_offset=True):
         """
         Devuelve filas por cara usando exactamente la misma tracción de presión
         que compute_drag_lift(). Sirve para reconciliar Cp, Lift_p y fuerzas.
@@ -5272,6 +5309,8 @@ class Mesh:
             return_per_face=True,
             return_cp=True,
             n_extrap_layers=n_extrap_layers,
+            pressure_debias_mode=pressure_debias_mode,
+            correct_pressure_offset=correct_pressure_offset,
         )
         Xb = data.get("x_face", data.get("Xb", None))
         if Xb is None or Xb.size == 0:

@@ -89,6 +89,319 @@ def load_profile(filepath: str,
     return xu, yu, xl, yl
 
 
+def profile_polygon_from_file(filepath: str,
+                              chord: float = 1.0,
+                              x_offset: float = 0.0,
+                              y_offset: float = 0.0,
+                              alpha_geometry_deg: float = 0.0,
+                              min_te_height: float | None = None
+                              ) -> tuple[np.ndarray, np.ndarray]:
+    """Replica la transformacion geometrica usada por Mesh.load_solids_from_file."""
+    try:
+        raw = open(filepath, encoding="utf-8").readlines()
+    except UnicodeDecodeError:
+        raw = open(filepath, encoding="latin-1").readlines()
+
+    pts = []
+    for line in raw[1:]:
+        parts = line.replace(",", " ").split()
+        if len(parts) < 2:
+            continue
+        try:
+            pts.append((float(parts[0]), float(parts[1])))
+        except ValueError:
+            continue
+    if len(pts) < 4:
+        raise ValueError(f"profile_polygon_from_file: solo {len(pts)} puntos en '{filepath}'")
+
+    arr = np.asarray(pts, dtype=np.float64)
+    x_raw = arr[:, 0] * float(chord)
+    y_raw = arr[:, 1] * float(chord)
+
+    if min_te_height is not None:
+        le_idx = int(np.argmin(x_raw))
+        upper_x = x_raw[:le_idx + 1]
+        upper_y = y_raw[:le_idx + 1]
+        lower_x = x_raw[le_idx:]
+        lower_y = y_raw[le_idx:]
+        te_thickness = abs(float(upper_y[0]) - float(lower_y[-1]))
+        if te_thickness < float(min_te_height) and len(upper_x) > 2 and len(lower_x) > 2:
+            upper_x_inc = upper_x[::-1].copy()
+            upper_y_inc = upper_y[::-1].copy()
+            x_te = min(float(upper_x_inc[-1]), float(lower_x[-1]))
+            x_le = max(float(upper_x_inc[0]), float(lower_x[0]))
+            x_sample = np.linspace(x_te, x_le, 2000)
+            y_up_s = np.interp(x_sample, upper_x_inc, upper_y_inc)
+            y_lo_s = np.interp(x_sample, lower_x, lower_y)
+            valid = np.where((y_up_s - y_lo_s) >= float(min_te_height))[0]
+            if len(valid) > 0:
+                x_cut = float(x_sample[valid[0]])
+                y_cut_upper = float(np.interp(x_cut, upper_x_inc, upper_y_inc))
+                y_cut_lower = float(np.interp(x_cut, lower_x, lower_y))
+                eps = 1e-8
+                mask_up = upper_x < (x_cut - eps)
+                mask_lo = lower_x < (x_cut - eps)
+                x_raw = np.concatenate([[x_cut], upper_x[mask_up], lower_x[mask_lo], [x_cut]])
+                y_raw = np.concatenate([[y_cut_upper], upper_y[mask_up], lower_y[mask_lo], [y_cut_lower]])
+
+    alpha = -np.deg2rad(float(alpha_geometry_deg))
+    ca = np.cos(alpha)
+    sa = np.sin(alpha)
+    cx_rot = 0.25 * float(chord)
+    x_shift = x_raw - cx_rot
+    y_shift = y_raw
+    x_rot = x_shift * ca - y_shift * sa + cx_rot
+    y_rot = x_shift * sa + y_shift * ca
+    x_final = x_rot + float(x_offset)
+    y_final = y_rot + float(y_offset)
+    if not (np.isclose(x_final[0], x_final[-1]) and np.isclose(y_final[0], y_final[-1])):
+        x_final = np.concatenate([x_final, x_final[0:1]])
+        y_final = np.concatenate([y_final, y_final[0:1]])
+    return x_final, y_final
+
+
+def _mesh_interp(mesh, field, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Interpola un campo del mesh en coordenadas fisicas usando bilinear GPU."""
+    import cupy as cp_gpu
+
+    x_axis = np.asarray(cp_gpu.asnumpy(mesh.X_1d), dtype=np.float64)
+    y_axis = np.asarray(cp_gpu.asnumpy(mesh.Y_1d), dtype=np.float64)
+    jj = np.interp(np.asarray(x, dtype=np.float64), x_axis, np.arange(len(x_axis), dtype=np.float64))
+    ii = np.interp(np.asarray(y, dtype=np.float64), y_axis, np.arange(len(y_axis), dtype=np.float64))
+    jj = np.clip(jj, 0.0, len(x_axis) - 1.0)
+    ii = np.clip(ii, 0.0, len(y_axis) - 1.0)
+    vals = mesh._bilinear_interpolate(
+        field.astype(cp_gpu.float32, copy=False),
+        cp_gpu.asarray(jj, dtype=cp_gpu.float32),
+        cp_gpu.asarray(ii, dtype=cp_gpu.float32),
+    )
+    return np.asarray(cp_gpu.asnumpy(vals), dtype=np.float64)
+
+
+def _pressure_background(mesh, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, tuple[float, float, float], bool]:
+    import cupy as cp_gpu
+
+    band = max(1, int(min(mesh.nx, mesh.ny) * 0.05))
+    mask = cp_gpu.zeros_like(mesh.p, dtype=cp_gpu.bool_)
+    mask[:band, :] = True
+    mask[-band:, :] = True
+    mask[:, :band] = True
+    mask[:, -band:] = True
+    mask = mask & (~mesh.solid)
+    p_edge = np.asarray(cp_gpu.asnumpy(mesh.p[mask]), dtype=np.float64)
+    x_edge = np.asarray(cp_gpu.asnumpy(mesh.XX[mask]), dtype=np.float64)
+    y_edge = np.asarray(cp_gpu.asnumpy(mesh.YY[mask]), dtype=np.float64)
+    if p_edge.size < 8:
+        return np.zeros_like(x, dtype=np.float64), (0.0, 0.0, 0.0), False
+    A = np.column_stack((np.ones_like(p_edge), x_edge, y_edge))
+    coef, _, _, _ = np.linalg.lstsq(A, p_edge, rcond=None)
+    bg = coef[0] + coef[1] * x + coef[2] * y
+    return bg, (float(coef[0]), float(coef[1]), float(coef[2])), True
+
+
+def _apply_pressure_debias(mesh, p_wall: np.ndarray, x: np.ndarray, y: np.ndarray,
+                           ds: np.ndarray, mode: str) -> tuple[np.ndarray, dict]:
+    valid = {"none", "mean_only", "affine_only", "affine+mean"}
+    if mode not in valid:
+        raise ValueError(f"pressure_debias_mode invalido: {mode!r}")
+    p_force = np.asarray(p_wall, dtype=np.float64).copy()
+    bg = np.zeros_like(p_force)
+    a = b = c = 0.0
+    model = mode
+    if mode in {"affine_only", "affine+mean"}:
+        bg, (a, b, c), ok = _pressure_background(mesh, x, y)
+        if ok:
+            p_force = p_force - bg
+        elif mode == "affine+mean":
+            model = "mean_only"
+        else:
+            model = "none"
+    if mode in {"mean_only", "affine+mean"} and model != "none":
+        wsum = float(np.sum(ds))
+        if wsum > 0.0:
+            p_force = p_force - float(np.sum(p_force * ds) / wsum)
+    return p_force, {
+        "pressure_debias_model": model,
+        "pressure_debias_a": a,
+        "pressure_debias_b": b,
+        "pressure_debias_c": c,
+        "p_bg": bg,
+    }
+
+
+def compute_geometric_pressure_forces(mesh,
+                                      filepath: str | None = None,
+                                      rho: float = 1.0,
+                                      chord: float | None = None,
+                                      alpha_geometry_deg: float | None = None,
+                                      x_offset: float | None = None,
+                                      y_offset: float | None = None,
+                                      n_extrap_layers: int = 5,
+                                      pressure_debias_mode: str = "affine+mean",
+                                      te_exclude_after: float | None = None,
+                                      sample_step: float | None = None) -> dict:
+    """
+    Integra solo presión sobre paneles geométricos reales del perfil.
+    Es una ruta de auditoría/postproceso; no modifica el solver.
+    """
+    import cupy as cp_gpu
+
+    chord = float(chord if chord is not None else getattr(mesh, "_airfoil_chord", getattr(mesh, "_chord", 1.0)))
+    filepath = filepath if filepath is not None else getattr(mesh, "_airfoil_filepath", None)
+    if hasattr(mesh, "_airfoil_polygon_x") and hasattr(mesh, "_airfoil_polygon_y"):
+        x_poly = np.asarray(mesh._airfoil_polygon_x, dtype=np.float64)
+        y_poly = np.asarray(mesh._airfoil_polygon_y, dtype=np.float64)
+    else:
+        if filepath is None:
+            raise ValueError("compute_geometric_pressure_forces requiere filepath o polygon guardado en mesh")
+        alpha_geometry_deg = float(
+            alpha_geometry_deg
+            if alpha_geometry_deg is not None
+            else getattr(mesh, "_airfoil_alpha_geometry", getattr(mesh, "alpha_geometry", 0.0))
+        )
+        x_offset = float(x_offset if x_offset is not None else getattr(mesh, "_airfoil_x_offset", 0.0))
+        y_offset = float(y_offset if y_offset is not None else getattr(mesh, "_airfoil_y_offset", 0.0))
+        min_te = getattr(mesh, "_airfoil_min_te_height", None)
+        x_poly, y_poly = profile_polygon_from_file(
+            filepath,
+            chord=chord,
+            x_offset=x_offset,
+            y_offset=y_offset,
+            alpha_geometry_deg=alpha_geometry_deg,
+            min_te_height=min_te,
+        )
+
+    if len(x_poly) < 3:
+        raise ValueError("perfil geometrico demasiado corto")
+
+    x0 = x_poly[:-1]
+    y0 = y_poly[:-1]
+    x1 = x_poly[1:]
+    y1 = y_poly[1:]
+    dx = x1 - x0
+    dy = y1 - y0
+    ds = np.sqrt(dx * dx + dy * dy)
+    keep = ds > 1e-12
+    x0, y0, x1, y1, dx, dy, ds = [arr[keep] for arr in (x0, y0, x1, y1, dx, dy, ds)]
+    xm = 0.5 * (x0 + x1)
+    ym = 0.5 * (y0 + y1)
+
+    signed_area = 0.5 * float(np.sum(x_poly[:-1] * y_poly[1:] - x_poly[1:] * y_poly[:-1]))
+    if signed_area >= 0.0:
+        nx = dy / ds
+        ny = -dx / ds
+    else:
+        nx = -dy / ds
+        ny = dx / ds
+
+    step = float(sample_step) if sample_step is not None else float(min(getattr(mesh, "dx", 1e-3), getattr(mesh, "dy", 1e-3)))
+    step = max(step, 1e-12)
+
+    solid_f = mesh.solid.astype(cp_gpu.float32)
+    plus_s = _mesh_interp(mesh, solid_f, xm + 0.75 * step * nx, ym + 0.75 * step * ny)
+    minus_s = _mesh_interp(mesh, solid_f, xm - 0.75 * step * nx, ym - 0.75 * step * ny)
+    flip = plus_s > minus_s
+    nx[flip] *= -1.0
+    ny[flip] *= -1.0
+
+    positions = np.asarray([0.5 + i for i in range(max(1, int(n_extrap_layers)))], dtype=np.float64)
+    p_layers = []
+    for pos in positions:
+        p_layers.append(_mesh_interp(mesh, mesh.p, xm + pos * step * nx, ym + pos * step * ny))
+    p_layers_arr = np.vstack(p_layers)
+    if len(positions) >= 2:
+        n = float(len(positions))
+        sx = float(np.sum(positions))
+        sx2 = float(np.sum(positions * positions))
+        sy = np.sum(p_layers_arr, axis=0)
+        sxy = np.sum(p_layers_arr * positions[:, None], axis=0)
+        denom = max(n * sx2 - sx * sx, 1e-30)
+        slope = (n * sxy - sx * sy) / denom
+        p_wall = (sy - slope * sx) / n
+    else:
+        p_wall = p_layers_arr[0]
+
+    x_min = float(np.nanmin(xm))
+    x_max = float(np.nanmax(xm))
+    chord_geom = max(x_max - x_min, 1e-30)
+    x_over_c = np.clip((xm - x_min) / chord_geom, 0.0, 1.0)
+    active = np.isfinite(p_wall)
+    if te_exclude_after is not None:
+        active &= x_over_c <= float(te_exclude_after)
+
+    p_force, debias = _apply_pressure_debias(
+        mesh,
+        p_wall[active],
+        xm[active],
+        ym[active],
+        ds[active],
+        str(pressure_debias_mode),
+    )
+
+    nx_a = nx[active]
+    ny_a = ny[active]
+    ds_a = ds[active]
+    dFx_p = -p_force * nx_a * ds_a
+    dFy_p = -p_force * ny_a * ds_a
+
+    alpha_rad = float(mesh._get_freestream_angle_rad())
+    cos_a = np.cos(alpha_rad)
+    sin_a = np.sin(alpha_rad)
+    dDrag_p = dFx_p * cos_a + dFy_p * sin_a
+    dLift_p = -dFx_p * sin_a + dFy_p * cos_a
+
+    U_ref = max(float(getattr(mesh, "_U_ref", getattr(mesh, "_vel_ref", 1.0))), 1e-30)
+    q = 0.5 * float(rho) * U_ref * U_ref * max(chord, 1e-30)
+    cp_raw = p_wall[active] / max(0.5 * float(rho) * U_ref * U_ref, 1e-30)
+    cp_force = p_force / max(0.5 * float(rho) * U_ref * U_ref, 1e-30)
+
+    rows = []
+    active_idx = np.flatnonzero(active)
+    for out_id, idx in enumerate(active_idx):
+        region = "LE" if x_over_c[idx] < 0.1 else ("TE" if x_over_c[idx] >= 0.8 else "MID")
+        rows.append({
+            "surface_panel_id": int(out_id),
+            "x": float(xm[idx]),
+            "y": float(ym[idx]),
+            "x_over_c": float(x_over_c[idx]),
+            "side": "upper" if ny[idx] > 0.0 else "lower",
+            "region": region,
+            "nx": float(nx[idx]),
+            "ny": float(ny[idx]),
+            "ds": float(ds[idx]),
+            "p_wall": float(p_wall[idx]),
+            "p_wall_force": float(p_force[out_id]),
+            "p_bg": float(debias["p_bg"][out_id]) if len(debias["p_bg"]) else 0.0,
+            "Cp_raw": float(cp_raw[out_id]),
+            "Cp_force": float(cp_force[out_id]),
+            "dFx_p": float(dFx_p[out_id]),
+            "dFy_p": float(dFy_p[out_id]),
+            "dDrag_p": float(dDrag_p[out_id]),
+            "dLift_p": float(dLift_p[out_id]),
+        })
+
+    drag_p = float(np.sum(dDrag_p))
+    lift_p = float(np.sum(dLift_p))
+    summary = {
+        "surface_normal_mode": "geometric",
+        "n_surface_panels": int(len(rows)),
+        "n_extrap_layers": int(n_extrap_layers),
+        "pressure_debias_mode": str(pressure_debias_mode),
+        "pressure_debias_model": debias["pressure_debias_model"],
+        "pressure_debias_a": float(debias["pressure_debias_a"]),
+        "pressure_debias_b": float(debias["pressure_debias_b"]),
+        "pressure_debias_c": float(debias["pressure_debias_c"]),
+        "te_exclude_after": float(te_exclude_after) if te_exclude_after is not None else float("nan"),
+        "Drag_p_geom": drag_p,
+        "Lift_p_geom": lift_p,
+        "Cd_p_geom": drag_p / q,
+        "Cl_p_geom": lift_p / q,
+        "Cp_geom_min": float(np.nanmin(cp_force)) if len(cp_force) else float("nan"),
+        "Cp_geom_max": float(np.nanmax(cp_force)) if len(cp_force) else float("nan"),
+    }
+    return {"rows": rows, "summary": summary}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # B. Panel method — Hess-Smith vortex panels
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -464,7 +777,10 @@ def compute_corrected_forces(mesh,
                               chord: float | None = None,
                               alpha_deg: float | None = None,
                               rho: float = 1.0,
-                              n_panels: int = 100) -> dict:
+                              n_panels: int = 100,
+                              n_extrap_layers: int = 5,
+                              pressure_debias_mode: str = "affine+mean",
+                              Cd_p_source: str = "ibm") -> dict:
     """
     Calcula Cl y Cd corregidos post-simulación.
 
@@ -476,6 +792,9 @@ def compute_corrected_forces(mesh,
     alpha_deg: ángulo de ataque; desde mesh.alpha_deg si None
     rho      : densidad [kg/m³]
     n_panels : número de paneles del panel method
+    n_extrap_layers: capas para extrapolar presión del LES a pared
+    pressure_debias_mode: modo de de-bias de presión usado en fuerzas
+    Cd_p_source: "ibm" (default), "geometric" o "both"
 
     Retorna dict con: Cl, Cd, Cd_p, Cd_visc, Ef, Cl_inviscid,
                       trans_x_upper, trans_x_lower, bl_upper, bl_lower,
@@ -498,8 +817,32 @@ def compute_corrected_forces(mesh,
     q         = 0.5 * rho * v_inf**2 * chord   # normalización estándar
 
     # ── Fuerzas de presión del LES (fiables) ─────────────────────────────────
-    forces = mesh.compute_drag_lift(mu, rho=rho, n_extrap_layers=5)
-    Cd_p   = float(forces["Drag_p"]) / q
+    Cd_p_source = str(Cd_p_source)
+    if Cd_p_source not in {"ibm", "geometric", "both"}:
+        raise ValueError("Cd_p_source debe ser 'ibm', 'geometric' o 'both'")
+    forces = mesh.compute_drag_lift(
+        mu,
+        rho=rho,
+        n_extrap_layers=n_extrap_layers,
+        pressure_debias_mode=pressure_debias_mode,
+    )
+    Cd_p_ibm = float(forces["Drag_p"]) / q
+    geom_summary = None
+    if Cd_p_source in {"geometric", "both"}:
+        geom = compute_geometric_pressure_forces(
+            mesh,
+            filepath=filepath,
+            rho=rho,
+            chord=chord,
+            n_extrap_layers=n_extrap_layers,
+            pressure_debias_mode=pressure_debias_mode,
+        )
+        geom_summary = geom["summary"]
+    Cd_p = (
+        float(geom_summary["Cd_p_geom"])
+        if Cd_p_source == "geometric" and geom_summary is not None
+        else Cd_p_ibm
+    )
 
     # ── Geometría del perfil → panel method → Cp invíscido ───────────────────
     xu, yu, xl, yl = load_profile(filepath, chord=chord, alpha_deg=0.0)
@@ -547,10 +890,12 @@ def compute_corrected_forces(mesh,
     trans_x_u = float(x_norm_p[ti_u]) if ti_u is not None and ti_u < M else 1.0
     trans_x_l = float(x_norm_p[ti_l]) if ti_l is not None and ti_l < M else 1.0
 
-    return {
+    result = {
         "Cl":             Cl,
         "Cd":             Cd,
         "Cd_p":           Cd_p,
+        "Cd_p_source":    Cd_p_source,
+        "Cd_p_ibm":       Cd_p_ibm,
         "Cd_visc":        Cd_visc,
         "Cd_visc_upper":  Cd_v_u,
         "Cd_visc_lower":  Cd_v_l,
@@ -570,6 +915,15 @@ def compute_corrected_forces(mesh,
         "Cp_upper_inv":   Cpu_inv,
         "Cp_lower_inv":   Cpl_inv,
     }
+    if geom_summary is not None:
+        result.update({
+            "Cd_p_geom": geom_summary.get("Cd_p_geom", float("nan")),
+            "Cl_p_geom": geom_summary.get("Cl_p_geom", float("nan")),
+            "pressure_debias_model_geom": geom_summary.get("pressure_debias_model", ""),
+        })
+        if Cd_p_source == "both":
+            result["Cd_bl_geom"] = float(geom_summary.get("Cd_p_geom", float("nan"))) + Cd_visc
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

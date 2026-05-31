@@ -12,15 +12,24 @@ Salida:
 from __future__ import annotations
 import csv
 import json
+import os
+import sys
 from pathlib import Path
+
+ROOT    = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TMPDIR", "/tmp")) / "matplotlib-cache"))
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-ROOT    = Path(__file__).resolve().parent.parent
-BARRIDO = ROOT / "results" / "barrido_modos_resultados.json"
+from sim_defaults import preferred_cl_column, preferred_cd_column
+
+BARRIDO = ROOT / "results" / "barridos" / "barrido_modos_outer_sum" / "summary.json"
 XFOIL   = ROOT / "data" / "ComparativasReales" / "NACA0012_100k_Xfoil.csv"
-OUT_DIR = ROOT / "results"
+OUT_DIR = ROOT / "results" / "calibracion"
 
 MODO_EVAL = "turbo"
 DX_EVAL   = 0.001
@@ -52,14 +61,21 @@ def load_xfoil() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def load_sim(modo: str, dx: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     with open(BARRIDO, encoding="utf-8") as f:
         data = json.load(f)
+    if isinstance(data, dict):
+        data = data.get("results", [])
     rows = [r for r in data
             if r.get("modo") == modo
             and r.get("dx_min") == dx
             and "error" not in r]
     rows.sort(key=lambda r: r["alpha"])
+    if not rows:
+        raise ValueError(f"No hay filas para modo={modo} dx={dx} en {BARRIDO}")
+    cl_key = preferred_cl_column(set(rows[0].keys()))
+    cd_key = preferred_cd_column(set(rows[0].keys()), prefer_bl=True)
     alphas = np.array([r["alpha"]   for r in rows])
-    cls    = np.array([r["Cl_mean"] for r in rows])
-    cds    = np.array([r["Cd_mean"] for r in rows])
+    cls    = np.array([r[cl_key] for r in rows], dtype=float)
+    cds    = np.array([r[cd_key] for r in rows], dtype=float)
+    print(f"  Simulado: Cl={cl_key} Cd={cd_key}")
     return alphas, cls, cds
 
 
@@ -106,6 +122,7 @@ def fig_factor(alphas_sim, factors, label, fitted, coefs, deg, fname):
     ax2.grid(True, alpha=0.3)
 
     fig.tight_layout()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / fname
     fig.savefig(out, dpi=180)
     plt.close(fig)
@@ -185,6 +202,7 @@ def fig_combinado(alphas_sim, factors_cl, factors_cd,
     ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / "calibracion_factores_combinado.png"
     fig.savefig(out, dpi=180)
     plt.close(fig)

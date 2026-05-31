@@ -9,7 +9,11 @@ Genera un PNG combinado y tres PNG individuales en la carpeta de salida.
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from pathlib import Path
+
+os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TMPDIR", "/tmp")) / "matplotlib-cache"))
 
 import matplotlib
 
@@ -20,10 +24,16 @@ import numpy as np
 import pandas as pd
 
 
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_SIM = BASE_DIR / "barrido_naca0012_resultados_vopus.csv"
-DEFAULT_THEO = BASE_DIR / "ComparativasReales" / "AG24_100k_Xfoil.csv"
-DEFAULT_OUT = BASE_DIR / "comparativa_teorico_vs_simulado"
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPT_DIR.parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from sim_defaults import preferred_cl_column, preferred_cd_column
+
+DEFAULT_SIM = ROOT_DIR / "results" / "barridos" / "barrido_alpha_naca0012_outer_sum" / "summary.csv"
+DEFAULT_THEO = ROOT_DIR / "data" / "ComparativasReales" / "NACA0012_100k_Xfoil.csv"
+DEFAULT_OUT = ROOT_DIR / "results" / "comparativas" / "comparativa_teorico_vs_simulado"
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,10 +46,18 @@ def parse_args() -> argparse.Namespace:
 
 def read_simulated(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
-    required = {"alpha_deg", "Cd_mean", "Cl_mean", "Ef_mean"}
+    cl_col = preferred_cl_column(set(df.columns))
+    cd_col = preferred_cd_column(set(df.columns), prefer_bl=True)
+    required = {"alpha_deg", cl_col, cd_col}
     missing = required.difference(df.columns)
     if missing:
         raise ValueError(f"Faltan columnas en simulado {path}: {sorted(missing)}")
+    df = df.copy()
+    df["Cl_plot"] = df[cl_col]
+    df["Cd_plot"] = df[cd_col]
+    df["Ef_plot"] = df["Cl_plot"] / df["Cd_plot"].replace(0, np.nan)
+    df.attrs["cl_column"] = cl_col
+    df.attrs["cd_column"] = cd_col
     return df.sort_values("alpha_deg").reset_index(drop=True)
 
 
@@ -88,14 +106,17 @@ def save_plots(theo_df: pd.DataFrame, sim_df: pd.DataFrame, out_dir: Path) -> li
 
     theo_label = theo_df.attrs.get("airfoil_name", "teorico")
     print(f"Teorico: {theo_label}")
-    print(f"Simulado: {len(sim_df)} filas")
+    print(
+        f"Simulado: {len(sim_df)} filas "
+        f"(Cl={sim_df.attrs.get('cl_column')}, Cd={sim_df.attrs.get('cd_column')})"
+    )
 
     saved_files: list[Path] = []
 
     combined_specs = [
-        ("Cd", "Cd", "Cd_mean", "Coeficiente de resistencia Cd"),
-        ("Cl", "Cl", "Cl_mean", "Coeficiente de sustentacion Cl"),
-        ("Ef", "Ef", "Ef_mean", "Eficiencia Cl/Cd"),
+        ("Cd", "Cd", "Cd_plot", "Coeficiente de resistencia Cd"),
+        ("Cl", "Cl", "Cl_plot", "Coeficiente de sustentacion Cl"),
+        ("Ef", "Ef", "Ef_plot", "Eficiencia Cl/Cd"),
     ]
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
@@ -117,9 +138,9 @@ def save_plots(theo_df: pd.DataFrame, sim_df: pd.DataFrame, out_dir: Path) -> li
     saved_files.append(combined_path)
 
     individual_specs = [
-        ("Cd", "Cd", "Cd_mean", "Coeficiente de resistencia Cd"),
-        ("Cl", "Cl", "Cl_mean", "Coeficiente de sustentacion Cl"),
-        ("Ef", "Ef", "Ef_mean", "Eficiencia Cl/Cd"),
+        ("Cd", "Cd", "Cd_plot", "Coeficiente de resistencia Cd"),
+        ("Cl", "Cl", "Cl_plot", "Coeficiente de sustentacion Cl"),
+        ("Ef", "Ef", "Ef_plot", "Eficiencia Cl/Cd"),
     ]
     for name, theo_col, sim_col, ylabel in individual_specs:
         fig, ax = plt.subplots(figsize=(8, 5))

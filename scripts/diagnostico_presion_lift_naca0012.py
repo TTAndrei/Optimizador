@@ -313,12 +313,13 @@ def save_csv(done: dict[str, dict[str, Any]], cases: list[Case]) -> None:
         "boundary_top", "boundary_bottom", "boundary_right",
         "nx", "ny", "n_cells",
         "Cl_mean", "Cl_final", "Cl_std", "Cl_p", "Cl_v",
-        "Cl_from_Cp_LES", "Cl_from_Cp_force_consistent", "Cl_pressure_force",
+        "Cl_from_Cp_LES", "Cl_from_Cp_force_consistent", "Cd_from_Cp_force_consistent", "Cl_pressure_force",
         "Cl_inviscid", "Cl_final_over_inviscid",
         "Cl_from_Cp_LES_over_inviscid", "Cl_final_minus_Cp_LES",
-        "Cl_final_minus_Cp_force_consistent",
+        "Cl_final_minus_Cp_force_consistent", "Cd_final_minus_Cp_force_consistent",
         "Cp_force_consistent_range", "pressure_debias_model",
-        "Cd_mean", "Cd_final", "Cd_p", "Cd_v",
+        "Cd_mean", "Cd_final", "Cd_p", "Cd_v", "Cd_p_debiased",
+        "Cd_bl", "Cd_bl_geom", "Cd_p_bl", "Cd_p_geom", "Cd_p_ibm_bl", "Cd_visc_bl",
         "div_mean", "div_final", "div_flux_final", "wall_leak_max_final",
         "nu_t_over_nu_mean", "nu_t_over_nu_max",
         "surface_closure_nx_rel", "surface_closure_ny_rel",
@@ -926,6 +927,7 @@ def run_case(case: Case, *, field_debug: bool) -> tuple[
             chord=chord,
             v_inf=u_inf,
             Re=reynolds,
+            Cd_p_source="both",
         )
     except Exception as exc:
         bl = {"warn": [f"BL failed: {exc}"]}
@@ -980,6 +982,9 @@ def run_case(case: Case, *, field_debug: bool) -> tuple[
         "Cl_from_Cp_force_consistent": finite_or_nan(
             force_audit_summary.get("Cl_from_Cp_force_consistent")
         ),
+        "Cd_from_Cp_force_consistent": finite_or_nan(
+            force_audit_summary.get("Cd_from_Cp_force_consistent")
+        ),
         "Cl_pressure_force": finite_or_nan(forces["Lift_p"] / q_dyn),
         "Cl_inviscid": cl_inv,
         "Cl_final_over_inviscid": finite_or_nan(cl_final / cl_inv) if abs(cl_inv) > 1e-12 else float("nan"),
@@ -988,6 +993,10 @@ def run_case(case: Case, *, field_debug: bool) -> tuple[
         "Cl_final_minus_Cp_force_consistent": finite_or_nan(
             cl_final - finite_or_nan(force_audit_summary.get("Cl_from_Cp_force_consistent"))
         ),
+        "Cd_final_minus_Cp_force_consistent": finite_or_nan(
+            cd_final - finite_or_nan(force_audit_summary.get("Cd_from_Cp_force_consistent"))
+        ),
+        "Cd_p_debiased": finite_or_nan(force_audit_summary.get("Cd_from_Cp_force_consistent")),
         "Cp_force_consistent_range": finite_or_nan(force_audit_summary.get("Cp_force_consistent_range")),
         "pressure_debias_model": force_audit_summary.get("pressure_debias_model", ""),
         "surface_force_audit_warn": force_audit_summary.get("surface_force_audit_warn", ""),
@@ -996,6 +1005,12 @@ def run_case(case: Case, *, field_debug: bool) -> tuple[
         "Cd_std": cd_std,
         "Cd_p": finite_or_nan(forces["Drag_p"] / q_dyn),
         "Cd_v": finite_or_nan(forces["Drag_v"] / q_dyn),
+        "Cd_bl": finite_or_nan((bl or {}).get("Cd")),
+        "Cd_bl_geom": finite_or_nan((bl or {}).get("Cd_bl_geom")),
+        "Cd_p_bl": finite_or_nan((bl or {}).get("Cd_p")),
+        "Cd_p_geom": finite_or_nan((bl or {}).get("Cd_p_geom")),
+        "Cd_p_ibm_bl": finite_or_nan((bl or {}).get("Cd_p_ibm")),
+        "Cd_visc_bl": finite_or_nan((bl or {}).get("Cd_visc")),
         "div_mean": div_mean,
         "div_final": div_final,
         "div_flux_mean": div_flux_mean,

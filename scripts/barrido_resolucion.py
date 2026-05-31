@@ -22,14 +22,16 @@ from pathlib import Path
 import csv
 
 import cupy as cp
-import matplotlib.pyplot as plt
 import numpy as np
 
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR    = os.path.dirname(_SCRIPTS_DIR)
+os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TMPDIR", "/tmp")) / "matplotlib-cache"))
 sys.path.insert(0, _SCRIPTS_DIR)
 sys.path.insert(0, _ROOT_DIR)
+import matplotlib.pyplot as plt
 from Simulador2D import main as sim_main
+from sim_defaults import PROJECTION_DEFAULTS, add_force_consistent_metrics
 
 # ─── Configuracion ────────────────────────────────────────────────────────────
 ALPHAS      = list(range(-10, 11))          # -10..10 deg
@@ -55,12 +57,14 @@ BASE_CFG = dict(
     graficos=False, save_frames=False, live_view=False,
     mostrar_malla=False, stop_on_convergence=False,
     corregir_deriva_vertical=False,
+    **PROJECTION_DEFAULTS,
 )
  
-BASE        = Path(__file__).parent
-OUT_RESULTS = BASE / "barrido_resolucion_resultados2.json"
-OUT_PLAN    = BASE / "barrido_resolucion_plan2.json"
-OUT_CSV     = BASE / "barrido_resolucion2.csv"
+BASE        = Path(__file__).resolve().parent.parent / "results" / "barridos" / "barrido_resolucion_outer_sum"
+BASE.mkdir(parents=True, exist_ok=True)
+OUT_RESULTS = BASE / "summary.json"
+OUT_PLAN    = BASE / "plan.json"
+OUT_CSV     = BASE / "summary.csv"
 
 # Estilo: una linea por resolucion
 _PALETTE = ["#2196F3", "#FF5722", "#4CAF50", "#9C27B0", "#FF9800"]
@@ -105,7 +109,7 @@ def save_plan_status(done: dict[str, dict]) -> None:
         entry = {"n": i + 1, "status": status, **step}
         if status == "done" and "error" not in done[k]:
             r = done[k]
-            entry["Cl"] = r.get("Cl_mean")
+            entry["Cl"] = r.get("Cl_from_Cp_force_consistent", r.get("Cl_mean"))
             entry["Cd"] = r.get("Cd_mean")
         entries.append(entry)
     n_done = sum(1 for e in entries if e["status"] == "done")
@@ -144,6 +148,9 @@ def run_step(step: dict) -> dict:
     row = dict(
         dx_min=dx, alpha=alpha,
         nx=int(mesh.nx), ny=int(mesh.ny),
+        projection_variant=cfg["projection_variant"],
+        mg_pressure_accumulation=cfg["mg_pressure_accumulation"],
+        wall_pressure_gradient_mode=cfg["wall_pressure_gradient_mode"],
         Cl_mean=cl_mean, Cl_final=cl_final, Cl_std=cl_std,
         Cd_mean=cd_mean, Cd_final=cd_final, Cd_std=cd_std,
         Ef_mean=ef_mean, Ef_final=ef_final,
@@ -154,6 +161,7 @@ def run_step(step: dict) -> dict:
         elapsed_s=elapsed,
         its_per_s=float(ITER / elapsed) if elapsed > 0 else 0.0,
     )
+    add_force_consistent_metrics(row, mesh, cfg)
 
     try:
         _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -161,10 +169,15 @@ def run_step(step: dict) -> dict:
             sys.path.insert(0, _root)
         from bl_correction import compute_corrected_forces
         bl = compute_corrected_forces(mesh, filepath=BASE_CFG["filepath"],
-                                      alpha_deg=float(alpha))
+                                      alpha_deg=float(alpha),
+                                      Cd_p_source="both")
         row.update({
             "Cl_bl":         float(bl["Cl"]),
             "Cd_bl":         float(bl["Cd"]),
+            "Cd_bl_geom":    float(bl.get("Cd_bl_geom", float("nan"))),
+            "Cd_p_bl":       float(bl.get("Cd_p", float("nan"))),
+            "Cd_p_geom":     float(bl.get("Cd_p_geom", float("nan"))),
+            "Cd_visc_bl":    float(bl.get("Cd_visc", float("nan"))),
             "Ef_bl":         float(bl["Ef"]),
         })
     except Exception as _e:
@@ -206,7 +219,7 @@ def run_all() -> dict[str, dict]:
         try:
             row = run_step(step)
             done[k] = row
-            print(f"Cl={row['Cl_mean']:+.4f}  Cd={row['Cd_mean']:.4f}  "
+            print(f"Cl={row.get('Cl_from_Cp_force_consistent', row['Cl_mean']):+.4f}  Cd={row['Cd_mean']:.4f}  "
                   f"Ef={row['Ef_mean']:.3f}  ({row['elapsed_s']:.0f}s)", flush=True)
         except Exception as exc:
             import traceback
@@ -229,7 +242,9 @@ def save_csv(done: dict[str, dict]) -> None:
 
     # columnas fijas primero, luego el resto en orden alfabetico
     fixed = ["dx_min", "alpha", "nx", "ny",
+             "projection_variant", "mg_pressure_accumulation", "wall_pressure_gradient_mode",
              "Cl_mean", "Cl_final", "Cl_std",
+             "Cl_from_Cp_force_consistent", "Cl_final_minus_Cp_force_consistent",
              "Cd_mean", "Cd_final", "Cd_std",
              "Ef_mean", "Ef_final",
              "Cl_p", "Cl_v", "Cd_p", "Cd_v",
@@ -265,7 +280,7 @@ def generate_figures(done: dict) -> None:
     print(f"\n[figs] Generando graficas ({n_ok} corridas ok)...")
 
     metrics = [
-        ("Cl_mean", "Cl",     "Coeficiente de sustentacion"),
+        ("Cl_from_Cp_force_consistent", "Cl", "Coeficiente de sustentacion"),
         ("Cd_mean", "Cd",     "Coeficiente de resistencia"),
         ("Ef_mean", "Cl/Cd",  "Eficiencia aerodinamica"),
     ]
@@ -302,7 +317,7 @@ def generate_figures(done: dict) -> None:
     for dx in RESOLUCIONES:
         ls, mk = DX_STYLES[dx]
         _, cd = get_curve(done, dx, "Cd_mean")
-        _, cl = get_curve(done, dx, "Cl_mean")
+        _, cl = get_curve(done, dx, "Cl_from_Cp_force_consistent")
         if len(cd) == 0:
             continue
         ax.plot(cd, cl, color=DX_COLORS[dx], linestyle=ls, marker=mk,

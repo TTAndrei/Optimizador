@@ -12,10 +12,20 @@ import os
 import csv
 import time
 import math
+import sys
+from pathlib import Path
 import numpy as np
 import cupy as cp
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPT_DIR.parent
+os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TMPDIR", "/tmp")) / "matplotlib-cache"))
+sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(ROOT_DIR))
+
 import matplotlib.pyplot as plt
 import Simulador2D
+from sim_defaults import PROJECTION_DEFAULTS
 
 # -----------------------------
 # Configuración
@@ -42,6 +52,7 @@ CONFIG = {
     'usar_wale': False,
     'usar_viscosidad_estela': False,
     'stop_on_convergence': False,
+    **PROJECTION_DEFAULTS,
 }
 
 
@@ -65,6 +76,9 @@ def ejecutar_simulacion(alpha_deg, dx_grueso):
         usar_wale=CONFIG['usar_wale'],
         usar_viscosidad_estela=CONFIG['usar_viscosidad_estela'],
         stop_on_convergence=CONFIG['stop_on_convergence'],
+        projection_variant=CONFIG['projection_variant'],
+        mg_pressure_accumulation=CONFIG['mg_pressure_accumulation'],
+        wall_pressure_gradient_mode=CONFIG['wall_pressure_gradient_mode'],
     )
     return mesh_fina, mesh_gruesa, geometria
 

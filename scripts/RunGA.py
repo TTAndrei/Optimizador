@@ -1185,6 +1185,9 @@ def simular_perfil(filepath_temp, alpha_deg, config):
             'alpha_deg': alpha_deg,
             'chord': config['chord'],
             'graficos': False,
+            'projection_variant': 'legacy_centered',
+            'mg_pressure_accumulation': 'outer_sum',
+            'wall_pressure_gradient_mode': 'masked',
         }
 
         # Parámetros extra opcionales del usuario
@@ -1214,10 +1217,27 @@ def simular_perfil(filepath_temp, alpha_deg, config):
             print(f"   [!] Resultado NaN/Inf @ alpha={alpha_deg}°")
             return None
 
-        ld = cl_val / cd_val if abs(cd_val) > 1e-6 else 0.0
+        cl_force = cl_val
+        try:
+            rho = float(sim_params.get('rho', 1.225))
+            nu = float(sim_params.get('nu', 1.5e-5))
+            audit = mesh_gruesa.extract_surface_force_audit(
+                mu=rho * nu,
+                rho=rho,
+                chord=float(sim_params.get('chord', 1.0)),
+                n_extrap_layers=5,
+            )
+            val = float(audit.get("summary", {}).get("Cl_from_Cp_force_consistent", cl_val))
+            if np.isfinite(val):
+                cl_force = val
+        except Exception:
+            pass
+
+        ld = cl_force / cd_val if abs(cd_val) > 1e-6 else 0.0
 
         return {
-            'cl': round(cl_val, 6), 'cd': round(cd_val, 6), 'ld': round(ld, 4),
+            'cl': round(cl_force, 6), 'cd': round(cd_val, 6), 'ld': round(ld, 4),
+            'cl_raw': round(cl_val, 6),
             'cl_std': round(cl_std, 6), 'cd_std': round(cd_std, 6),
             'n_samples': int(len(cd_arr)),
         }

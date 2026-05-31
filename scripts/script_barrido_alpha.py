@@ -30,9 +30,10 @@ import matplotlib.pyplot as plt
 
 from Simulador2D import main as sim_main  # noqa: E402
 from bl_correction import compute_corrected_forces  # noqa: E402
+from sim_defaults import PROJECTION_DEFAULTS  # noqa: E402
 
 
-DEFAULT_ALPHAS = "-10:12:2"
+DEFAULT_ALPHAS = "0:10:1"  # rango de 0 a 10 grados con paso de 1 grado
 
 
 def finite_or_nan(value: Any) -> float:
@@ -114,9 +115,7 @@ def base_config(args: argparse.Namespace) -> dict[str, Any]:
         "mostrar_malla": False,
         "stop_on_convergence": False,
         "corregir_deriva_vertical": False,
-        "projection_variant": "legacy_centered",
-        "mg_pressure_accumulation": "outer_sum",
-        "wall_pressure_gradient_mode": "masked",
+        **PROJECTION_DEFAULTS,
         "ibm_wall_mode": "ghost_noslip",
         "mg_modo_turbo": False,
         "mg_modo_turbo_hd": args.mg_turbo_hd,
@@ -186,9 +185,14 @@ def run_alpha(alpha: float, cfg_base: dict[str, Any], discard_frac: float) -> di
         "Cl_p": finite_or_nan(forces["Lift_p"] / q_dyn),
         "Cl_v": finite_or_nan(forces["Lift_v"] / q_dyn),
         "Cl_from_Cp_force_consistent": finite_or_nan(audit_summary.get("Cl_from_Cp_force_consistent")),
+        "Cd_from_Cp_force_consistent": finite_or_nan(audit_summary.get("Cd_from_Cp_force_consistent")),
         "Cl_final_minus_Cp_force_consistent": finite_or_nan(
             cl_final - finite_or_nan(audit_summary.get("Cl_from_Cp_force_consistent"))
         ),
+        "Cd_final_minus_Cp_force_consistent": finite_or_nan(
+            cd_final - finite_or_nan(audit_summary.get("Cd_from_Cp_force_consistent"))
+        ),
+        "Cd_p_debiased": finite_or_nan(audit_summary.get("Cd_from_Cp_force_consistent")),
         "Cp_force_consistent_range": finite_or_nan(audit_summary.get("Cp_force_consistent_range")),
         "pressure_debias_model": audit_summary.get("pressure_debias_model", ""),
         "div_mean": div_mean,
@@ -201,6 +205,18 @@ def run_alpha(alpha: float, cfg_base: dict[str, Any], discard_frac: float) -> di
         "n_muestras_cl": n_cl,
         "elapsed_s": float(elapsed),
     }
+    try:
+        raw_summary = mesh.extract_surface_force_audit(
+            mu=mu,
+            rho=rho,
+            chord=chord,
+            n_extrap_layers=5,
+            pressure_debias_mode="none",
+        )["summary"]
+        row["Cd_p_raw"] = finite_or_nan(raw_summary.get("Cd_from_Cp_force_consistent"))
+    except Exception as exc:
+        row["Cd_p_raw"] = float("nan")
+        row["surface_force_raw_audit_warn"] = str(exc)
 
     try:
         bl = compute_corrected_forces(
@@ -211,11 +227,15 @@ def run_alpha(alpha: float, cfg_base: dict[str, Any], discard_frac: float) -> di
             chord=chord,
             v_inf=u_ref,
             Re=u_ref * chord / max(nu, 1e-30),
+            Cd_p_source="both",
         )
         row.update({
             "Cl_bl": finite_or_nan(bl.get("Cl")),
             "Cd_bl": finite_or_nan(bl.get("Cd")),
+            "Cd_bl_geom": finite_or_nan(bl.get("Cd_bl_geom")),
             "Cd_p_bl": finite_or_nan(bl.get("Cd_p")),
+            "Cd_p_ibm_bl": finite_or_nan(bl.get("Cd_p_ibm")),
+            "Cd_p_geom": finite_or_nan(bl.get("Cd_p_geom")),
             "Cd_visc_bl": finite_or_nan(bl.get("Cd_visc")),
             "Ef_bl": finite_or_nan(bl.get("Ef")),
             "Cl_inviscid": finite_or_nan(bl.get("Cl_inviscid")),
@@ -242,7 +262,14 @@ def plot_curves(rows: list[dict[str, Any]], out_dir: Path) -> None:
 
     plots = [
         ("Cl", "Cl vs alpha", [("Cl_final", "Cl final"), ("Cl_from_Cp_force_consistent", "Cl Cp force")]),
-        ("Cd", "Cd vs alpha", [("Cd_final", "Cd final"), ("Cd_p", "Cd presion"), ("Cd_v", "Cd viscoso")]),
+        ("Cd", "Cd vs alpha", [
+            ("Cd_final", "Cd final"),
+            ("Cd_p", "Cd presion IBM"),
+            ("Cd_p_geom", "Cd presion geom"),
+            ("Cd_bl", "Cd BL"),
+            ("Cd_bl_geom", "Cd BL geom"),
+            ("Cd_v", "Cd viscoso CFD"),
+        ]),
         ("Eficiencia", "Cl/Cd vs alpha", [("Ef_final", "Ef final")]),
         ("Divergencia", "div_flux vs alpha", [("div_flux_final", "div flux final"), ("wall_leak_max_final", "wall leak max")]),
     ]

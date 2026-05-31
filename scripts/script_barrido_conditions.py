@@ -39,6 +39,7 @@ import cupy as cp
 import numpy as np
 
 import Simulador2D
+from scripts.sim_defaults import PROJECTION_DEFAULTS, add_force_consistent_metrics, finite_or_nan
 
 # Importar helpers de RunGA para parametrización geométrica y logging
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
@@ -83,6 +84,7 @@ SIM_PARAMS_BASE = {
     'mostrar_malla': False,
     'mg_modo_turbo': True,
     'divergencia': 1e-1,
+    **PROJECTION_DEFAULTS,
 }
 
 DESCARTE_FRAC = 0.20
@@ -184,11 +186,19 @@ def simular_punto(filepath, alpha_deg, v0x, params_base):
             return None
 
         ld = cl_val / cd_val if abs(cd_val) > 1e-6 else 0.0
+        metric_row = {"Cl_final": cl_val}
+        add_force_consistent_metrics(metric_row, mesh, sim_params)
+        cl_force = finite_or_nan(metric_row.get("Cl_from_Cp_force_consistent"))
+        cl_dataset = cl_force if np.isfinite(cl_force) else cl_val
+        ld_dataset = cl_dataset / cd_val if abs(cd_val) > 1e-6 else 0.0
 
         return {
-            'cl': round(cl_val, 6),
+            'cl': round(cl_dataset, 6),
+            'cl_raw': round(cl_val, 6),
+            'cl_force_consistent': round(cl_force, 6) if np.isfinite(cl_force) else float("nan"),
             'cd': round(cd_val, 6),
-            'ld': round(ld, 4),
+            'ld': round(ld_dataset, 4),
+            'ld_raw': round(ld, 4),
             'cl_std': round(cl_std, 6),
             'cd_std': round(cd_std, 6),
             'n_samples': int(len(cd_arr)),

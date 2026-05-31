@@ -1,15 +1,24 @@
-"""
-Comparativa Simulador2D vs XFoil NACA0012 Re=100k
-"""
+"""Comparativa Simulador2D vs XFoil NACA0012 Re=100k."""
 import json
 import csv
+import os
+import sys
 import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TMPDIR", "/tmp")) / "matplotlib-cache"))
+
+import matplotlib.pyplot as plt
+
+from sim_defaults import preferred_cl_column, preferred_cd_column
+
 # ── Cargar XFoil ──────────────────────────────────────────────────────────────
-xfoil_path = Path("ComparativasReales/NACA0012_100k_Xfoil.csv")
+xfoil_path = ROOT / "data" / "ComparativasReales" / "NACA0012_100k_Xfoil.csv"
 xf_alpha, xf_cl, xf_cd = [], [], []
 with open(xfoil_path) as f:
     reader = csv.reader(f)
@@ -34,21 +43,37 @@ xf_cd = np.array(xf_cd)
 xf_eff = xf_cl / xf_cd
 
 # ── Cargar simulador ──────────────────────────────────────────────────────────
-with open("barrido_modos_resultados.json") as f:
+sim_path = ROOT / "results" / "barridos" / "barrido_modos_outer_sum" / "summary.json"
+with open(sim_path) as f:
     data = json.load(f)
 
+if isinstance(data, dict):
+    data = data.get("results", [])
+
 modes = ["turbo", "turbo_hd", "turbo_ultra"]
-mode_labels = {"turbo": "Turbo (dx=0.002)", "turbo_hd": "Turbo HD (dx=0.0015)", "turbo_ultra": "Turbo Ultra (dx=0.001)"}
+DX_EVAL = 0.001
+mode_labels = {
+    "turbo": f"Turbo (dx={DX_EVAL:g})",
+    "turbo_hd": f"Turbo HD (dx={DX_EVAL:g})",
+    "turbo_ultra": f"Turbo Ultra (dx={DX_EVAL:g})",
+}
 mode_colors = {"turbo": "#e74c3c", "turbo_hd": "#f39c12", "turbo_ultra": "#2ecc71"}
 mode_markers = {"turbo": "o", "turbo_hd": "s", "turbo_ultra": "^"}
 
 sim = {}
 for mode in modes:
-    entries = sorted([d for d in data if d["modo"] == mode], key=lambda x: x["alpha"])
+    entries = sorted(
+        [d for d in data if d["modo"] == mode and abs(float(d.get("dx_min", DX_EVAL)) - DX_EVAL) < 1e-12],
+        key=lambda x: x["alpha"],
+    )
+    if not entries:
+        continue
+    cl_col = preferred_cl_column(set(entries[0].keys()))
+    cd_col = preferred_cd_column(set(entries[0].keys()), prefer_bl=True)
     sim[mode] = {
         "alpha": np.array([d["alpha"] for d in entries]),
-        "cl":    np.array([d["Cl_mean"] for d in entries]),
-        "cd":    np.array([d["Cd_mean"] for d in entries]),
+        "cl":    np.array([d[cl_col] for d in entries], dtype=float),
+        "cd":    np.array([d[cd_col] for d in entries], dtype=float),
         "cl_std": np.array([d["Cl_std"] for d in entries]),
         "cd_std": np.array([d["Cd_std"] for d in entries]),
     }
@@ -65,6 +90,8 @@ xf_e = xf_eff[mask]
 # ── Errores medios ────────────────────────────────────────────────────────────
 print(f"{'Modo':<15} {'dCl RMS':>10} {'dCd RMS':>10} {'dEf RMS':>10}")
 for mode in modes:
+    if mode not in sim:
+        continue
     a = sim[mode]["alpha"]
     xf_cl_interp = np.interp(a, xf_alpha, xf_cl)
     xf_cd_interp = np.interp(a, xf_alpha, xf_cd)
@@ -87,6 +114,8 @@ ax_pol = fig.add_subplot(gs[1, 1])
 # ─ Cl vs alpha ─
 ax_cl.plot(xf_a, xf_c, "k-", lw=2, label="XFoil", zorder=10)
 for mode in modes:
+    if mode not in sim:
+        continue
     a = sim[mode]["alpha"]
     cl = sim[mode]["cl"]
     std = sim[mode]["cl_std"]
@@ -103,6 +132,8 @@ ax_cl.axhline(0, color="k", lw=0.5, ls="--")
 # ─ Cd vs alpha ─
 ax_cd.plot(xf_a, xf_d, "k-", lw=2, label="XFoil", zorder=10)
 for mode in modes:
+    if mode not in sim:
+        continue
     a = sim[mode]["alpha"]
     cd = sim[mode]["cd"]
     std = sim[mode]["cd_std"]
@@ -118,6 +149,8 @@ ax_cd.grid(True, alpha=0.3)
 # ─ Eficiencia vs alpha ─
 ax_eff.plot(xf_a, xf_e, "k-", lw=2, label="XFoil", zorder=10)
 for mode in modes:
+    if mode not in sim:
+        continue
     a = sim[mode]["alpha"]
     eff = sim[mode]["eff"]
     ax_eff.plot(a, eff, mode_markers[mode]+"-", color=mode_colors[mode],
@@ -132,6 +165,8 @@ ax_eff.axhline(0, color="k", lw=0.5, ls="--")
 # ─ Polar Cl vs Cd ─
 ax_pol.plot(xf_d, xf_c, "k-", lw=2, label="XFoil", zorder=10)
 for mode in modes:
+    if mode not in sim:
+        continue
     cd = sim[mode]["cd"]
     cl = sim[mode]["cl"]
     ax_pol.plot(cd, cl, mode_markers[mode]+"-", color=mode_colors[mode],
@@ -142,10 +177,12 @@ ax_pol.set_title("Polar aerodinámica (Cl vs Cd)")
 ax_pol.legend(fontsize=8)
 ax_pol.grid(True, alpha=0.3)
 
-out = "comparativa_xfoil.png"
+out_dir = ROOT / "results" / "comparativas"
+out_dir.mkdir(parents=True, exist_ok=True)
+out = out_dir / "comparativa_xfoil.png"
 fig.savefig(out, dpi=150, bbox_inches="tight")
 print(f"\nGuardado: {out}")
-plt.show()
+plt.close(fig)
 
 # ── Figura de errores ─────────────────────────────────────────────────────────
 # Cl: error absoluto (Cl cruza cero → relativo explota)
@@ -154,6 +191,8 @@ fig2, axes = plt.subplots(1, 2, figsize=(14, 5))
 fig2.suptitle("Error vs XFoil (Re=100k) — Cl absoluto | Cd relativo", fontsize=13, fontweight="bold")
 
 for mode in modes:
+    if mode not in sim:
+        continue
     a = sim[mode]["alpha"]
     xf_cl_i = np.interp(a, xf_alpha, xf_cl)
     xf_cd_i = np.interp(a, xf_alpha, xf_cd)
@@ -184,11 +223,11 @@ axes[1].set_title("Error relativo Cd (%)")
 axes[1].legend(fontsize=8)
 axes[1].grid(True, alpha=0.3)
 
-out2 = "comparativa_xfoil_errores.png"
+out2 = out_dir / "comparativa_xfoil_errores.png"
 fig2.tight_layout()
 fig2.savefig(out2, dpi=150, bbox_inches="tight")
 print(f"Guardado: {out2}")
-plt.show()
+plt.close(fig2)
 
 # ── Figura extra: Cl y Cd lado a lado con XFoil superpuesto ───────────────────
 fig3, axes3 = plt.subplots(1, 2, figsize=(14, 5))
@@ -197,6 +236,8 @@ fig3.suptitle("Comparativa directa: Simulador vs XFoil", fontsize=13, fontweight
 axes3[0].plot(xf_a, xf_c, "k-", lw=2.5, label="XFoil", zorder=10)
 axes3[1].plot(xf_a, xf_d, "k-", lw=2.5, label="XFoil", zorder=10)
 for mode in modes:
+    if mode not in sim:
+        continue
     a = sim[mode]["alpha"]
     axes3[0].plot(a, sim[mode]["cl"], mode_markers[mode]+"--",
                   color=mode_colors[mode], label=mode_labels[mode], ms=5, lw=1.4)
@@ -210,8 +251,8 @@ for ax, ylabel, title in zip(axes3, ["Cl", "Cd"], ["Cl vs alfa", "Cd vs alfa"]):
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
-out3 = "comparativa_xfoil_directa.png"
+out3 = out_dir / "comparativa_xfoil_directa.png"
 fig3.tight_layout()
 fig3.savefig(out3, dpi=150, bbox_inches="tight")
 print(f"Guardado: {out3}")
-plt.show()
+plt.close(fig3)

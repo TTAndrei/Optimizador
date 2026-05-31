@@ -34,11 +34,16 @@ import time
 from pathlib import Path
 
 import cupy as cp
-import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPT_DIR.parent
+os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TMPDIR", "/tmp")) / "matplotlib-cache"))
+sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(ROOT_DIR))
+import matplotlib.pyplot as plt
 from Simulador2D import main as sim_main
+from sim_defaults import PROJECTION_DEFAULTS, add_force_consistent_metrics
 
 # ─── Configuracion ────────────────────────────────────────────────────────────
 ALPHAS      = list(range(-10, 11))
@@ -65,11 +70,13 @@ BASE_CFG = dict(
     graficos=False, save_frames=False, live_view=False,
     mostrar_malla=False, stop_on_convergence=False,
     corregir_deriva_vertical=False,
+    **PROJECTION_DEFAULTS,
 )
 
-BASE = Path(__file__).parent
-OUT_RESULTS = BASE / "barrido_modos_resultados.json"
-OUT_PLAN    = BASE / "barrido_modos_plan.json"
+BASE = ROOT_DIR / "results" / "barridos" / "barrido_modos_outer_sum"
+BASE.mkdir(parents=True, exist_ok=True)
+OUT_RESULTS = BASE / "summary.json"
+OUT_PLAN    = BASE / "plan.json"
 
 # ─── Estilo grafico ───────────────────────────────────────────────────────────
 MODO_COLORS = {"turbo": "#2196F3", "turbo_hd": "#FF5722", "turbo_ultra": "#4CAF50"}
@@ -117,7 +124,7 @@ def save_plan_status(done: dict[str, dict]) -> None:
         entry = {"n": i + 1, "status": status, **step}
         if status == "done" and "error" not in done[k]:
             r = done[k]
-            entry["Cl"] = r.get("Cl_mean")
+            entry["Cl"] = r.get("Cl_from_Cp_force_consistent", r.get("Cl_mean"))
             entry["Cd"] = r.get("Cd_mean")
         entries.append(entry)
     n_done = sum(1 for e in entries if e["status"] == "done")
@@ -160,6 +167,9 @@ def run_step(step: dict) -> dict:
     row = dict(
         modo=modo, dx_min=dx, alpha=alpha,
         nx=int(mesh.nx), ny=int(mesh.ny),
+        projection_variant=cfg["projection_variant"],
+        mg_pressure_accumulation=cfg["mg_pressure_accumulation"],
+        wall_pressure_gradient_mode=cfg["wall_pressure_gradient_mode"],
         Cl_mean=cl_mean, Cl_final=cl_final, Cl_std=cl_std,
         Cd_mean=cd_mean, Cd_final=cd_final, Cd_std=cd_std,
         Ef_mean=ef_mean, Ef_final=ef_final,
@@ -170,6 +180,7 @@ def run_step(step: dict) -> dict:
         elapsed_s=elapsed,
         its_per_s=float(ITER / elapsed) if elapsed > 0 else 0.0,
     )
+    add_force_consistent_metrics(row, mesh, cfg)
 
     try:
         _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -177,11 +188,14 @@ def run_step(step: dict) -> dict:
             sys.path.insert(0, _root)
         from bl_correction import compute_corrected_forces
         bl = compute_corrected_forces(mesh, filepath=BASE_CFG["filepath"],
-                                      alpha_deg=float(alpha))
+                                      alpha_deg=float(alpha),
+                                      Cd_p_source="both")
         row.update({
             "Cl_bl":         float(bl["Cl"]),
             "Cd_bl":         float(bl["Cd"]),
+            "Cd_bl_geom":    float(bl.get("Cd_bl_geom", float("nan"))),
             "Cd_p_bl":       float(bl["Cd_p"]),
+            "Cd_p_geom":     float(bl.get("Cd_p_geom", float("nan"))),
             "Cd_visc_bl":    float(bl["Cd_visc"]),
             "Ef_bl":         float(bl["Ef"]),
             "trans_x_upper": float(bl["trans_x_upper"]),
@@ -230,7 +244,7 @@ def run_all() -> dict[str, dict]:
         try:
             row = run_step(step)
             done[k] = row
-            print(f"Cl={row['Cl_mean']:+.4f}  Cd={row['Cd_mean']:.4f}  "
+            print(f"Cl={row.get('Cl_from_Cp_force_consistent', row['Cl_mean']):+.4f}  Cd={row['Cd_mean']:.4f}  "
                   f"Ef={row['Ef_mean']:.3f}  ({row['elapsed_s']:.0f}s)", flush=True)
         except Exception as exc:
             import traceback
@@ -266,7 +280,8 @@ def fig_comparacion_modos(done: dict, metric: str) -> None:
     for col, dx in enumerate(RESOLUCIONES):
         ax = axes[col]
         for modo in MODOS:
-            a, v = get_curve(done, modo, dx, f"{metric}_mean")
+            key = "Cl_from_Cp_force_consistent" if metric == "Cl" else f"{metric}_mean"
+            a, v = get_curve(done, modo, dx, key)
             if len(a) == 0:
                 continue
             ax.plot(a, v, color=MODO_COLORS[modo], marker="o",
@@ -288,7 +303,7 @@ def fig_comparacion_modos(done: dict, metric: str) -> None:
 
 def fig_convergencia_malla(done: dict, modo: str) -> None:
     """1×3 subplots (Cl/Cd/Ef), 3 lineas=dx_min."""
-    metrics = [("Cl_mean", "Cl"), ("Cd_mean", "Cd"), ("Ef_mean", "Cl/Cd")]
+    metrics = [("Cl_from_Cp_force_consistent", "Cl"), ("Cd_mean", "Cd"), ("Ef_mean", "Cl/Cd")]
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
     fig.suptitle(f"Convergencia malla — {MODO_LABELS[modo]}  (Re=100k, NACA 0012)", fontsize=13)
 
@@ -324,7 +339,8 @@ def fig_resumen_grid(done: dict, metric: str) -> None:
     for ri, modo in enumerate(modos_list):
         for ci, dx in enumerate(RESOLUCIONES):
             ax = axes[ri][ci]
-            a, v = get_curve(done, modo, dx, f"{metric}_mean")
+            key = "Cl_from_Cp_force_consistent" if metric == "Cl" else f"{metric}_mean"
+            a, v = get_curve(done, modo, dx, key)
             if len(a):
                 ax.plot(a, v, color=MODO_COLORS[modo], linewidth=2,
                         marker="o", markersize=3)
@@ -417,7 +433,7 @@ def fig_polar(done: dict) -> None:
         for dx in RESOLUCIONES:
             ls, mk = DX_STYLES[dx]
             _, cd = get_curve(done, modo, dx, "Cd_mean")
-            _, cl = get_curve(done, modo, dx, "Cl_mean")
+            _, cl = get_curve(done, modo, dx, "Cl_from_Cp_force_consistent")
             if len(cd) == 0:
                 continue
             ax.plot(cd, cl, color=MODO_COLORS[modo], linestyle=ls, marker=mk,
