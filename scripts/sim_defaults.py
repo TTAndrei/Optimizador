@@ -9,6 +9,9 @@ PROJECTION_DEFAULTS: dict[str, Any] = {
     "projection_variant": "legacy_centered",
     "mg_pressure_accumulation": "outer_sum",
     "wall_pressure_gradient_mode": "masked",
+    "pressure_wall_reconstruction": "linear_5",
+    "min_te_height_factor": 2.0,
+    "wake_refinement_mode": "base",
 }
 
 

@@ -103,6 +103,51 @@ def generar_malla_estirada(L, x_centro, dx_min, factor_expansion=1.05,
     return X_1d.astype(np.float64)
 
 
+def generar_malla_estirada_intervalo(L, x_fino_min, x_fino_max, dx_min,
+                                     factor_expansion=1.05, dx_max=None):
+    """Version con banda fina explicita, util para extender wake sin mover el LE."""
+    if dx_max is None:
+        dx_max = 20.0 * dx_min
+
+    x_fino_min = max(0.0, float(x_fino_min))
+    x_fino_max = min(float(L), float(x_fino_max))
+    if x_fino_max <= x_fino_min:
+        x_fino_max = min(float(L), x_fino_min + float(dx_min))
+
+    n_fino = max(1, int(round((x_fino_max - x_fino_min) / dx_min)))
+    x_fino = np.linspace(x_fino_min, x_fino_max, n_fino + 1)
+
+    x_left = []
+    x = x_fino_min
+    dx = dx_min
+    while x > 0.0:
+        dx = min(dx * factor_expansion, dx_max)
+        x = x - dx
+        if x <= 0.0:
+            x = 0.0
+        x_left.append(x)
+    x_left = np.array(x_left[::-1])
+
+    x_right = []
+    x = x_fino_max
+    dx = dx_min
+    while x < L:
+        dx = min(dx * factor_expansion, dx_max)
+        x = x + dx
+        if x >= L:
+            x = L
+        x_right.append(x)
+    x_right = np.array(x_right)
+
+    X_1d = np.concatenate([x_left, x_fino, x_right])
+    X_1d = np.unique(X_1d)
+    if X_1d[0] != 0.0:
+        X_1d = np.concatenate([[0.0], X_1d])
+    if X_1d[-1] != L:
+        X_1d = np.concatenate([X_1d, [L]])
+    return X_1d.astype(np.float64)
+
+
 def calcular_metricas_1d(pos_1d_gpu, pos_1d_f64=None):
     """
     Dada una secuencia monótona de posiciones (CuPy float32, longitud N),
@@ -4831,11 +4876,13 @@ class Mesh:
         else:
             plt.close()
 
-    def save_frame(self, out_dir, iteration, kind="velocity", scale=1.0):
+    def save_frame(self, out_dir, iteration, kind="velocity", scale=1.0,
+                   xlim=None, ylim=None, dpi=600, title_suffix=""):
         """
         Guarda una imagen del estado actual en out_dir con nombre frame_XXXX.png.
         kind: "velocity" (mapa |u|) o "traction" (quiver presión/viscosa en frontera).
         scale: factor de escala para flechas de tracción.
+        xlim/ylim: recorte fisico opcional, por ejemplo la zona refinada.
         """
         # Crear carpeta si no existe
         os.makedirs(out_dir, exist_ok=True)
@@ -4859,13 +4906,14 @@ class Mesh:
                 ax = plt.gca()
                 im = ax.pcolormesh(X_np, Y_np, speed_np, cmap='rainbow', shading='auto')
                 ax.set_aspect('equal', adjustable='box')
-                ax.set_xlim(0, self.Lx)
-                ax.set_ylim(0, self.Ly)
+                ax.set_xlim(xlim if xlim is not None else (0, self.Lx))
+                ax.set_ylim(ylim if ylim is not None else (0, self.Ly))
                 plt.colorbar(im, label="|u|")
                 plt.xlabel("x")
                 plt.ylabel("y")
-                plt.title(f"Velocidad |u| (iter {iteration})")
-                plt.savefig(fname, dpi=600, bbox_inches="tight")
+                suffix = f" - {title_suffix}" if title_suffix else ""
+                plt.title(f"Velocidad |u| (iter {iteration}){suffix}")
+                plt.savefig(fname, dpi=dpi, bbox_inches="tight")
             elif kind == "traction":
                 # Necesita mu; si no lo tienes global, ajusta el valor al llamar
                 # Usamos mu=1 por defecto; puedes pasar el real vía una variante si lo prefieres
@@ -4885,8 +4933,13 @@ class Mesh:
                            label="Tracción viscosa")
                 plt.legend()
                 plt.xlabel("x"); plt.ylabel("y")
-                plt.title(f"Tracción en superficie (iter {iteration})")
-                plt.savefig(fname, dpi=600, bbox_inches="tight")
+                if xlim is not None:
+                    plt.xlim(xlim)
+                if ylim is not None:
+                    plt.ylim(ylim)
+                suffix = f" - {title_suffix}" if title_suffix else ""
+                plt.title(f"Tracción en superficie (iter {iteration}){suffix}")
+                plt.savefig(fname, dpi=dpi, bbox_inches="tight")
             else:
                 raise ValueError("kind debe ser 'velocity' o 'traction'")
         finally:
@@ -4998,8 +5051,138 @@ class Mesh:
             )
         return mode
 
+    def _validate_pressure_wall_reconstruction(self, pressure_wall_reconstruction):
+        valid = {
+            "linear_5",
+            "linear_9",
+            "weighted_linear_9",
+            "quadratic_9",
+            "robust_huber_9",
+        }
+        mode = "linear_5" if pressure_wall_reconstruction is None else str(pressure_wall_reconstruction)
+        if mode not in valid:
+            raise ValueError(
+                f"pressure_wall_reconstruction invalido: {pressure_wall_reconstruction!r}. "
+                f"Opciones validas: {sorted(valid)}"
+            )
+        return mode
+
+    def _reconstruct_pressure_wall(self, p_layers, positions, pressure_wall_reconstruction):
+        mode = self._validate_pressure_wall_reconstruction(pressure_wall_reconstruction)
+        n_layers = int(len(p_layers))
+        if n_layers <= 0:
+            raise ValueError("p_layers vacio en _reconstruct_pressure_wall")
+
+        x = positions.astype(cp.float32)
+        y = cp.stack([p.astype(cp.float32, copy=False) for p in p_layers], axis=0)
+        field_shape = y.shape[1:]
+        expand_shape = (n_layers,) + (1,) * len(field_shape)
+        x_col = x.reshape(expand_shape)
+        residual = cp.zeros(field_shape, dtype=cp.float32)
+        n_valid = cp.full(field_shape, n_layers, dtype=cp.float32)
+        warn = cp.zeros(field_shape, dtype=cp.float32)
+
+        if n_layers == 1:
+            return y[0], residual, n_valid, cp.ones(field_shape, dtype=cp.float32), warn, mode
+
+        def _safe_weighted_linear_fit(weights):
+            w = cp.asarray(weights, dtype=cp.float32)
+            w_col = w.reshape(expand_shape)
+            sum_w = cp.sum(w)
+            if float(sum_w) <= 0.0:
+                raise ValueError("pesos invalidos en ajuste lineal")
+            xw = cp.sum(w * x) / sum_w
+            yc = y - cp.sum(w_col * y, axis=0, keepdims=True) / sum_w
+            xc = x - xw
+            xc_col = xc.reshape(expand_shape)
+            denom = cp.sum(w * xc * xc)
+            denom = cp.maximum(denom, cp.float32(1e-12))
+            slope = cp.sum((w * xc).reshape(expand_shape) * yc, axis=0) / denom
+            intercept = cp.sum(w_col * (y - slope[cp.newaxis, ...] * x_col), axis=0) / sum_w
+            fit = intercept[cp.newaxis, ...] + x_col * slope[cp.newaxis, ...]
+            resid = cp.sqrt(cp.mean((y - fit) ** 2, axis=0))
+            return intercept.astype(cp.float32), resid.astype(cp.float32), fit.astype(cp.float32)
+
+        if mode == "linear_5":
+            intercept, residual, _ = _safe_weighted_linear_fit(cp.ones(n_layers, dtype=cp.float32))
+            valid_fraction = cp.ones(field_shape, dtype=cp.float32)
+            warn = cp.where(n_valid < 5.0, cp.float32(1.0), cp.float32(0.0))
+            return intercept, residual, n_valid, valid_fraction, warn, mode
+
+        if mode == "linear_9":
+            intercept, residual, _ = _safe_weighted_linear_fit(cp.ones(n_layers, dtype=cp.float32))
+            valid_fraction = cp.ones(field_shape, dtype=cp.float32)
+            warn = cp.where(n_valid < 9.0, cp.float32(1.0), cp.float32(0.0))
+            return intercept, residual, n_valid, valid_fraction, warn, mode
+
+        if mode == "weighted_linear_9":
+            centers = cp.array([3.0, 4.0, 5.0], dtype=cp.float32)
+            sigma = cp.float32(1.6)
+            weights = cp.zeros(n_layers, dtype=cp.float32)
+            for center in centers:
+                weights += cp.exp(-0.5 * ((x - center) / sigma) ** 2)
+            weights = cp.maximum(weights, cp.float32(0.05))
+            intercept, residual, _ = _safe_weighted_linear_fit(weights)
+            valid_fraction = cp.ones(field_shape, dtype=cp.float32)
+            warn = cp.where(n_valid < 9.0, cp.float32(1.0), cp.float32(0.0))
+            return intercept, residual, n_valid, valid_fraction, warn, mode
+
+        if mode == "quadratic_9":
+            if n_layers < 3:
+                intercept, residual, _ = _safe_weighted_linear_fit(cp.ones(n_layers, dtype=cp.float32))
+                warn = cp.ones(field_shape, dtype=cp.float32)
+                valid_fraction = cp.full(field_shape, float(n_layers) / 9.0, dtype=cp.float32)
+                return intercept, residual, n_valid, valid_fraction, warn, "linear_fallback_from_quadratic_9"
+            A = cp.stack([cp.ones_like(x), x, x * x], axis=1).astype(cp.float32)
+            ATA = A.T @ A
+            reg = cp.float32(1e-8) * cp.eye(3, dtype=cp.float32)
+            rhs = cp.stack([
+                cp.sum(y, axis=0),
+                cp.sum(x_col * y, axis=0),
+                cp.sum(x_col * x_col * y, axis=0),
+            ], axis=0)
+            coeff = cp.tensordot(cp.linalg.inv(ATA + reg), rhs, axes=(1, 0))
+            fit = (
+                coeff[0][cp.newaxis, ...]
+                + x_col * coeff[1][cp.newaxis, ...]
+                + x_col * x_col * coeff[2][cp.newaxis, ...]
+            )
+            residual = cp.sqrt(cp.mean((y - fit) ** 2, axis=0))
+            intercept = coeff[0].astype(cp.float32)
+            valid_fraction = cp.ones(field_shape, dtype=cp.float32)
+            warn = cp.where(n_valid < 9.0, cp.float32(1.0), cp.float32(0.0))
+            return intercept, residual.astype(cp.float32), n_valid, valid_fraction, warn, mode
+
+        if mode == "robust_huber_9":
+            weights = cp.ones(n_layers, dtype=cp.float32)
+            intercept, residual, fit = _safe_weighted_linear_fit(weights)
+            delta = cp.float32(1.5)
+            for _ in range(3):
+                err = y - fit
+                scale = cp.sqrt(cp.mean(err ** 2, axis=0))
+                scale = cp.maximum(scale, cp.float32(1e-6))
+                scaled = cp.abs(err) / (delta * scale[cp.newaxis, ...])
+                huber_w = cp.where(scaled <= 1.0, 1.0, 1.0 / cp.maximum(scaled, cp.float32(1e-6)))
+                sum_w = cp.sum(huber_w, axis=0)
+                x_bar = cp.sum(huber_w * x_col, axis=0) / cp.maximum(sum_w, cp.float32(1e-12))
+                y_bar = cp.sum(huber_w * y, axis=0) / cp.maximum(sum_w, cp.float32(1e-12))
+                xc = x_col - x_bar[cp.newaxis, ...]
+                yc = y - y_bar[cp.newaxis, ...]
+                denom = cp.sum(huber_w * xc * xc, axis=0)
+                denom = cp.maximum(denom, cp.float32(1e-12))
+                slope = cp.sum(huber_w * xc * yc, axis=0) / denom
+                intercept = y_bar - slope * x_bar
+                fit = intercept[cp.newaxis, ...] + x_col * slope[cp.newaxis, ...]
+                residual = cp.sqrt(cp.mean((y - fit) ** 2, axis=0))
+            valid_fraction = cp.mean(huber_w > cp.float32(0.5), axis=0).astype(cp.float32)
+            warn = cp.where(valid_fraction < 0.6, cp.float32(1.0), cp.float32(0.0))
+            return intercept.astype(cp.float32), residual.astype(cp.float32), n_valid, valid_fraction, warn, mode
+
+        raise ValueError(f"Modo no implementado: {mode}")
+
     def compute_drag_lift(self, mu, rho=1.0, n_extrap_layers=5,
-                          pressure_debias_mode=None, correct_pressure_offset=True):
+                          pressure_debias_mode=None, correct_pressure_offset=True,
+                          pressure_wall_reconstruction="linear_5"):
         """
         Calcula Drag y Lift en el sistema aerodinámico (relativo al flujo libre).
         Hace la transformación de coordenadas desde fuerzas en ejes del cuerpo (Fx, Fy)
@@ -5014,6 +5197,7 @@ class Mesh:
             n_extrap_layers=n_extrap_layers,
             pressure_debias_mode=pressure_debias_mode,
             correct_pressure_offset=correct_pressure_offset,
+            pressure_wall_reconstruction=pressure_wall_reconstruction,
         )
 
         # Descomponer en ejes viento usando ángulo real del flujo libre
@@ -5046,7 +5230,8 @@ class Mesh:
             "Fx": Fx, "Fy": Fy
         }
     def compute_surface_forces_definitive(self, mu, rho=1.0, return_per_face=False, return_cp=True, n_extrap_layers=5,
-                                          correct_pressure_offset=True, pressure_debias_mode=None):
+                                          correct_pressure_offset=True, pressure_debias_mode=None,
+                                          pressure_wall_reconstruction="linear_5"):
         """
         Versión definitiva de la integral de esfuerzos sobre el perfil.
         - Usa extrapolación de presión y viscosidad desde múltiples capas para capturar gradientes lejanos en flujos turbulentos.
@@ -5083,8 +5268,18 @@ class Mesh:
         x_face = self._bilinear_interpolate(self.XX, j_face, i_face)
         y_face = self._bilinear_interpolate(self.YY, j_face, i_face)
 
+        pressure_wall_reconstruction = self._validate_pressure_wall_reconstruction(pressure_wall_reconstruction)
+        reconstruction_layers = {
+            "linear_5": 5,
+            "linear_9": 9,
+            "weighted_linear_9": 9,
+            "quadratic_9": 9,
+            "robust_huber_9": 9,
+        }
+        n_effective_layers = int(reconstruction_layers.get(pressure_wall_reconstruction, max(1, int(n_extrap_layers))))
+
         # 4) interpolar en múltiples capas para extrapolación
-        positions = cp.array([0.5 + i * 1.0 for i in range(n_extrap_layers)], dtype=cp.float32)
+        positions = cp.array([0.5 + i * 1.0 for i in range(n_effective_layers)], dtype=cp.float32)
         p_layers = []
         for pos in positions:
             j_face_k = JJ + pos * nx_all
@@ -5092,28 +5287,9 @@ class Mesh:
             p_k = self._bilinear_interpolate(self.p, j_face_k, i_face_k)
             p_layers.append(p_k)
 
-        # Extrapolación robusta de p_wall (x=0) mediante ajuste lineal por mínimos cuadrados
-        # sobre todas las capas disponibles. Reduce ruido del TE frente al esquema de 2 puntos.
-        if n_extrap_layers >= 2:
-            n_layers_f = cp.float32(len(p_layers))
-            sum_x = cp.sum(positions)
-            sum_x2 = cp.sum(positions * positions)
-
-            sum_y = cp.zeros_like(p_layers[0], dtype=cp.float32)
-            sum_xy = cp.zeros_like(p_layers[0], dtype=cp.float32)
-            for k, pos in enumerate(positions):
-                p_k = p_layers[k]
-                sum_y += p_k
-                sum_xy += pos * p_k
-
-            denom = n_layers_f * sum_x2 - sum_x * sum_x
-            denom = cp.where(cp.abs(denom) < cp.float32(1e-12), cp.float32(1e-12), denom)
-
-            slope = (n_layers_f * sum_xy - sum_x * sum_y) / denom
-            # Intercepto en x=0: p_wall = a = (sum_y - slope*sum_x)/n
-            p_wall = (sum_y - slope * sum_x) / n_layers_f
-        else:
-            p_wall = p_layers[0]
+        p_wall, wall_fit_residual, wall_fit_valid_layers, wall_fit_valid_fraction, wall_reconstruction_warn, pressure_wall_reconstruction_used = (
+            self._reconstruct_pressure_wall(p_layers, positions, pressure_wall_reconstruction)
+        )
 
         # mu_eff en la cara: molecular + turbulenta (si WALE activo)
         if self.usar_wale:
@@ -5243,6 +5419,11 @@ class Mesh:
             "pressure_debias_a": float(debias_a),
             "pressure_debias_b": float(debias_b),
             "pressure_debias_c": float(debias_c),
+            "pressure_wall_reconstruction": pressure_wall_reconstruction_used,
+            "wall_fit_residual_mean": float(cp.mean(wall_fit_residual)),
+            "wall_fit_residual_p95": float(cp.percentile(wall_fit_residual, 95)),
+            "wall_fit_valid_fraction": float(cp.mean(wall_fit_valid_fraction)),
+            "wall_reconstruction_warn_fraction": float(cp.mean(wall_reconstruction_warn)),
         }
 
         # 8) Calcular Cp si solicitado (usando p_wall extrapolado)
@@ -5290,6 +5471,10 @@ class Mesh:
                     "p_bg_face": p_bg_face[boundary],
                     "Cp_raw_face": cp_face[boundary],
                     "Cp_force_face": cp_force_face[boundary],
+                    "wall_fit_residual_face": wall_fit_residual[boundary],
+                    "wall_fit_valid_layers_face": wall_fit_valid_layers[boundary],
+                    "wall_fit_valid_fraction_face": wall_fit_valid_fraction[boundary],
+                    "wall_reconstruction_warn_face": wall_reconstruction_warn[boundary],
                     "p_ref_cp": float(p_ref),
                     "U_ref_cp": float(U_ref),
                     "q_ref_cp": float(denom),
@@ -5298,7 +5483,8 @@ class Mesh:
         return result
 
     def extract_surface_force_audit(self, mu, rho=1.0, chord=1.0, n_extrap_layers=5,
-                                    pressure_debias_mode=None, correct_pressure_offset=True):
+                                    pressure_debias_mode=None, correct_pressure_offset=True,
+                                    pressure_wall_reconstruction="linear_5"):
         """
         Devuelve filas por cara usando exactamente la misma tracción de presión
         que compute_drag_lift(). Sirve para reconciliar Cp, Lift_p y fuerzas.
@@ -5311,6 +5497,7 @@ class Mesh:
             n_extrap_layers=n_extrap_layers,
             pressure_debias_mode=pressure_debias_mode,
             correct_pressure_offset=correct_pressure_offset,
+            pressure_wall_reconstruction=pressure_wall_reconstruction,
         )
         Xb = data.get("x_face", data.get("Xb", None))
         if Xb is None or Xb.size == 0:
@@ -5368,6 +5555,10 @@ class Mesh:
             "dLift_v": dLift_v,
             "dDrag_v": dDrag_v,
             "side_upper": side_upper,
+            "wall_fit_residual": data["wall_fit_residual_face"],
+            "wall_fit_valid_layers": data["wall_fit_valid_layers_face"],
+            "wall_fit_valid_fraction": data["wall_fit_valid_fraction_face"],
+            "wall_reconstruction_warn": data["wall_reconstruction_warn_face"],
         }
         arrays_np = {k: cp.asnumpy(v).ravel() for k, v in arrays.items()}
         order = np.argsort(arrays_np["x_over_c"])
@@ -5402,6 +5593,11 @@ class Mesh:
             "pressure_debias_a": data.get("pressure_debias_a", float("nan")),
             "pressure_debias_b": data.get("pressure_debias_b", float("nan")),
             "pressure_debias_c": data.get("pressure_debias_c", float("nan")),
+            "pressure_wall_reconstruction": data.get("pressure_wall_reconstruction", ""),
+            "wall_fit_residual_mean": data.get("wall_fit_residual_mean", float("nan")),
+            "wall_fit_residual_p95": data.get("wall_fit_residual_p95", float("nan")),
+            "wall_fit_valid_fraction": data.get("wall_fit_valid_fraction", float("nan")),
+            "wall_reconstruction_warn_fraction": data.get("wall_reconstruction_warn_fraction", float("nan")),
         }
         return {"rows": rows, "summary": summary}
 
@@ -6141,7 +6337,11 @@ def main(
     # Opciones de visualización y guardado
     save_frames=False,
     frames_dir_grueso=None,
+    frames_dir_refinado=None,
     save_frames_cada=None,
+    save_frame_refined_xlim=None,
+    save_frame_refined_ylim=None,
+    save_frame_dpi=600,
     graficos=False,
 
     # Control de convergencia
@@ -6173,6 +6373,9 @@ def main(
     wall_pressure_gradient_mode="masked",
     ibm_wall_mode="ghost_noslip",
     ibm_sdf_smooth_passes=None,
+    pressure_wall_reconstruction="linear_5",
+    min_te_height_factor=2.0,
+    wake_refinement_mode="base",
 
     # Diagnóstico detallado de spikes (costoso; usar solo al depurar)
     debug_spikes=False,
@@ -6207,6 +6410,17 @@ def main(
         raise ValueError(
             "ibm_wall_mode debe ser 'ghost_noslip', 'slip_only' o 'solid_zero_only'"
         )
+    pressure_wall_reconstruction = str(pressure_wall_reconstruction)
+    if pressure_wall_reconstruction not in {
+        "linear_5", "linear_9", "weighted_linear_9", "quadratic_9", "robust_huber_9"
+    }:
+        raise ValueError("pressure_wall_reconstruction invalido")
+    wake_refinement_mode = str(wake_refinement_mode)
+    if wake_refinement_mode not in {"base", "long_fine_x"}:
+        raise ValueError("wake_refinement_mode debe ser 'base' o 'long_fine_x'")
+    min_te_height_factor = float(min_te_height_factor)
+    if min_te_height_factor <= 0.0:
+        raise ValueError("min_te_height_factor debe ser > 0")
 
     # Modo equivalente fisicamente a rotar la geometria, pero mas benigno para
     # IBM cartesiano: el perfil queda alineado con la malla y se inclina el inflow.
@@ -6307,11 +6521,25 @@ def main(
     # ============================================================
     # GENERAR MALLA VARIABLE (stretching 1D)
     # ============================================================
-    X_1d = generar_malla_estirada(
-        L=Lx, x_centro=cx + chord * 0.5,
-        dx_min=dx_min, factor_expansion=factor_expansion,
-        ancho_zona_fina=ancho_zona_fina_x, dx_max=dx_max_eff
-    )
+    if wake_refinement_mode == "long_fine_x":
+        if ancho_zona_fina_x is None:
+            ancho_zona_fina_x = 0.1 * Lx
+        x_fino_min = max(0.0, (cx + chord * 0.5) - 0.5 * float(ancho_zona_fina_x))
+        x_fino_max = min(float(Lx), x_fino_min + float(ancho_zona_fina_x) + 1.5 * float(chord))
+        X_1d = generar_malla_estirada_intervalo(
+            L=Lx,
+            x_fino_min=x_fino_min,
+            x_fino_max=x_fino_max,
+            dx_min=dx_min,
+            factor_expansion=factor_expansion,
+            dx_max=dx_max_eff,
+        )
+    else:
+        X_1d = generar_malla_estirada(
+            L=Lx, x_centro=cx + chord * 0.5,
+            dx_min=dx_min, factor_expansion=factor_expansion,
+            ancho_zona_fina=ancho_zona_fina_x, dx_max=dx_max_eff
+        )
     Y_1d = generar_malla_estirada(
         L=Ly, x_centro=cy,
         dx_min=dy_min if dy_min else dx_min,
@@ -6340,7 +6568,7 @@ def main(
     ) else alpha_deg
 
     # Espesor mínimo del TE
-    min_te = 2.0 * dx_min
+    min_te = min_te_height_factor * dx_min
     '''
     # Añadir sólido a malla
     mesh_gruesa.add_solid_circle(cx+0.5*chord,cy,0.25*chord)  # círculo de colisión para evitar celdas vacías
@@ -6430,6 +6658,9 @@ def main(
     mesh_gruesa.mg_pressure_accumulation = mg_pressure_accumulation
     mesh_gruesa.wall_pressure_gradient_mode = wall_pressure_gradient_mode
     mesh_gruesa.ibm_wall_mode = ibm_wall_mode
+    mesh_gruesa.pressure_wall_reconstruction = pressure_wall_reconstruction
+    mesh_gruesa.min_te_height_factor = min_te_height_factor
+    mesh_gruesa.wake_refinement_mode = wake_refinement_mode
     mesh_gruesa._projection_compat_error = float("nan")
 
     # Estadísticas
@@ -7129,8 +7360,25 @@ def main(
 
                 frame_every = int(save_frames_cada) if save_frames_cada is not None else int(guardado)
                 frame_every = max(1, frame_every)
-                if save_frames and frames_dir_grueso and (it % frame_every == 0):
-                    mesh_gruesa.save_frame(frames_dir_grueso, it, kind="velocity")
+                if save_frames and (it % frame_every == 0):
+                    if frames_dir_grueso:
+                        mesh_gruesa.save_frame(
+                            frames_dir_grueso,
+                            it,
+                            kind="velocity",
+                            dpi=int(save_frame_dpi),
+                            title_suffix="dominio completo",
+                        )
+                    if frames_dir_refinado:
+                        mesh_gruesa.save_frame(
+                            frames_dir_refinado,
+                            it,
+                            kind="velocity",
+                            xlim=save_frame_refined_xlim,
+                            ylim=save_frame_refined_ylim,
+                            dpi=int(save_frame_dpi),
+                            title_suffix="zona refinada",
+                        )
                     # Liberar memoria de figuras matplotlib cada cierto número de frames
                     if it % (guardado * 10) == 0:
                         plt.close('all')
@@ -7375,7 +7623,7 @@ if __name__ == "__main__":
         CFL=0.5,
         alpha_deg=0,
         polar_descarte=0.3,
-        iteraciones=1000,
+        iteraciones=100000,
         divergencia=1e-1,
         v0x=1,
         v0y=0,
@@ -7388,7 +7636,7 @@ if __name__ == "__main__":
         ancho_zona_fina_y=1,
         factor_expansion=1.1,
         graficos=True,
-        save_frames=False,
+        save_frames=True,
         frames_dir_grueso="",
         usar_wale=True,
         wale_Cw=0.1,   # 2D-tuned (estandar 3D=0.325 sobre-disipa en 2D)

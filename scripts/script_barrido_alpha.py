@@ -116,6 +116,7 @@ def base_config(args: argparse.Namespace) -> dict[str, Any]:
         "stop_on_convergence": False,
         "corregir_deriva_vertical": False,
         **PROJECTION_DEFAULTS,
+        "wake_refinement_mode": "long_fine_x",
         "ibm_wall_mode": "ghost_noslip",
         "mg_modo_turbo": False,
         "mg_modo_turbo_hd": args.mg_turbo_hd,
@@ -167,6 +168,9 @@ def run_alpha(alpha: float, cfg_base: dict[str, Any], discard_frac: float) -> di
         "ny": int(mesh.ny),
         "n_cells": int(mesh.nx * mesh.ny),
         "dx_min": float(cfg["dx_min"]),
+        "CFL": float(cfg["CFL"]),
+        "ancho_zona_fina_x": float(cfg["ancho_zona_fina_x"]),
+        "wake_refinement_mode": str(cfg["wake_refinement_mode"]),
         "iteraciones": int(cfg["iteraciones"]),
         "guardado": int(cfg["guardado"]),
         "projection_variant": str(cfg["projection_variant"]),
@@ -327,7 +331,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--alphas", default=DEFAULT_ALPHAS,
                         help="lista '0,2,4' o rango 'inicio:fin:paso' inclusive")
     parser.add_argument("--profile", default="profiles/NACA_0012")
-    parser.add_argument("--output-suffix", default="naca0012_outer_sum",
+    parser.add_argument("--output-suffix", default="naca0012_outer_sum_cfl025_long_wake",
                         help="nombre del subdirectorio en results/barridos")
     parser.add_argument("--force", action="store_true",
                         help="recalcula aunque exista summary.csv")
@@ -338,14 +342,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--u-inf", type=float, default=1.0)
     parser.add_argument("--rho", type=float, default=1.0)
     parser.add_argument("--nu", type=float, default=1e-6)
-    parser.add_argument("--cfl", type=float, default=0.5)
+    parser.add_argument("--cfl", type=float, default=0.25)
     parser.add_argument("--divergencia", type=float, default=0.10)
     parser.add_argument("--lx", type=float, default=12.0)
     parser.add_argument("--ly", type=float, default=8.0)
     parser.add_argument("--cx", type=float, default=2.0)
     parser.add_argument("--cy", type=float, default=4.0)
     parser.add_argument("--factor-expansion", type=float, default=1.10)
-    parser.add_argument("--fine-width-x", type=float, default=1.2)
+    parser.add_argument("--fine-width-x", type=float, default=2.4)
     parser.add_argument("--fine-width-y", type=float, default=1.0)
     parser.add_argument("--ratio-max-malla", type=float, default=100.0)
     parser.add_argument("--wale-cw", type=float, default=0.15)

@@ -9,8 +9,9 @@ Esta carpeta separa salidas por tipo de estudio:
 - `calibracion/`: graficos o artefactos de ajuste/calibracion.
 - `miscelanea/`: salidas puntuales que no pertenecen claramente a los grupos anteriores.
 
-Para el diagnostico de deficit de lift en NACA0012, la salida esperada es:
+Para el diagnostico conservado de desprendimiento espurio en NACA0012, la
+salida de referencia es:
 
 ```text
-results/diagnosticos/diagnostico_lift_naca0012/
+results/diagnosticos/naca0012_suite_desprendimiento/
 ```
