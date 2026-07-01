@@ -4106,7 +4106,16 @@ class Mesh:
             valid = np.where(thickness >= min_te_height)[0]
 
             if len(valid) > 0:
-                x_cut = float(x_sample[valid[0]])
+                # Interpolación lineal para el x donde espesor == min_te_height
+                # (no el primer sample >=, que sobrepasa). Base TE exacta = min_te.
+                i = int(valid[0])
+                if i > 0 and thickness[i] > thickness[i - 1]:
+                    t0, t1 = float(thickness[i - 1]), float(thickness[i])
+                    x0, x1 = float(x_sample[i - 1]), float(x_sample[i])
+                    frac = (min_te_height - t0) / (t1 - t0)
+                    x_cut = x0 + frac * (x1 - x0)
+                else:
+                    x_cut = float(x_sample[i])
                 y_cut_upper = float(np.interp(x_cut, upper_x_inc, upper_y_inc))
                 y_cut_lower = float(np.interp(x_cut, lower_x, lower_y))
 
@@ -6222,6 +6231,122 @@ class Mesh:
             else:
                 return {'x': None, 'cp_mean_extrados': None, 'cp_mean_intrados': None, 'fig': fig}
 
+    def compute_cp_diagnostics(self, mu=1.0, rho=1.0, te_window=0.05, verbose=True):
+        """
+        Métricas de sustentación y Kutta a partir del Cp:
+          - Cl(∮ΔCp): integral en cuerda de (Cp_intrados - Cp_extrados) d(x/c).
+            Cross-check independiente de la suma de fuerzas por cara (staircase).
+          - ΔCp_TE: (Cp_extrados - Cp_intrados) promediado cerca del TE. → 0 si
+            Kutta cierra; ≠0 = fuga de circulación en el borde de fuga.
+          - pico de succión (Cp_min y su x/c).
+        Usa el perfil de Cp promediado en el tiempo si existe; si no, instantáneo.
+        """
+        import numpy as np
+        counts_ex = cp.asnumpy(self.cp_profile_count_ex)
+        counts_in = cp.asnumpy(self.cp_profile_count_in)
+        x, mean_ex, mean_in = self.get_cp_profile_mean()
+
+        if x.size > 0 and ((counts_ex > 0) & (counts_in > 0)).sum() >= 5:
+            valid = (counts_ex > 0) & (counts_in > 0)
+            xv, ce_v, ci_v = x[valid], mean_ex[valid], mean_in[valid]
+            xg = np.linspace(float(xv.min()), float(xv.max()), 200)
+            ce = np.interp(xg, xv, ce_v)
+            ci = np.interp(xg, xv, ci_v)
+        else:
+            # Fallback instantáneo
+            data = self.compute_surface_forces_definitive(mu=mu, rho=rho,
+                                                          return_per_face=True, return_cp=True)
+            X_ex, Cp_ex = data.get('X_extrados'), data.get('Cp_extrados')
+            X_in, Cp_in = data.get('X_intrados'), data.get('Cp_intrados')
+            if X_ex is None or X_in is None or X_ex.size == 0 or X_in.size == 0:
+                if verbose:
+                    print("  [Cp diag] sin datos de superficie")
+                return None
+            X_ex, Cp_ex = cp.asnumpy(X_ex), cp.asnumpy(Cp_ex)
+            X_in, Cp_in = cp.asnumpy(X_in), cp.asnumpy(Cp_in)
+            xmin = min(float(X_ex.min()), float(X_in.min()))
+            xmax = max(float(X_ex.max()), float(X_in.max()))
+            c = (xmax - xmin) if xmax > xmin else 1.0
+            oe, oi = np.argsort(X_ex), np.argsort(X_in)
+            xg = np.linspace(0.0, 1.0, 200)
+            ce = np.interp(xg, (X_ex[oe] - xmin) / c, Cp_ex[oe])
+            ci = np.interp(xg, (X_in[oi] - xmin) / c, Cp_in[oi])
+
+        d = ci - ce
+        cl_cp = float(np.sum(0.5 * (d[1:] + d[:-1]) * np.diff(xg)))
+        te_mask = xg >= (1.0 - te_window)
+        dcp_te = float(np.mean(ce[te_mask] - ci[te_mask])) if te_mask.any() else float('nan')
+        j = int(np.argmin(ce))
+        cp_min, x_suction = float(ce[j]), float(xg[j])
+
+        if verbose:
+            print(f"  {'─'*50}")
+            print(f"  [Cp diag]  Cl(∮ΔCp en cuerda) = {cl_cp:+.4f}")
+            print(f"    ΔCp_TE (extr−intr, x/c≥{1-te_window:.2f}) = {dcp_te:+.4f}  (→0 si Kutta cierra)")
+            print(f"    pico succión Cp_min = {cp_min:.3f} en x/c={x_suction:.3f}")
+            print(f"{'─'*52}")
+        return {"cl_cp": cl_cp, "dcp_te": dcp_te, "cp_min": cp_min, "x_suction": x_suction}
+
+    def save_state(self, path="sim_last.npz"):
+        """
+        Snapshot ligero para re-analizar sin recomputar la sim. Vuelca todos los
+        arrays (cupy/numpy) a numpy comprimido + los escalares en JSON. Recargar
+        con Mesh.load_state(path) o analizar_checkpoint(path).
+        """
+        import numpy as np, json, os
+        arrays, scalars = {}, {}
+        for k, val in vars(self).items():
+            if isinstance(val, cp.ndarray):
+                arrays["arr__" + k] = cp.asnumpy(val)
+            elif isinstance(val, np.ndarray):
+                arrays["arr__" + k] = val
+            elif isinstance(val, (int, float, bool, str)):
+                scalars[k] = val
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        np.savez_compressed(path, __scalars__=np.array([json.dumps(scalars)]), **arrays)
+        print(f"  [save_state] {path}  ({len(arrays)} arrays, {len(scalars)} escalares)")
+        return path
+
+    @classmethod
+    def load_state(cls, path="sim_last.npz"):
+        """Reconstruye una Mesh mínima desde un snapshot (sin re-ejecutar __init__
+        ni kernels). Suficiente para compute_circulation / compute_cp_diagnostics /
+        plot_streamlines / plot_cp_vs_chord / plot_forces_over_time."""
+        import numpy as np, json
+        if not path.endswith(".npz"):
+            path += ".npz"
+        data = np.load(path, allow_pickle=False)
+        mesh = cls.__new__(cls)
+        for key in data.files:
+            if key == "__scalars__":
+                continue
+            setattr(mesh, key[len("arr__"):], cp.asarray(data[key]))
+        for k, v in json.loads(str(data["__scalars__"][0])).items():
+            setattr(mesh, k, v)
+        print(f"  [load_state] {path}")
+        return mesh
+
+
+def analizar_checkpoint(path="sim_last.npz", mu=1.0, rho=1.0, graficos=True):
+    """
+    Recarga un checkpoint guardado por save_state y reproduce los diagnósticos
+    (circulación + Cp) y, si graficos=True, los plots. No recomputa la sim.
+    Uso: analizar_checkpoint("sim_last.npz", mu=<mu>) tras un crash o a posteriori.
+    """
+    mesh = Mesh.load_state(path)
+    U = float(getattr(mesh, "_U_ref", getattr(mesh, "_vel_ref", 1.0)))
+    chord = float(getattr(mesh, "_chord", 1.0))
+    print(f"[checkpoint] {mesh.nx}x{mesh.ny}  U_ref={U:.4f}  chord={chord:.4f}")
+    mesh.compute_circulation()
+    mesh.compute_cp_diagnostics(mu, rho)
+    if graficos:
+        mesh.plot_streamlines()
+        mesh.plot_forces_over_time()
+        mesh.plot_cp_vs_chord(mu, rho, normalize=True, show=True)
+    return mesh
+
 
 def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: int, it_actual: int,
                                 tiempo_fisico_acumulado: float, rho: float, U_inf: float, chord: float, nu: float, mu: float,
@@ -6248,6 +6373,13 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
 
     # Excluir 10% inicial para medias (o al menos 1 elemento)
     inicio_calculo = max(1, int(idx_valido * 0.1))
+
+    # Checkpoint ANTES de diagnósticos/plots: si algo crashea, el estado queda en
+    # disco y se re-analiza con analizar_checkpoint("sim_last.npz") sin recomputar.
+    try:
+        mesh_gruesa.save_state("sim_last.npz")
+    except Exception as e:
+        print(f"  [save_state] fallo al guardar checkpoint: {e}")
 
     cd_medio = cp.mean(mesh_gruesa.cdvector[inicio_calculo:idx_valido]).get()
     cl_medio = cp.mean(mesh_gruesa.clvector[inicio_calculo:idx_valido]).get()
@@ -6303,6 +6435,8 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
         print(f"  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)")
         print(f"  → si difieren mucho: la integral de fuerzas es la sospechosa")
         print(f"{'─'*52}")
+
+    mesh_gruesa.compute_cp_diagnostics(mu, rho)
 
     if graficos:
         mesh_gruesa.visualize_velocity()
@@ -7795,7 +7929,7 @@ if __name__ == "__main__":
         CFL=0.25,
         alpha_deg=5,
         polar_descarte=0.3,
-        iteraciones=30000,
+        iteraciones=100,
         divergencia=1e-1,
         v0x=1,
         v0y=0,
