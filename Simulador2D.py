@@ -4380,6 +4380,163 @@ class Mesh:
         else:
             plt.close()
 
+    def _airfoil_bbox(self):
+        """(x_le, x_te, y_lo, y_hi, chord, yc) del sólido en coords físicas."""
+        solid = cp.asnumpy(self.solid)
+        cols = np.where(solid.any(axis=0))[0]
+        rows = np.where(solid.any(axis=1))[0]
+        x1d = cp.asnumpy(self.X_1d)
+        y1d = cp.asnumpy(self.Y_1d)
+        x_le, x_te = float(x1d[cols[0]]), float(x1d[cols[-1]])
+        y_lo, y_hi = float(y1d[rows[0]]), float(y1d[rows[-1]])
+        return x_le, x_te, y_lo, y_hi, (x_te - x_le), 0.5 * (y_lo + y_hi)
+
+    def _sample_uniform(self, field_np, x1d, y1d, xg, yg):
+        """Bilinear de field_np (ny,nx) sobre malla tensor-product (x1d,y1d, crecientes)
+        hacia rejilla uniforme (xg,yg) 1D. Devuelve (len(yg), len(xg))."""
+        jx = np.clip(np.searchsorted(x1d, xg) - 1, 0, len(x1d) - 2)
+        iy = np.clip(np.searchsorted(y1d, yg) - 1, 0, len(y1d) - 2)
+        tx = (xg - x1d[jx]) / (x1d[jx + 1] - x1d[jx])
+        ty = (yg - y1d[iy]) / (y1d[iy + 1] - y1d[iy])
+        JX, IY = np.meshgrid(jx, iy)
+        TX, TY = np.meshgrid(tx, ty)
+        f00 = field_np[IY, JX]
+        f10 = field_np[IY, JX + 1]
+        f01 = field_np[IY + 1, JX]
+        f11 = field_np[IY + 1, JX + 1]
+        return (f00 * (1 - TX) * (1 - TY) + f10 * TX * (1 - TY)
+                + f01 * (1 - TX) * TY + f11 * TX * TY)
+
+    def compute_circulation(self, loop_margins=(0.15, 0.4, 0.8, 1.5), verbose=True):
+        """
+        Circulación Γ = ∮ u·dl (sentido antihorario) en lazos rectangulares que
+        rodean el perfil, para varios tamaños.
+
+        Cl_circ = -2·Γ/(U∞·c)  → debe coincidir con el Cl de la integral de superficie.
+
+        Interpretación:
+          - Lazo tirado al perfil (margen chico) ≈ circulación LIGADA (bound).
+            Físico @5°/Re1e5 ≈ 0.55.  Si sale ~1.5 → sobre-circulación (Kutta rota).
+          - Si Γ crece con el tamaño del lazo → el lazo encierra vorticidad de ESTELA
+            (vórtice de arranque / shedding), no solo la ligada.
+          - Si Cl_circ ≈ Cl_superficie → el campo está sobre-circulado (problema de flujo).
+            Si difieren mucho → la integral de fuerzas es la que miente.
+        """
+        u = cp.asnumpy(self.u)
+        v = cp.asnumpy(self.v)
+        x1d = cp.asnumpy(self.X_1d)
+        y1d = cp.asnumpy(self.Y_1d)
+        x_le, x_te, y_lo, y_hi, chord, yc = self._airfoil_bbox()
+        U = float(getattr(self, '_U_ref', getattr(self, '_vel_ref', 1.0)))
+        U = max(U, 1e-12)
+
+        results = []
+        if verbose:
+            print(f"\n[Circulación]  perfil x∈[{x_le:.3f},{x_te:.3f}] c={chord:.3f}  U∞={U:.3f}")
+            print(f"  {'lazo':>6s}  {'ventana x':>17s}  {'ventana y':>17s}  {'Γ (CCW)':>10s}  {'Cl_circ':>9s}")
+        for m in loop_margins:
+            x0, x1 = x_le - m * chord, x_te + m * chord
+            half = 0.5 * (y_hi - y_lo) + m * chord
+            y0, y1 = yc - half, yc + half
+            j0 = int(np.clip(np.searchsorted(x1d, x0), 1, len(x1d) - 2))
+            j1 = int(np.clip(np.searchsorted(x1d, x1), 1, len(x1d) - 2))
+            i0 = int(np.clip(np.searchsorted(y1d, y0), 1, len(y1d) - 2))
+            i1 = int(np.clip(np.searchsorted(y1d, y1), 1, len(y1d) - 2))
+            if j1 <= j0 + 1 or i1 <= i0 + 1:
+                continue
+            dx = np.diff(x1d[j0:j1 + 1])
+            dy = np.diff(y1d[i0:i1 + 1])
+            # ∮ antihorario = inferior(→) + derecha(↑) - superior(→) - izquierda(↑)
+            bottom = np.sum(0.5 * (u[i0, j0:j1] + u[i0, j0 + 1:j1 + 1]) * dx)
+            top = np.sum(0.5 * (u[i1, j0:j1] + u[i1, j0 + 1:j1 + 1]) * dx)
+            left = np.sum(0.5 * (v[i0:i1, j0] + v[i0 + 1:i1 + 1, j0]) * dy)
+            right = np.sum(0.5 * (v[i0:i1, j1] + v[i0 + 1:i1 + 1, j1]) * dy)
+            gamma = float(bottom + right - top - left)
+            cl_circ = -2.0 * gamma / (U * chord)
+            results.append({"margin": m, "gamma": gamma, "cl_circ": cl_circ,
+                            "window_x": (float(x1d[j0]), float(x1d[j1])),
+                            "window_y": (float(y1d[i0]), float(y1d[i1]))})
+            if verbose:
+                print(f"  {m:>5.2f}c  [{x1d[j0]:>7.2f},{x1d[j1]:>7.2f}]  "
+                      f"[{y1d[i0]:>7.2f},{y1d[i1]:>7.2f}]  {gamma:>+10.5f}  {cl_circ:>+9.4f}")
+        return results
+
+    def plot_streamlines(self, windows=None, n_grid=360, density=2.2,
+                         show=True, save_path=None, return_fig=False):
+        """
+        Líneas de corriente sobre fondo |u|, con varios encuadres para diagnosticar
+        el borde de fuga (Kutta): perfil completo, zoom TE y zoom LE.
+
+        Qué mirar en el zoom TE:
+          - Kutta OK: ambas corrientes salen paralelas por la punta, estela recta.
+          - Kutta rota / sobre-circulación: el flujo ENVUELVE la base del TE de una cara
+            a la otra; estación de estancamiento posterior desplazada del borde; estela
+            muy deflectada hacia arriba.
+        """
+        x_le, x_te, y_lo, y_hi, chord, yc = self._airfoil_bbox()
+        if windows is None:
+            windows = [
+                ("Perfil completo", (x_le - 0.5 * chord, x_te + 1.2 * chord),
+                 (yc - 0.9 * chord, yc + 0.9 * chord)),
+                ("Zoom borde de fuga (TE)", (x_te - 0.45 * chord, x_te + 0.7 * chord),
+                 (yc - 0.4 * chord, yc + 0.4 * chord)),
+                ("Zoom borde de ataque (LE)", (x_le - 0.3 * chord, x_le + 0.45 * chord),
+                 (yc - 0.4 * chord, yc + 0.4 * chord)),
+            ]
+
+        u = cp.asnumpy(self.u)
+        v = cp.asnumpy(self.v)
+        solidf = cp.asnumpy(self.solid).astype(np.float32)
+        x1d = cp.asnumpy(self.X_1d)
+        y1d = cp.asnumpy(self.Y_1d)
+        X_np = cp.asnumpy(self.XX)
+        Y_np = cp.asnumpy(self.YY)
+        solid_np = cp.asnumpy(self.solid).astype(np.int32)
+
+        fig, axes = plt.subplots(1, len(windows), figsize=(6.5 * len(windows), 6.0))
+        if len(windows) == 1:
+            axes = [axes]
+
+        for ax, (name, (xa, xb), (ya, yb)) in zip(axes, windows):
+            aspect = (yb - ya) / max(xb - xa, 1e-9)
+            nx_g = int(n_grid)
+            ny_g = max(20, int(n_grid * aspect))
+            xg = np.linspace(xa, xb, nx_g)
+            yg = np.linspace(ya, yb, ny_g)
+            Ug = self._sample_uniform(u, x1d, y1d, xg, yg)
+            Vg = self._sample_uniform(v, x1d, y1d, xg, yg)
+            Sg = self._sample_uniform(solidf, x1d, y1d, xg, yg) > 0.5
+            speed = np.sqrt(Ug ** 2 + Vg ** 2)
+            Um = np.where(Sg, np.nan, Ug)
+            Vm = np.where(Sg, np.nan, Vg)
+            speed_bg = np.where(Sg, np.nan, speed)
+
+            ax.pcolormesh(xg, yg, speed_bg, cmap="rainbow", shading="auto")
+            ax.streamplot(xg, yg, Um, Vm, color="k", density=density,
+                          linewidth=0.7, arrowsize=0.8)
+            try:
+                ax.contour(X_np, Y_np, solid_np, levels=[0.5], colors="white", linewidths=1.2)
+            except Exception:
+                pass
+            ax.set_xlim(xa, xb)
+            ax.set_ylim(ya, yb)
+            ax.set_aspect("equal", adjustable="box")
+            ax.set_title(name, fontsize=11)
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+
+        fig.suptitle("Líneas de corriente — diagnóstico de circulación / Kutta", fontsize=13, fontweight="bold")
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        if return_fig:
+            return fig
+        elif show:
+            plt.show()
+        else:
+            plt.close()
+
     def visualize_surface_traction(self, mu, rho=1.0, max_arrows=100, arrow_scale=0.02,
                                    show_annotations=True, annotation_step=5,
                                    show=True, save_path=None):
@@ -6135,9 +6292,22 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     print(f"{'─'*52}")
     # retener variables para posible uso posterior
 
+    # Diagnóstico de circulación (Kutta): compara Cl de circulación vs Cl de superficie
+    Cl_superficie = 2 * Fy_total / (rho * U_inf**2 * chord)
+    circ = mesh_gruesa.compute_circulation()
+    if circ:
+        cl_bound = circ[0]["cl_circ"]
+        print(f"  {'─'*50}")
+        print(f"  Cl (integral superficie) = {Cl_superficie:+.4f}")
+        print(f"  Cl (circulación, lazo interior) = {cl_bound:+.4f}")
+        print(f"  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)")
+        print(f"  → si difieren mucho: la integral de fuerzas es la sospechosa")
+        print(f"{'─'*52}")
+
     if graficos:
         mesh_gruesa.visualize_velocity()
         mesh_gruesa.visualize_velocity_vectors(u_ref=U_inf)
+        mesh_gruesa.plot_streamlines()
         mesh_gruesa.plot_forces_over_time()
         mesh_gruesa.visualize_surface_traction(mu)
         mesh_gruesa.plot_convergence_history()
@@ -7615,37 +7785,42 @@ def main(
 
     return mesh_gruesa
 
+
 if __name__ == "__main__":
+    
     mesh = main(
         Lx=12,
         Ly=8,
         cx=2,
-        CFL=0.5,
-        alpha_deg=0,
+        CFL=0.25,
+        alpha_deg=5,
         polar_descarte=0.3,
-        iteraciones=100000,
+        iteraciones=30000,
         divergencia=1e-1,
         v0x=1,
         v0y=0,
         rho=1.0,
         nu=1/100000,
-        filepath="profiles/NACA_0012",
+        filepath="profiles/NACA_0012_sharp",
         chord=1.0,
+        min_te_height_factor=1.0,
         dx_min=0.001,
-        ancho_zona_fina_x=1.2,
+        ancho_zona_fina_x=1.5,
         ancho_zona_fina_y=1,
         factor_expansion=1.1,
         graficos=True,
-        save_frames=True,
+        save_frames=False,
         frames_dir_grueso="",
-        usar_wale=True,
+        usar_wale=False,
         wale_Cw=0.1,   # 2D-tuned (estandar 3D=0.325 sobre-disipa en 2D)
         stop_on_convergence=False,
         live_view=True,
         mostrar_malla=True,
         mg_modo_turbo=False,
         mg_modo_turbo_hd=True,
-        mg_modo_turbo_ultra=False
-
+        mg_modo_turbo_ultra=False,
+        wake_refinement_mode="long_fine_x"
+        
 
     )
+    
