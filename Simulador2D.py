@@ -228,10 +228,24 @@ def calcular_metricas_1d(pos_1d_gpu, pos_1d_f64=None):
     }
 
 
+# Constantes Spalart-Allmaras (SA fully-turbulent, sin trip)
+SA_CB1 = 0.1355
+SA_SIGMA = 2.0 / 3.0
+SA_CB2 = 0.622
+SA_KAPPA = 0.41
+SA_CW2 = 0.3
+SA_CW3 = 2.0
+SA_CV1 = 7.1
+SA_CW1 = SA_CB1 / SA_KAPPA**2 + (1.0 + SA_CB2) / SA_SIGMA
+SA_CHI_MAX = 5.0e3      # cap de seguridad chi = nu_tilde/nu
+SA_STILDE_FLOOR = 0.3   # S_tilde >= 0.3*omega (clip estándar)
+SA_R_MAX = 10.0
+
+
 class Mesh:
     '''Constructor y basicos'''
     def __init__(self, Lx, Ly, p0, v0x, v0y, dx, dy,
-                 usar_wale=True,
+                 usar_wale=True, turb_model=None,
                  X_1d=None, Y_1d=None):
         """
         Parámetros
@@ -247,7 +261,13 @@ class Mesh:
         """
         self.Lx = Lx
         self.Ly = Ly
-        self.usar_wale = usar_wale
+        # turb_model: "none" | "wale" | "sa". None => mapear legacy usar_wale.
+        self.turb_model = (("wale" if usar_wale else "none")
+                           if turb_model is None else str(turb_model))
+        self.usar_wale = (self.turb_model == "wale")
+        self.nu_tilde = None    # campo SA
+        self.sa_nu_t = None     # nu_t = nu_tilde*f_v1 cacheado por update_sa
+        self._sa_d = None       # distancia física a pared (cache)
 
         # ================================================================
         # MALLA DE POSICIONES  (nueva infraestructura de malla variable)
@@ -374,6 +394,7 @@ class Mesh:
         self._ghost_cell_ready = False
         self._ghost_mask = None
         self.ibm_wall_mode = "ghost_noslip"
+        self.ibm_sdf_source = "edt"
         self._projection_u_face_x = None
         self._projection_v_face_y = None
 
@@ -1249,13 +1270,127 @@ class Mesh:
         nx_hat = cp.where(mask_interfaz, nx_hat, cp.float32(0.0))
         ny_hat = cp.where(mask_interfaz, ny_hat, cp.float32(0.0))
 
+        # Modo polygon: sobreescribir con normales analíticas exactas en la banda
+        # (la EDT raster da normales ruidosas/diagonales en la cuña del TE)
+        if getattr(self, 'ibm_sdf_source', 'edt') == 'polygon' and getattr(self, '_poly_band_mask', None) is not None:
+            en_banda = mask_interfaz & self._poly_band_mask
+            nx_hat = cp.where(en_banda, self._poly_nx_hat, nx_hat)
+            ny_hat = cp.where(en_banda, self._poly_ny_hat, ny_hat)
+
         self._nx_hat = nx_hat.astype(cp.float32, copy=False)
         self._ny_hat = ny_hat.astype(cp.float32, copy=False)
         self._mask_interfaz = mask_interfaz
         self._normales_validas = True
 
+    def _precomputar_sdf_poligono(self, band_cells=12.0):
+        """
+        SDF exacto punto-a-segmento al polígono _airfoil_polygon_x/y en una banda
+        alrededor de la interfaz. Cachea _poly_band_mask, _poly_sd_cells (unidades
+        de celda, mismo contrato que la EDT), _poly_nx_hat, _poly_ny_hat.
+        Se llama una vez en load_solids_from_file (geometría estática). Motivo:
+        la EDT raster está cuantizada a ±1 celda y en la cuña del TE (espesor
+        sub-celda) produce normales erróneas → ghosts irreparables → TE romo
+        efectivo → fuga de Kutta.
+        """
+        from matplotlib.path import Path as _MplPath
+
+        # Banda desde la EDT (barata, solo para seleccionar celdas)
+        d_out = distance_transform_edt(~self.solid)
+        d_in = distance_transform_edt(self.solid)
+        band = cp.abs(d_out - d_in) < cp.float32(band_cells)
+        ii, jj = cp.where(band)
+
+        # Coordenadas físicas float64 (misma fuente que la rasterización → simetría α=0)
+        x1d = cp.asarray(self.X_1d_f64)
+        y1d = cp.asarray(self.Y_1d_f64)
+        px_pts = x1d[jj]
+        py_pts = y1d[ii]
+
+        # Distancia punto-segmento con running argmin sobre los ~160 segmentos
+        vx = cp.asarray(self._airfoil_polygon_x)
+        vy = cp.asarray(self._airfoil_polygon_y)
+        best_d2 = cp.full(px_pts.shape, cp.inf, dtype=cp.float64)
+        best_fx = cp.zeros_like(px_pts)
+        best_fy = cp.zeros_like(py_pts)
+        for k in range(len(vx) - 1):
+            ax_, ay_ = vx[k], vy[k]
+            bx_, by_ = vx[k + 1], vy[k + 1]
+            ex, ey = bx_ - ax_, by_ - ay_
+            L2 = ex * ex + ey * ey
+            if float(L2) < 1e-30:
+                continue
+            t = cp.clip(((px_pts - ax_) * ex + (py_pts - ay_) * ey) / L2, 0.0, 1.0)
+            fx = ax_ + t * ex
+            fy = ay_ + t * ey
+            d2 = (px_pts - fx) ** 2 + (py_pts - fy) ** 2
+            mejor = d2 < best_d2
+            best_d2 = cp.where(mejor, d2, best_d2)
+            best_fx = cp.where(mejor, fx, best_fx)
+            best_fy = cp.where(mejor, fy, best_fy)
+
+        d = cp.sqrt(best_d2)
+
+        # Signo con el MISMO contains_points de la rasterización → consistente con self.solid
+        pts_cpu = np.column_stack([cp.asnumpy(px_pts), cp.asnumpy(py_pts)])
+        poly = _MplPath(np.column_stack([self._airfoil_polygon_x, self._airfoil_polygon_y]))
+        try:
+            inside = poly.contains_points(pts_cpu, radius=-1e-9)
+        except TypeError:
+            inside = poly.contains_points(pts_cpu)
+        inside = cp.asarray(inside)
+        signo = cp.where(inside, -1.0, 1.0)
+
+        # Normal analítica hacia el fluido: gradiente de sd = signo·(p − pie)/d
+        # (exacta incluso en el cono del vértice del TE, donde la EDT falla)
+        d_safe = cp.maximum(d, 1e-15)
+        nx_pt = signo * (px_pts - best_fx) / d_safe
+        ny_pt = signo * (py_pts - best_fy) / d_safe
+
+        # Física → unidades de celda (contrato de _signed_distance_and_normals)
+        cell_local = cp.minimum(self.vol_x[jj], self.vol_y[ii]).astype(cp.float64)
+        sd_cells = signo * d / cell_local
+
+        dx_min_fino = float(cp.min(cell_local))
+        n_gruesas = int(cp.sum(cell_local > 1.5 * dx_min_fino))
+        if n_gruesas > 0:
+            print(f"  [SDF polígono] AVISO: {n_gruesas} celdas de banda fuera de la "
+                  f"zona fina (celda > 1.5·dx_min) — revisar ancho_zona_fina")
+
+        self._poly_band_mask = band
+        self._poly_sd_cells = cp.zeros(self.solid.shape, dtype=cp.float32)
+        self._poly_nx_hat = cp.zeros(self.solid.shape, dtype=cp.float32)
+        self._poly_ny_hat = cp.zeros(self.solid.shape, dtype=cp.float32)
+        self._poly_sd_cells[ii, jj] = sd_cells.astype(cp.float32)
+        self._poly_nx_hat[ii, jj] = nx_pt.astype(cp.float32)
+        self._poly_ny_hat[ii, jj] = ny_pt.astype(cp.float32)
+        print(f"  [SDF polígono] banda={int(ii.size)} celdas, "
+              f"{len(vx) - 1} segmentos, sd∈[{float(cp.min(sd_cells)):.2f}, "
+              f"{float(cp.max(sd_cells)):.2f}] celdas")
+
+    def debug_te_report(self, radius_cells=6):
+        """Estado de los ghost cells cerca del TE: nº, irreparables y rango de d_ghost."""
+        if not getattr(self, '_ghost_cell_ready', False):
+            print("  [TE report] sin ghost cells")
+            return {"n_ghost_te": 0, "n_irrep_te": 0}
+        te_x = float(self._airfoil_te_x)
+        te_y = float(self._airfoil_te_y)
+        x1d = cp.asarray(self.X_1d_f64)
+        y1d = cp.asarray(self.Y_1d_f64)
+        gx = x1d[self._ghost_j.astype(cp.int64)]
+        gy = y1d[self._ghost_i.astype(cp.int64)]
+        r_fis = radius_cells * float(self.dx)
+        cerca = ((gx - te_x) ** 2 + (gy - te_y) ** 2) < r_fis ** 2
+        n_te = int(cp.sum(cerca))
+        n_irrep_te = int(cp.sum(cerca & self._ghost_direct_zero))
+        n_irrep_tot = int(cp.sum(self._ghost_direct_zero))
+        print(f"  [TE report] ghosts a <{radius_cells} celdas del TE: {n_te} | "
+              f"irreparables TE: {n_irrep_te} | irreparables total: {n_irrep_tot}")
+        return {"n_ghost_te": n_te, "n_irrep_te": n_irrep_te, "n_irrep_total": n_irrep_tot}
+
     def reforzar_impermeabilidad(self):
         """Anula componente normal de velocidad en la capa de fluido adyacente al sólido."""
+        if getattr(self, "_disable_reforzar", False):
+            return
         if str(getattr(self, "ibm_wall_mode", "ghost_noslip")) == "solid_zero_only":
             return
         if not getattr(self, '_normales_validas', False) or self._nx_hat is None:
@@ -1397,6 +1532,7 @@ class Mesh:
         self._image_i_idx = i_image  # para _bilinear_interpolate (y = i)
         self._n_ghost = n_ghost
         self._ghost_cell_ready = True
+        self._sa_d = None  # invalidar cache de distancia SA (geometría cambió)
 
         # Máscara de sólido interior (celdas sólidas que NO son ghost)
         self._solid_interior = solid & (~ghost_mask)
@@ -1809,7 +1945,7 @@ class Mesh:
         # Refuerzo de impermeabilidad cerca del sólido (evita "jets" en la interfaz)
         self.reforzar_impermeabilidad()
 
-    def diffuse_velocity(self, nu, dt, usar_wale=True):
+    def diffuse_velocity(self, nu, dt, usar_wale=True, nu_t_field=None):
         """
         Difusión viscosa de u,v con modelo WALE de viscosidad turbulenta
         y viscosidad de estela (surrogate 3D).
@@ -1835,7 +1971,9 @@ class Mesh:
         dx_min = min(dx, dy)
 
         # ⭐ Calcular viscosidad efectiva
-        if usar_wale:
+        if nu_t_field is not None:
+            nu_eff = cp.float32(nu_f) + nu_t_field
+        elif usar_wale:
             nu_t = self.compute_wale_viscosity()
             nu_eff = cp.float32(nu_f) + nu_t
         else:
@@ -1879,7 +2017,7 @@ class Mesh:
 
             # ⭐ Con viscosidad variable: ∇·(ν_eff ∇u) ≠ ν_eff ∇²u
             # Forma correcta: ∂(ν ∂u/∂x)/∂x + ∂(ν ∂u/∂y)/∂y
-            viscosidad_variable = usar_wale
+            viscosidad_variable = usar_wale or (nu_t_field is not None)
             if viscosidad_variable:
                 # Calcular gradientes de u,v
                 du_dx = cp.zeros_like(u, dtype=cp.float32)
@@ -2400,6 +2538,207 @@ class Mesh:
             pass
 
         return nu_t.astype(cp.float32, copy=False)
+
+    # ================================================================
+    # SPALART-ALLMARAS (URANS 2D, fully-turbulent, sin trip)
+    # ================================================================
+    def init_sa(self, nu, nu_tilde_factor=3.0):
+        """IC/BC fully-turbulent: nu_tilde=3*nu en fluido, 0 en sólido."""
+        self._sa_nu_molecular = float(nu)
+        self._sa_nu_inflow = float(nu_tilde_factor) * float(nu)
+        self.nu_tilde = cp.full((self.ny, self.nx), cp.float32(self._sa_nu_inflow),
+                                dtype=cp.float32)
+        self.nu_tilde[self.solid] = 0.0
+        self._compute_sa_wall_distance()
+        self.sa_nu_t = self._sa_nu_t_from_tilde(float(nu))
+
+    def _compute_sa_wall_distance(self):
+        """Distancia física a pared cacheada (geometría fija). sd en celdas
+        (banda polígono exacta ya integrada en _signed_distance_and_normals);
+        floor 0.5 celdas para 1/d² finito. Fuera de la zona fina min(dx,dy)
+        local subestima d → destrucción sobreestimada → conservador."""
+        sd, _, _ = self._signed_distance_and_normals()
+        d_cells = cp.maximum(sd.astype(cp.float32), cp.float32(0.5))
+        h_local = cp.minimum(self.vol_x[cp.newaxis, :], self.vol_y[:, cp.newaxis]).astype(cp.float32)
+        self._sa_d = d_cells * h_local
+        self._sa_d2_inv = (1.0 / (self._sa_d * self._sa_d)).astype(cp.float32)
+
+    def advect_sa(self):
+        """Advección semi-Lagrangiana de nu_tilde reutilizando el backtrace
+        persistido por advect_velocities (mismas trayectorias del paso)."""
+        nt = self._bilinear_interpolate(self.nu_tilde, self.x_prev_idx, self.y_prev_idx)
+        nt[self.solid] = 0.0
+        self.nu_tilde = nt
+
+    def _sa_nu_t_from_tilde(self, nu):
+        chi = cp.clip(self.nu_tilde / cp.float32(nu), 0.0, cp.float32(SA_CHI_MAX))
+        chi3 = chi * chi * chi
+        nu_t = self.nu_tilde * chi3 / (chi3 + cp.float32(SA_CV1**3))
+        nu_t[self.solid] = 0.0
+        return nu_t.astype(cp.float32, copy=False)
+
+    def _apply_sa_boundaries(self):
+        nt = self.nu_tilde
+        for side, bc in getattr(self, 'boundaries', {}).items():
+            if bc is None:
+                continue
+            bc_type = bc[0] if isinstance(bc, (tuple, list)) else bc
+            if bc_type == "inflow":
+                val = cp.float32(self._sa_nu_inflow)
+                if side == "left":
+                    nt[:, 0] = val
+                elif side == "right":
+                    nt[:, -1] = val
+                elif side == "bottom":
+                    nt[0, :] = val
+                elif side == "top":
+                    nt[-1, :] = val
+            else:  # outflow/slip/noslip: Neumann
+                if side == "left":
+                    nt[:, 0] = nt[:, 1]
+                elif side == "right":
+                    nt[:, -1] = nt[:, -2]
+                elif side == "bottom":
+                    nt[0, :] = nt[1, :]
+                elif side == "top":
+                    nt[-1, :] = nt[-2, :]
+
+    def update_sa(self, nu, dt):
+        """
+        Fuentes (producción explícita, destrucción point-implicit) + difusión
+        de nu_tilde, explícito sub-stepped. Vorticidad congelada durante los
+        substeps (splitting de 1er orden, como el resto del solver).
+        Actualiza self.nu_tilde y self.sa_nu_t.
+        """
+        if self._sa_d is None:
+            self._compute_sa_wall_distance()
+        nu_f = cp.float32(nu)
+
+        # Stencils no-uniformes (mismo patrón que diffuse_velocity)
+        _d1x_W = self.d1x_W[1:-1]; _d1x_C = self.d1x_C[1:-1]; _d1x_E = self.d1x_E[1:-1]
+        _d2x_W = self.d2x_W[1:-1]; _d2x_C = self.d2x_C[1:-1]; _d2x_E = self.d2x_E[1:-1]
+        _d1y_S = self.d1y_S[1:-1, cp.newaxis]; _d1y_C = self.d1y_C[1:-1, cp.newaxis]; _d1y_N = self.d1y_N[1:-1, cp.newaxis]
+        _d2y_S = self.d2y_S[1:-1, cp.newaxis]; _d2y_C = self.d2y_C[1:-1, cp.newaxis]; _d2y_N = self.d2y_N[1:-1, cp.newaxis]
+
+        # Vorticidad |omega_z|
+        u = self.u; v = self.v
+        dv_dx = cp.zeros_like(v, dtype=cp.float32)
+        du_dy = cp.zeros_like(u, dtype=cp.float32)
+        dv_dx[:, 1:-1] = _d1x_W * v[:, :-2] + _d1x_C * v[:, 1:-1] + _d1x_E * v[:, 2:]
+        du_dy[1:-1, :] = _d1y_S * u[:-2, :] + _d1y_C * u[1:-1, :] + _d1y_N * u[2:, :]
+        om = cp.abs(dv_dx - du_dy)
+
+        k2d2_inv = self._sa_d2_inv * cp.float32(1.0 / SA_KAPPA**2)
+
+        # Sub-stepping por estabilidad difusiva: difusividad SA = (nu+nu_tilde)/sigma
+        dx_min_loc = float(min(cp.min(self.vol_x), cp.min(self.vol_y)))
+        diff_max = (float(nu) + float(cp.max(self.nu_tilde))) / SA_SIGMA
+        dt_visc = 0.25 * dx_min_loc * dx_min_loc / max(diff_max, 1e-30)
+        n_sub = max(1, int(np.ceil(dt / dt_visc)))
+        dt_sub = cp.float32(dt / n_sub)
+
+        for _ in range(n_sub):
+            nt = self.nu_tilde
+            chi = cp.clip(nt / nu_f, 0.0, cp.float32(SA_CHI_MAX))
+            chi3 = chi * chi * chi
+            fv1 = chi3 / (chi3 + cp.float32(SA_CV1**3))
+            fv2 = 1.0 - chi / (1.0 + chi * fv1)
+
+            S_tilde = om + nt * fv2 * k2d2_inv
+            S_tilde = cp.maximum(S_tilde, cp.float32(SA_STILDE_FLOOR) * om)
+            S_tilde = cp.maximum(S_tilde, cp.float32(1e-12))
+
+            r = cp.minimum(nt * k2d2_inv / S_tilde, cp.float32(SA_R_MAX))
+            g = r + cp.float32(SA_CW2) * (r**6 - r)
+            fw = g * ((1.0 + SA_CW3**6) / (g**6 + cp.float32(SA_CW3**6))) ** (1.0 / 6.0)
+
+            # Difusión: (1/sigma)[(nu+nt)∇²nt + (1+c_b2)|∇nt|²]
+            # (∇(nu+nt)=∇nt → término conservativo + c_b2 colapsan)
+            dnt_dx = cp.zeros_like(nt, dtype=cp.float32)
+            dnt_dy = cp.zeros_like(nt, dtype=cp.float32)
+            dnt_dx[:, 1:-1] = _d1x_W * nt[:, :-2] + _d1x_C * nt[:, 1:-1] + _d1x_E * nt[:, 2:]
+            dnt_dy[1:-1, :] = _d1y_S * nt[:-2, :] + _d1y_C * nt[1:-1, :] + _d1y_N * nt[2:, :]
+            lap_nt = cp.zeros_like(nt, dtype=cp.float32)
+            lap_nt[1:-1, 1:-1] = (
+                _d2x_W * nt[1:-1, :-2] + _d2x_C * nt[1:-1, 1:-1] + _d2x_E * nt[1:-1, 2:]
+                + _d2y_S * nt[:-2, 1:-1] + _d2y_C * nt[1:-1, 1:-1] + _d2y_N * nt[2:, 1:-1]
+            )
+            diff = ((nu_f + nt) * lap_nt
+                    + cp.float32(1.0 + SA_CB2) * (dnt_dx * dnt_dx + dnt_dy * dnt_dy)) \
+                   * cp.float32(1.0 / SA_SIGMA)
+
+            prod = cp.float32(SA_CB1) * S_tilde * nt
+            # Destrucción point-implicit: divide, nunca resta → incondicional
+            D_coef = cp.float32(SA_CW1) * fw * nt * self._sa_d2_inv
+            nt_new = (nt + dt_sub * (prod + diff)) / (1.0 + dt_sub * D_coef)
+
+            nt_new = cp.maximum(nt_new, cp.float32(0.0))
+            nt_new = cp.where(cp.isfinite(nt_new), nt_new, cp.float32(0.0))
+            nt_new[self.solid] = 0.0
+            self.nu_tilde = nt_new
+            self._apply_sa_boundaries()
+
+        self.sa_nu_t = self._sa_nu_t_from_tilde(float(nu))
+        return self.sa_nu_t
+
+    # ================================================================
+    # KUTTA EXPLÍCITA: franja de estela en la bisectriz del TE
+    # ================================================================
+    def _precomputar_kutta_te(self, n_wake_cells=4):
+        """
+        Celdas fluidas en la franja aguas abajo del TE a lo largo de la
+        bisectriz de la cuña. En apply_kutta_te se elimina ahí la componente
+        transversal → la línea de corriente de remanso sale por el TE (Kutta).
+        Motivo: el TE staircase+ghost queda efectivamente redondeado y el flujo
+        turbulento pegado lo envuelve sin separar → sin mecanismo viscoso de
+        Kutta → sobre-circulación sostenida (ΔCp_TE≠0 estable).
+        """
+        te_x = float(self._airfoil_te_x)
+        te_y = float(self._airfoil_te_y)
+        bx, by = float(self._airfoil_te_bisector[0]), float(self._airfoil_te_bisector[1])
+        x1d = self.X_1d_f64
+        y1d = self.Y_1d_f64
+        h = float(self.dx)  # zona fina uniforme alrededor del perfil
+
+        cells = set()
+        s = 0.25 * h
+        while s <= n_wake_cells * h:
+            px, py = te_x + s * bx, te_y + s * by
+            j = int(np.clip(np.searchsorted(x1d, px) - 1, 1, self.nx - 2))
+            i = int(np.clip(np.searchsorted(y1d, py) - 1, 1, self.ny - 2))
+            cells.add((i, j))
+            s += 0.25 * h
+        solid_np = cp.asnumpy(self.solid)
+        cells = [(i, j) for (i, j) in cells if not solid_np[i, j]]
+        self._kutta_i = cp.asarray([c[0] for c in cells], dtype=cp.int64)
+        self._kutta_j = cp.asarray([c[1] for c in cells], dtype=cp.int64)
+        self._kutta_b = (cp.float32(bx), cp.float32(by))
+        print(f"  [Kutta TE] franja de estela: {len(cells)} celdas desde "
+              f"({te_x:.3f},{te_y:.3f}) dir ({bx:+.3f},{by:+.3f})")
+
+    def apply_kutta_te(self, relax=0.7):
+        """Amortigua la componente de velocidad transversal a la bisectriz en la
+        franja de estela del TE (no impone magnitud: solo dirección)."""
+        i, j = self._kutta_i, self._kutta_j
+        if i.size == 0:
+            return
+        bx, by = self._kutta_b
+        u = self.u[i, j]
+        v = self.v[i, j]
+        cross = -u * by + v * bx          # componente perpendicular a b
+        r = cp.float32(relax)
+        self.u[i, j] = u + r * cross * by
+        self.v[i, j] = v - r * cross * bx
+
+    def compute_turbulent_viscosity(self):
+        """nu_t del modelo activo o None (dispatcher; tolera npz antiguos)."""
+        model = getattr(self, 'turb_model',
+                        'wale' if getattr(self, 'usar_wale', False) else 'none')
+        if model == 'wale':
+            return self.compute_wale_viscosity()
+        if model == 'sa':
+            return self.sa_nu_t
+        return None
 
     def _anchor_pressure(self):
         """
@@ -3809,6 +4148,7 @@ class Mesh:
             n_cycles = cycles_per_outer
 
         p_last = cp.zeros((ny, nx), dtype=cp.float32)
+        p_sum = cp.zeros((ny, nx), dtype=cp.float32)  # presión total del paso = Σ correcciones
         rhs = cp.zeros((ny, nx), dtype=cp.float32)
         p_corr = cp.zeros((ny, nx), dtype=cp.float32)
         rhs_flat_ref = rhs.ravel()
@@ -3934,12 +4274,18 @@ class Mesh:
                 break
 
             p_last[:] = p_corr
+            p_sum += p_corr
             if rollback_on_nan and u_initial is not None:
                 u_initial[:] = self.u
                 v_initial[:] = self.v
 
-        if float(cp.max(cp.abs(p_last))) > 0.0:
-            self.p = p_last
+        # Presión del paso: suma de correcciones de todos los outers (como el
+        # modo outer_sum del MG legacy). Guardar solo el último outer dejaba en
+        # self.p un incremento ~0 → fuerzas/Cp sin sentido con compatible_flux.
+        _p_acc = getattr(self, 'mg_pressure_accumulation', 'outer_sum')
+        p_final = p_sum if _p_acc == 'outer_sum' else p_last
+        if float(cp.max(cp.abs(p_final))) > 0.0:
+            self.p = p_final
         self._aplicar_bc_presion_neumann()
         if hay_dirichlet:
             self.p[self.fixed_pressure_mask] = self.fixed_pressure_value
@@ -4208,15 +4554,8 @@ class Mesh:
         self.u[self.solid] = 0.0
         self.v[self.solid] = 0.0
 
-        # Recalcular normales para impermeabilidad (perfil estático)
-        self._precomputar_normales_impermeabilidad()
-        self._precomputar_ghost_cell()
-        self._mg_initialized = False  # Invalidar jerarquía multigrid
-
-        # Reaplicar fronteras
-        self.apply_boundaries()
-
-        # Almacenar ángulo de ataque y ángulo de geometría
+        # Almacenar ángulo de ataque y geometría ANTES de precomputar normales:
+        # el SDF de polígono (ibm_sdf_source="polygon") necesita el polígono ya guardado.
         self.alpha_deg = alpha_deg
         self.alpha_geometry = alpha_deg
         self._airfoil_filepath = filepath
@@ -4227,6 +4566,33 @@ class Mesh:
         self._airfoil_min_te_height = float(min_te_height)
         self._airfoil_polygon_x = np.asarray(x_final, dtype=np.float64)
         self._airfoil_polygon_y = np.asarray(y_final, dtype=np.float64)
+
+        # TE = punto medio de los dos extremos del corte (vértices 0 y -2 del
+        # polígono cerrado, ya rotados). General para cualquier perfil/α: el
+        # formato Selig empieza y termina en el TE aunque no haya trim.
+        px, py = self._airfoil_polygon_x, self._airfoil_polygon_y
+        self._airfoil_te_x = 0.5 * (px[0] + px[-2])
+        self._airfoil_te_y = 0.5 * (py[0] + py[-2])
+        # Bisectriz de la cuña apuntando aguas abajo: -(t_upper + t_lower),
+        # con tangentes unitarias desde el TE hacia el interior del perfil.
+        t_up = np.array([px[1] - px[0], py[1] - py[0]])
+        t_lo = np.array([px[-3] - px[-2], py[-3] - py[-2]])
+        t_up /= np.linalg.norm(t_up) + 1e-30
+        t_lo /= np.linalg.norm(t_lo) + 1e-30
+        bis = -(t_up + t_lo)
+        self._airfoil_te_bisector = bis / (np.linalg.norm(bis) + 1e-30)
+
+        # SDF exacto de polígono (solo modo polygon; cachea banda antes de normales/ghost)
+        if getattr(self, 'ibm_sdf_source', 'edt') == 'polygon':
+            self._precomputar_sdf_poligono()
+
+        # Recalcular normales para impermeabilidad (perfil estático)
+        self._precomputar_normales_impermeabilidad()
+        self._precomputar_ghost_cell()
+        self._mg_initialized = False  # Invalidar jerarquía multigrid
+
+        # Reaplicar fronteras
+        self.apply_boundaries()
 
         if plot:
             plt.figure(figsize=(6, 3))
@@ -4655,7 +5021,13 @@ class Mesh:
             cl = cp.asnumpy(self.clvector).flatten()
             x_iter = np.arange(len(cd)) * self.guardado
 
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8))
+            dcp = getattr(self, 'kutta_dcp_vector', None)
+            if dcp is not None:
+                dcp = cp.asnumpy(dcp).flatten()
+                fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10))
+            else:
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8))
+                ax3 = None
             fig.subplots_adjust(hspace=0.35)
 
             # --- CD ---
@@ -4680,6 +5052,19 @@ class Mesh:
                                 fontweight='bold', color='darkgreen',
                                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='darkgreen'))
             shade_cl = [None]
+
+            # --- ΔCp_TE (monitor Kutta) ---
+            if ax3 is not None:
+                x_dcp = np.arange(len(dcp)) * self.guardado
+                ax3.plot(x_dcp, dcp, linewidth=1.2, color='crimson', alpha=0.8)
+                tol = float(getattr(self, 'kutta_dcp_tol', 0.05))
+                ax3.axhspan(-tol, tol, alpha=0.15, color='green')
+                ax3.axhline(0.0, color='gray', linestyle=':', linewidth=1)
+                ax3.set_xlabel(f"Iteración (guardado cada {self.guardado})", fontsize=11)
+                ax3.set_ylabel("ΔCp_TE", fontsize=11)
+                ax3.set_title("Monitor Kutta: ΔCp_TE (→0 si Kutta cierra; banda = tolerancia)",
+                              fontsize=12, fontweight='bold')
+                ax3.grid(True, alpha=0.3)
 
             def _actualizar(ax, datos, x, hline, texto, shade, xmin, xmax):
                 mask = (x >= xmin) & (x <= xmax)
@@ -5173,9 +5558,18 @@ class Mesh:
         d_in  = distance_transform_edt(self.solid)   # distancia al sólido
         sd = (d_out - d_in).astype(cp.float32)  # positivo fuera del sólido
 
+        # Modo polygon: SDF exacto en la banda cacheada; sin Jacobi ahí (el
+        # suavizado re-rompería la cuña sub-celda del TE que el exacto resuelve)
+        banda_exacta = None
+        if getattr(self, 'ibm_sdf_source', 'edt') == 'polygon' and getattr(self, '_poly_band_mask', None) is not None:
+            banda_exacta = self._poly_band_mask
+            sd = cp.where(banda_exacta, self._poly_sd_cells, sd)
+
         # Suavizado Jacobi limitado a banda cercana (one-shot, no afecta lejos)
         if smooth_passes > 0:
             band = cp.abs(sd) < cp.float32(smooth_band_cells)
+            if banda_exacta is not None:
+                band = band & (~banda_exacta)
             for _ in range(int(smooth_passes)):
                 sd_avg = cp.empty_like(sd)
                 sd_avg[1:-1, 1:-1] = 0.25 * (
@@ -5200,6 +5594,10 @@ class Mesh:
         mag = cp.sqrt(gx*gx + gy*gy) + cp.float32(1e-12)
         nx = gx / mag
         ny = gy / mag
+
+        if banda_exacta is not None:
+            nx = cp.where(banda_exacta, self._poly_nx_hat, nx)
+            ny = cp.where(banda_exacta, self._poly_ny_hat, ny)
 
         return sd, nx, ny
 
@@ -5457,9 +5855,9 @@ class Mesh:
             self._reconstruct_pressure_wall(p_layers, positions, pressure_wall_reconstruction)
         )
 
-        # mu_eff en la cara: molecular + turbulenta (si WALE activo)
-        if self.usar_wale:
-            nu_t_field = self.compute_wale_viscosity()
+        # mu_eff en la cara: molecular + turbulenta (modelo activo: wale/sa)
+        nu_t_field = self.compute_turbulent_viscosity()
+        if nu_t_field is not None:
             nu_t_face = self._bilinear_interpolate(nu_t_field, j_face, i_face)
             mu_eff_face = cp.float32(mu) + cp.float32(rho) * nu_t_face
         else:
@@ -6094,16 +6492,17 @@ class Mesh:
             rows.append(row)
         return rows
 
-    def update_cp_profile(self, mu=1.0, rho=1.0):
+    def update_cp_profile(self, mu=1.0, rho=1.0, return_face_data=False):
         """
         Muestrea Cp instantáneo en las caras frontera y actualiza la suma y contador
         para el promedio temporal por punto de cuerda (bins en `self.cp_bins`).
+        Con return_face_data=True devuelve el dict per-face (para monitor Kutta).
         """
         data = self.compute_surface_forces_definitive(mu=mu, rho=rho, return_per_face=True, return_cp=True)
         # obtener referencia de cuerda usando todas las caras (si existen)
         Xb = data.get('Xb', None)
         if Xb is None or Xb.size == 0:
-            return
+            return data if return_face_data else None
         x_all = Xb
         x_min = float(cp.min(x_all))
         x_max = float(cp.max(x_all))
@@ -6134,6 +6533,9 @@ class Mesh:
             counts_in = cp.bincount(idx_in, minlength=nbins).astype(cp.float32)
             self.cp_profile_sum_in += sums_in
             self.cp_profile_count_in += counts_in
+
+        if return_face_data:
+            return data
 
     def get_cp_profile_mean(self):
         """
@@ -6286,6 +6688,25 @@ class Mesh:
             print(f"    pico succión Cp_min = {cp_min:.3f} en x/c={x_suction:.3f}")
             print(f"{'─'*52}")
         return {"cl_cp": cl_cp, "dcp_te": dcp_te, "cp_min": cp_min, "x_suction": x_suction}
+
+    def compute_kutta_dcp_instant(self, face_data, te_window=0.05):
+        """
+        ΔCp_TE instantáneo = media(Cp_extrados − Cp_intrados) en x/c ≥ 1−te_window,
+        desde el dict per-face de compute_surface_forces_definitive. →0 si Kutta cierra.
+        """
+        X_ex, Cp_ex = face_data.get('X_extrados'), face_data.get('Cp_extrados')
+        X_in, Cp_in = face_data.get('X_intrados'), face_data.get('Cp_intrados')
+        Xb = face_data.get('Xb')
+        if X_ex is None or X_in is None or Xb is None or X_ex.size == 0 or X_in.size == 0:
+            return float('nan')
+        xmin, xmax = float(cp.min(Xb)), float(cp.max(Xb))
+        c = (xmax - xmin) if xmax > xmin else 1.0
+        x_thr = xmin + (1.0 - te_window) * c
+        m_ex = X_ex >= x_thr
+        m_in = X_in >= x_thr
+        if not bool(cp.any(m_ex)) or not bool(cp.any(m_in)):
+            return float('nan')
+        return float(cp.mean(Cp_ex[m_ex]) - cp.mean(Cp_in[m_in]))
 
     def save_state(self, path="sim_last.npz"):
         """
@@ -6591,8 +7012,12 @@ def main(
     ratio_max_malla=50,  # Ratio máximo de celda gruesa respecto a dx_min/dy_min
     dx_max=None,       # Espaciado máximo absoluto en X (si se define, pisa ratio_max_malla)
     dy_max=None,       # Espaciado máximo absoluto en Y (si se define, pisa ratio_max_malla)
-    usar_wale=False,   # Si True, activa modelo de turbulencia WALE
+    usar_wale=False,   # Si True, activa modelo de turbulencia WALE (legacy)
     wale_Cw=0.325,     # Coeficiente WALE. 0.325 estandar 3D; en 2D probar 0.10-0.20
+    turb_model=None,   # "none" | "wale" | "sa". None → mapea usar_wale (legacy)
+    kutta_enforce=False,  # Forzar Kutta: elimina componente transversal en franja TE
+    kutta_relax=0.7,
+    disable_reforzar=False,  # Diagnóstico: omite reforzar_impermeabilidad (test sumidero)
 
     # Posición del perfil
     cx=2,
@@ -6676,10 +7101,14 @@ def main(
     mg_pressure_accumulation="outer_sum",
     wall_pressure_gradient_mode="masked",
     ibm_wall_mode="ghost_noslip",
+    ibm_sdf_source="edt",
     ibm_sdf_smooth_passes=None,
     pressure_wall_reconstruction="linear_5",
     min_te_height_factor=2.0,
     wake_refinement_mode="base",
+
+    # Monitor de condición de Kutta (ΔCp_TE cada `guardado` iters)
+    kutta_dcp_tol=0.05,
 
     # Diagnóstico detallado de spikes (costoso; usar solo al depurar)
     debug_spikes=False,
@@ -6714,6 +7143,15 @@ def main(
         raise ValueError(
             "ibm_wall_mode debe ser 'ghost_noslip', 'slip_only' o 'solid_zero_only'"
         )
+    ibm_sdf_source = str(ibm_sdf_source)
+    if ibm_sdf_source not in {"edt", "polygon"}:
+        raise ValueError("ibm_sdf_source debe ser 'edt' o 'polygon'")
+    if turb_model is None:
+        turb_model = "wale" if usar_wale else "none"
+    turb_model = str(turb_model)
+    if turb_model not in {"none", "wale", "sa"}:
+        raise ValueError("turb_model debe ser 'none', 'wale' o 'sa'")
+    usar_wale = (turb_model == "wale")
     pressure_wall_reconstruction = str(pressure_wall_reconstruction)
     if pressure_wall_reconstruction not in {
         "linear_5", "linear_9", "weighted_linear_9", "quadratic_9", "robust_huber_9"
@@ -6857,9 +7295,11 @@ def main(
 
     # Crear malla con densidad variable
     mesh_gruesa = Mesh(Lx, Ly, p0, v0x, v0y, dx_min, dy_min if dy_min else dx_min,
-                       usar_wale=usar_wale, X_1d=X_1d, Y_1d=Y_1d)
+                       usar_wale=usar_wale, turb_model=turb_model, X_1d=X_1d, Y_1d=Y_1d)
     mesh_gruesa._wale_Cw = float(wale_Cw)
     mesh_gruesa.ibm_wall_mode = ibm_wall_mode
+    mesh_gruesa.ibm_sdf_source = ibm_sdf_source
+    mesh_gruesa._disable_reforzar = bool(disable_reforzar)
     if ibm_sdf_smooth_passes is not None:
         mesh_gruesa._sdf_smooth_passes = int(ibm_sdf_smooth_passes)
     mesh_gruesa._validate_projection_variant(projection_variant)
@@ -6927,6 +7367,11 @@ def main(
     mesh_gruesa.set_boundary("bottom", boundary_type_bottom, value=boundary_val_bottom)
     mesh_gruesa.set_boundary("right", boundary_type_right, value=boundary_val_right)
 
+    if turb_model == "sa":
+        mesh_gruesa.init_sa(nu)
+    if kutta_enforce:
+        mesh_gruesa._precomputar_kutta_te()
+
     # Solo aplicar correccion de deriva en configuraciones verticalmente simetricas.
     cfg_vertical_simetrica = (
         abs(float(v0y)) < 1e-12
@@ -6957,6 +7402,8 @@ def main(
     mesh_gruesa.wall_leak_mean_vector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.wall_leak_max_vector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.clcdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    mesh_gruesa.kutta_dcp_vector = cp.full(iteraciones // guardado, cp.nan, dtype=cp.float32)
+    mesh_gruesa.kutta_dcp_tol = float(kutta_dcp_tol)
     mesh_gruesa.mg_cycles_vector = cp.zeros(iteraciones, dtype=cp.int32)
     mesh_gruesa.projection_variant = projection_variant
     mesh_gruesa.mg_pressure_accumulation = mg_pressure_accumulation
@@ -7306,6 +7753,10 @@ def main(
             if mesh_gruesa.usar_wale:
                 _nu_t = mesh_gruesa.compute_wale_viscosity()
                 del _nu_t
+            if turb_model == "sa":
+                mesh_gruesa.advect_backtrace(1e-12)
+                mesh_gruesa.advect_sa()
+                mesh_gruesa.update_sa(nu, 1e-12)
             # Sincronizar GPU para asegurar que la JIT terminó
             cp.cuda.Stream.null.synchronize()
             print(f"[WARMUP] OK ({time.time() - _t_w:.1f}s)", flush=True)
@@ -7335,7 +7786,9 @@ def main(
                 dt_adv = float(CFL * min(mesh_gruesa.dx, mesh_gruesa.dy) / max(Umax, 1e-12))
 
                 # dt viscoso (estabilidad difusiva)
-                if mesh_gruesa.usar_wale:
+                if turb_model == "sa" and mesh_gruesa.sa_nu_t is not None:
+                    nu_eff_max = float(nu + float(cp.max(mesh_gruesa.sa_nu_t)))
+                elif mesh_gruesa.usar_wale:
                     nu_t_g = mesh_gruesa.compute_wale_viscosity()
 
                     nu_t_max_permitido = 100.0 * nu
@@ -7374,13 +7827,21 @@ def main(
             # Advección
             t0 = time.time()
             mesh_gruesa.advect_velocities(dt_use)
+            if turb_model == "sa":
+                # Transporte SA con el mismo backtrace + fuentes/difusión de nu_tilde
+                mesh_gruesa.advect_sa()
+                mesh_gruesa.update_sa(nu, dt_use)
             mesh_gruesa.apply_boundaries(after_projection=False)
             _diag_check("ADVECCIÓN")
             timing_stats['adveccion'] += time.time() - t0
 
             # Difusión
             t0 = time.time()
-            mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=mesh_gruesa.usar_wale)
+            if turb_model == "sa":
+                mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=False,
+                                             nu_t_field=mesh_gruesa.sa_nu_t)
+            else:
+                mesh_gruesa.diffuse_velocity(nu, dt_use, usar_wale=mesh_gruesa.usar_wale)
             mesh_gruesa.apply_boundaries(after_projection=False)
             _diag_check("DIFUSIÓN")
             timing_stats['difusion'] += time.time() - t0
@@ -7414,6 +7875,9 @@ def main(
             # Almacenar ciclos usados
             mesh_gruesa.mg_cycles_vector[it] = mg_info['cycles']
             mesh_gruesa.apply_boundaries(after_projection=True)
+
+            if kutta_enforce:
+                mesh_gruesa.apply_kutta_te(relax=kutta_relax)
 
             # Evitar sesgo de momento vertical en casos simetricos (v_in=0, slip arriba/abajo).
             if (corregir_deriva_vertical and cfg_vertical_simetrica
@@ -7600,7 +8064,18 @@ def main(
                 mesh_gruesa.divvector_flux_max[it // guardado] = _div_flux_max_abs / max(_div_scale, 1e-30)
                 mesh_gruesa.wall_leak_mean_vector[it // guardado] = _wall_leak_mean
                 mesh_gruesa.wall_leak_max_vector[it // guardado] = _wall_leak_max
-                mesh_gruesa.update_cp_profile(mu, rho)
+                _face_data = mesh_gruesa.update_cp_profile(mu, rho, return_face_data=True)
+                _dcp_te = mesh_gruesa.compute_kutta_dcp_instant(_face_data)
+                mesh_gruesa.kutta_dcp_vector[it // guardado] = _dcp_te
+                # Warning sostenido: pasado el 30% del run, si las últimas 10 muestras
+                # violan la tolerancia, avisar (throttled cada 10 guardados)
+                _k = it // guardado
+                if (it > 0.3 * iteraciones and _k >= 10 and _k % 10 == 0):
+                    _ult = mesh_gruesa.kutta_dcp_vector[_k - 9:_k + 1]
+                    _ok = cp.isfinite(_ult)
+                    if bool(cp.all(_ok)) and bool(cp.all(cp.abs(_ult) > kutta_dcp_tol)):
+                        print(f"  [KUTTA] violación sostenida: ΔCp_TE={_dcp_te:+.4f} "
+                              f"(|tol|={kutta_dcp_tol}) en iter {it}")
 
                 # Diagnóstico local de balance de Lift por zonas de cuerda
                 if diagnostico_fuerzas and (it % max(1, int(diagnostico_fuerzas_cada)) == 0):
@@ -7742,6 +8217,7 @@ def main(
                                 mesh_gruesa.divvector[last_idx+1:] = mesh_gruesa.divvector[last_idx]
                                 mesh_gruesa.divvector_max[last_idx+1:] = mesh_gruesa.divvector_max[last_idx]
                                 mesh_gruesa.clcdvector[last_idx+1:] = mesh_gruesa.clcdvector[last_idx]
+                                mesh_gruesa.kutta_dcp_vector[last_idx+1:] = mesh_gruesa.kutta_dcp_vector[last_idx]
 
                         # Salir del bucle solo si stop_on_convergence está activado
                         if stop_on_convergence:
@@ -7779,6 +8255,7 @@ def main(
         mesh_gruesa.wall_leak_mean_vector = mesh_gruesa.wall_leak_mean_vector[:idx_final]
         mesh_gruesa.wall_leak_max_vector = mesh_gruesa.wall_leak_max_vector[:idx_final]
         mesh_gruesa.clcdvector = mesh_gruesa.clcdvector[:idx_final]
+        mesh_gruesa.kutta_dcp_vector = mesh_gruesa.kutta_dcp_vector[:idx_final]
         mesh_gruesa.mg_cycles_vector = mesh_gruesa.mg_cycles_vector[:it+1]
         iteraciones = it  # Actualizar para reportes
 
@@ -7916,6 +8393,8 @@ def main(
     mesh_gruesa._iteraciones_realizadas = int(iteraciones)
     mesh_gruesa._nu_molecular = float(nu)
     mesh_gruesa._usar_wale_run = bool(usar_wale)
+    mesh_gruesa._turb_model_run = str(turb_model)
+    mesh_gruesa._t_fisico = float(tiempo_fisico_acumulado)
 
     return mesh_gruesa
 
