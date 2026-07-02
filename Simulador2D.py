@@ -7922,6 +7922,7 @@ def main(
 
 if __name__ == "__main__":
     
+
     mesh = main(
         Lx=12,
         Ly=8,
@@ -7929,7 +7930,7 @@ if __name__ == "__main__":
         CFL=0.25,
         alpha_deg=5,
         polar_descarte=0.3,
-        iteraciones=100,
+        iteraciones=20000,
         divergencia=1e-1,
         v0x=1,
         v0y=0,
