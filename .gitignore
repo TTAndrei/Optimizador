@@ -5,3 +5,7 @@ __pycache__/
 
 results/barridos/
 results/diagnosticos/
+
+# npz >100MB (GitHub los rechaza; el hook pre-commit bloquea cualquier >95MB)
+results/agent_tests/wc_sa_a5_dx1.npz
+results/agent_tests/wc_mc_sa_a5_dx1.npz
