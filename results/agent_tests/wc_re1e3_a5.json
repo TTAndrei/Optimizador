@@ -1,0 +1,25 @@
+{
+  "nombre": "wc_re1e3_a5",
+  "params": {
+    "nu": 0.001,
+    "alpha_deg": 5,
+    "iteraciones": 12000,
+    "dx_min": 0.004,
+    "wall_treatment": "consistent",
+    "turb_model": "none",
+    "nota": "JSON reconstruido: runner crasheo en np.trapz (ya arreglado); metricas de sim_last.npz + stdout"
+  },
+  "t_fisico": 9.9904,
+  "cl_medio_ventana": 0.2114,
+  "cl_std_ventana": 0.0004,
+  "deriva_cl": 0.0007,
+  "cd_medio_ventana": 0.150971,
+  "dcp_te_medio_ventana": 0.0409,
+  "cl_circ_015c": 0.2008,
+  "cl_cp": 0.328,
+  "cp_min": -0.552,
+  "x_suction": 0.135,
+  "q_loop_025c": 0.01958,
+  "q_loop_075c": 0.0234,
+  "referencia": "DNS Kurtulus Re=1000 a5: Cl~0.22 Cd~0.146 | legacy: Cl 0.14, Q=-0.06"
+}

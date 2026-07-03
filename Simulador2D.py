@@ -1871,10 +1871,10 @@ class Mesh:
         # bilinear
         return (1-wx)*(1-wy)*f00 + wx*(1-wy)*f10 + (1-wx)*wy*f01 + wx*wy*f11
 
-    def advect_backtrace(self, dt):
+    def _trace_indices(self, dt):
         """
-        Calcula la posición anterior de cada partícula en *índices* (j,i),
-        listos para la interpolación bilineal.
+        Posición de partida x - u·dt en *índices* fraccionarios (j,i).
+        dt>0 = backtrace (semi-Lagrangiano); dt<0 = trace forward (MacCormack).
 
         Para malla variable, la conversión físico→índice usa searchsorted.
         Para malla uniforme, usa la conversión directa u/dx (más rápida).
@@ -1905,16 +1905,33 @@ class Mesh:
             dx_loc = cp.maximum(dx_loc, cp.float32(1e-30))
             dy_loc = cp.maximum(dy_loc, cp.float32(1e-30))
 
-            self.x_prev_idx = (kx.astype(cp.float32) + (x_flat - self.X_1d[kx]) / dx_loc).reshape(x_dep.shape)
-            self.y_prev_idx = (ky.astype(cp.float32) + (y_flat - self.Y_1d[ky]) / dy_loc).reshape(y_dep.shape)
+            x_idx = (kx.astype(cp.float32) + (x_flat - self.X_1d[kx]) / dx_loc).reshape(x_dep.shape)
+            y_idx = (ky.astype(cp.float32) + (y_flat - self.Y_1d[ky]) / dy_loc).reshape(y_dep.shape)
+            return x_idx, y_idx
         else:
             # ---- Malla uniforme: conversión directa (rápida) ----
-            JJ = self.JJ
-            II = self.II
             u_idx = (self.u / self.dx).astype(cp.float32)
             v_idx = (self.v / self.dy).astype(cp.float32)
-            self.x_prev_idx = JJ - u_idx * dt
-            self.y_prev_idx = II - v_idx * dt
+            return self.JJ - u_idx * dt, self.II - v_idx * dt
+
+    def advect_backtrace(self, dt):
+        """Backtrace persistido en x_prev_idx/y_prev_idx (lo reusa advect_sa)."""
+        self.x_prev_idx, self.y_prev_idx = self._trace_indices(dt)
+
+    def _bilinear_minmax(self, field, x_idx, y_idx):
+        """(min, max) de los 4 nodos del stencil bilineal en cada punto."""
+        ny, nx = field.shape
+        x = cp.clip(x_idx, 0.0, nx - 1.000001)
+        y = cp.clip(y_idx, 0.0, ny - 1.000001)
+        j0 = cp.floor(x).astype(cp.int32)
+        i0 = cp.floor(y).astype(cp.int32)
+        j1 = cp.minimum(j0 + 1, nx - 1)
+        i1 = cp.minimum(i0 + 1, ny - 1)
+        f00 = field[i0, j0]; f10 = field[i0, j1]
+        f01 = field[i1, j0]; f11 = field[i1, j1]
+        fmin = cp.minimum(cp.minimum(f00, f10), cp.minimum(f01, f11))
+        fmax = cp.maximum(cp.maximum(f00, f10), cp.maximum(f01, f11))
+        return fmin, fmax
 
     '''Velocidades y presiones'''
 
@@ -1934,6 +1951,30 @@ class Mesh:
         # 2️⃣ Interpolación bilineal
         new_u = self._bilinear_interpolate(self.u, self.x_prev_idx, self.y_prev_idx)
         new_v = self._bilinear_interpolate(self.v, self.x_prev_idx, self.y_prev_idx)
+
+        if getattr(self, 'advection_scheme', 'sl') == "maccormack":
+            # MacCormack (Selle 2008): φ* = SL(φ); φ** = SL_fwd(φ*);
+            # φ^{n+1} = φ* + (φ - φ**)/2, clampeado al stencil del backtrace.
+            # Mata el error difusivo O(u·dx) del SL bilineal (clave a Re altos).
+            # En banda de 2 celdas junto al sólido se mantiene SL puro: la
+            # corrección sobre el staircase genera picos espurios de Cp en TE.
+            if getattr(self, '_mc_skip_band', None) is None:
+                band = self.solid.copy()
+                for _ in range(2):
+                    band = (band
+                            | cp.roll(band, 1, 0) | cp.roll(band, -1, 0)
+                            | cp.roll(band, 1, 1) | cp.roll(band, -1, 1))
+                self._mc_skip_band = band
+            x_fwd, y_fwd = self._trace_indices(-dt)
+            u_back = self._bilinear_interpolate(new_u, x_fwd, y_fwd)
+            v_back = self._bilinear_interpolate(new_v, x_fwd, y_fwd)
+            corr_u = new_u + cp.float32(0.5) * (self.u - u_back)
+            corr_v = new_v + cp.float32(0.5) * (self.v - v_back)
+            umin, umax = self._bilinear_minmax(self.u, self.x_prev_idx, self.y_prev_idx)
+            vmin, vmax = self._bilinear_minmax(self.v, self.x_prev_idx, self.y_prev_idx)
+            skip = self._mc_skip_band
+            new_u = cp.where(skip, new_u, cp.clip(corr_u, umin, umax))
+            new_v = cp.where(skip, new_v, cp.clip(corr_v, vmin, vmax))
 
         new_u[self.solid] = 0.0
         new_v[self.solid] = 0.0
@@ -2805,6 +2846,15 @@ class Mesh:
             )
         return wall_pressure_gradient_mode
 
+    def _validate_divergence_form(self, divergence_form):
+        valid = {"masked", "face_flux"}
+        if divergence_form not in valid:
+            raise ValueError(
+                f"divergence_form invalido: {divergence_form!r}. "
+                f"Valores validos: {sorted(valid)}"
+            )
+        return divergence_form
+
     def project_cg(self, rho_sim, dt, tol_div=1e-1, tol_residual=1e-6,
                    max_iter=500, min_iter=5, check_every=50,
                    verbose=False, print_every=100,
@@ -3106,7 +3156,8 @@ class Mesh:
                           usar_adjoint_correction=False,
                           projection_variant="legacy_centered",
                           mg_pressure_accumulation="outer_sum",
-                          wall_pressure_gradient_mode="masked"):
+                          wall_pressure_gradient_mode="masked",
+                          divergence_form="masked"):
         """
         Proyección incompresible con defect-correction iterativo + multigrid.
         Smoother: Red-Black Gauss-Seidel SOR (CUDA kernel in-place).
@@ -3146,6 +3197,19 @@ class Mesh:
         wall_pressure_gradient_mode = self._validate_wall_pressure_gradient_mode(
             wall_pressure_gradient_mode
         )
+        divergence_form = self._validate_divergence_form(divergence_form)
+        # Divergencia que ve la pared (cara fluido-solido = flujo 0) para que el
+        # RHS del Poisson incluya el flujo contra el cuerpo y la proyeccion misma
+        # imponga impermeabilidad (sin cirugia posterior de reforzar).
+        if divergence_form == "face_flux":
+            def _div_func(out=None):
+                d = self._compute_flux_divergence_field_uv(out=out)
+                # Igualar la metrica legacy: div=0 en bordes de dominio
+                d[0, :] = 0.0; d[-1, :] = 0.0
+                d[:, 0] = 0.0; d[:, -1] = 0.0
+                return d
+        else:
+            _div_func = self._compute_divergence_field
         if projection_variant == "compatible_flux":
             return self._project_multigrid_compatible_flux(
                 rho_sim, dt,
@@ -3405,7 +3469,7 @@ class Mesh:
         div_work = cp.empty((ny, nx), dtype=cp.float32)
         div_abs_work = cp.empty((ny, nx), dtype=cp.float32)
         inv_n_free = 1.0 / max(float(n_free), 1.0)
-        div_before_field = self._compute_divergence_field(out=div_work)
+        div_before_field = _div_func(out=div_work)
         cp.abs(div_before_field, out=div_abs_work)
         # Nota: div=0 en sólidos/bordes por kernel; media normalizada por n_free
         # reproduce la métrica anterior sin fancy indexing.
@@ -3503,7 +3567,7 @@ class Mesh:
                 div_max_current = div_max_before
                 div_eff_current = div_eff_before
             else:
-                div_field = self._compute_divergence_field(out=div_work)
+                div_field = _div_func(out=div_work)
                 cp.abs(div_field, out=div_abs_work)
                 div_mean_current = float(cp.sum(div_abs_work)) * inv_n_free
                 div_max_current  = float(cp.max(div_abs_work))
@@ -3649,7 +3713,7 @@ class Mesh:
                 p_acumulada += p_corr
 
             if verbose:
-                div_tmp = self._compute_divergence_field(out=div_work)
+                div_tmp = _div_func(out=div_work)
                 cp.abs(div_tmp, out=div_abs_work)
                 div_log = float(cp.sum(div_abs_work)) * inv_n_free
                 print(f"[MG] Outer {outer+1}/{n_outer} ({cycles_this} V-cyc): "
@@ -3684,7 +3748,7 @@ class Mesh:
                 pass
 
         if compute_div_after:
-            div_after_field = self._compute_divergence_field(out=div_work)
+            div_after_field = _div_func(out=div_work)
             cp.abs(div_after_field, out=div_abs_work)
             div_mean_after = float(cp.sum(div_abs_work)) * inv_n_free
             div_max_after  = float(cp.max(div_abs_work))
@@ -7015,9 +7079,15 @@ def main(
     usar_wale=False,   # Si True, activa modelo de turbulencia WALE (legacy)
     wale_Cw=0.325,     # Coeficiente WALE. 0.325 estandar 3D; en 2D probar 0.10-0.20
     turb_model=None,   # "none" | "wale" | "sa". None → mapea usar_wale (legacy)
+    sa_nu_tilde_factor=3.0,  # chi inflow/IC de SA; bajo (~0.1) retrasa transición
+    advection_scheme="sl",   # "sl" | "maccormack" (2º orden, menos difusión numérica)
     kutta_enforce=False,  # Forzar Kutta: elimina componente transversal en franja TE
     kutta_relax=0.7,
     disable_reforzar=False,  # Diagnóstico: omite reforzar_impermeabilidad (test sumidero)
+    # "legacy": proyección ciega en pared + reforzar (sumidero Q≈-0.06·U·c).
+    # "consistent": divergencia por caras (flujo pared=0) + gradiente one-sided
+    #               + sin reforzar → la proyección impone impermeabilidad.
+    wall_treatment="legacy",
 
     # Posición del perfil
     cx=2,
@@ -7138,6 +7208,15 @@ def main(
     projection_variant = str(projection_variant)
     mg_pressure_accumulation = str(mg_pressure_accumulation)
     wall_pressure_gradient_mode = str(wall_pressure_gradient_mode)
+    wall_treatment = str(wall_treatment)
+    if wall_treatment not in {"legacy", "consistent"}:
+        raise ValueError("wall_treatment debe ser 'legacy' o 'consistent'")
+    if wall_treatment == "consistent":
+        divergence_form = "face_flux"
+        wall_pressure_gradient_mode = "one_sided"
+        disable_reforzar = True
+    else:
+        divergence_form = "masked"
     ibm_wall_mode = str(ibm_wall_mode)
     if ibm_wall_mode not in {"ghost_noslip", "slip_only", "solid_zero_only"}:
         raise ValueError(
@@ -7234,7 +7313,8 @@ def main(
         mg_max_outer = 4
         mg_cycles_per_outer = 5
         mg_niveles_max = 1
-        divergencia = 0.05
+        # Cap a 0.05 pero respetar una tolerancia explicita MAS estricta
+        divergencia = min(divergencia, 0.05)
         mg_pre_suavizado = 1
         mg_post_suavizado = 1
         mg_guard_residual_every_outer = False
@@ -7300,6 +7380,7 @@ def main(
     mesh_gruesa.ibm_wall_mode = ibm_wall_mode
     mesh_gruesa.ibm_sdf_source = ibm_sdf_source
     mesh_gruesa._disable_reforzar = bool(disable_reforzar)
+    mesh_gruesa.wall_treatment = wall_treatment
     if ibm_sdf_smooth_passes is not None:
         mesh_gruesa._sdf_smooth_passes = int(ibm_sdf_smooth_passes)
     mesh_gruesa._validate_projection_variant(projection_variant)
@@ -7367,8 +7448,9 @@ def main(
     mesh_gruesa.set_boundary("bottom", boundary_type_bottom, value=boundary_val_bottom)
     mesh_gruesa.set_boundary("right", boundary_type_right, value=boundary_val_right)
 
+    mesh_gruesa.advection_scheme = str(advection_scheme)
     if turb_model == "sa":
-        mesh_gruesa.init_sa(nu)
+        mesh_gruesa.init_sa(nu, nu_tilde_factor=sa_nu_tilde_factor)
     if kutta_enforce:
         mesh_gruesa._precomputar_kutta_te()
 
@@ -7866,6 +7948,7 @@ def main(
                 projection_variant=projection_variant,
                 mg_pressure_accumulation=mg_pressure_accumulation,
                 wall_pressure_gradient_mode=wall_pressure_gradient_mode,
+                divergence_form=divergence_form,
                 verbose=False
             )
             #mg_info = mesh_gruesa.project_cg(rho, dt_use, tol_div=divergencia,
@@ -8409,8 +8492,8 @@ if __name__ == "__main__":
         CFL=0.25,
         alpha_deg=5,
         polar_descarte=0.3,
-        iteraciones=20000,
-        divergencia=1e-1,
+        iteraciones=60000,   # dx=0.001: estacionario en t≈6 conv ≈ 37k iters + ventana
+        divergencia=0.02,
         v0x=1,
         v0y=0,
         rho=1.0,
@@ -8425,16 +8508,20 @@ if __name__ == "__main__":
         graficos=True,
         save_frames=False,
         frames_dir_grueso="",
-        usar_wale=False,
-        wale_Cw=0.1,   # 2D-tuned (estandar 3D=0.325 sobre-disipa en 2D)
+
+        # Config de referencia validada 2026-07-03 (Cl=0.496 a α=5, físico 0.55;
+        # polar 0/2/5/8° monótona, pendiente 0.088/deg):
+        turb_model="sa",
+        wall_treatment="consistent",
+        advection_scheme="maccormack",
         stop_on_convergence=False,
         live_view=True,
         mostrar_malla=True,
         mg_modo_turbo=False,
-        mg_modo_turbo_hd=True,
+        mg_modo_turbo_hd=False,  # turbo satura el MG (Q residual +0.026 → Cl sesgado)
         mg_modo_turbo_ultra=False,
+        mg_max_outer=8,
+        mg_niveles_max=2,
         wake_refinement_mode="long_fine_x"
-        
-
     )
     

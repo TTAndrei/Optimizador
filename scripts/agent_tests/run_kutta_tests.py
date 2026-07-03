@@ -33,6 +33,28 @@ COARSE = dict(
 )
 
 
+def _loop_flux(mesh, params, margin):
+    """Q = ∮u·n dl (saliente) en rectángulo alrededor del perfil. Debe →0."""
+    import cupy as cp
+    import numpy as np
+
+    X = cp.asnumpy(mesh.X_1d).astype(float)
+    Y = cp.asnumpy(mesh.Y_1d).astype(float)
+    u = cp.asnumpy(mesh.u).astype(float)
+    v = cp.asnumpy(mesh.v).astype(float)
+    cx = float(params.get("cx", 2.0))
+    chord = float(params.get("chord", 1.0))
+    cy = float(params.get("cy") or params["Ly"] / 2.0)
+    x0, x1 = cx - margin, cx + chord + margin
+    y0, y1 = cy - (margin + chord / 2), cy + (margin + chord / 2)
+    j0, j1 = np.searchsorted(X, x0), np.searchsorted(X, x1)
+    i0, i1 = np.searchsorted(Y, y0), np.searchsorted(Y, y1)
+    ys, xs = Y[i0:i1 + 1], X[j0:j1 + 1]
+    q = (np.trapezoid(u[i0:i1 + 1, j1], ys) - np.trapezoid(u[i0:i1 + 1, j0], ys)
+         + np.trapezoid(v[i1, j0:j1 + 1], xs) - np.trapezoid(v[i0, j0:j1 + 1], xs))
+    return float(q)
+
+
 def _run_sim(nombre, **overrides):
     import cupy as cp
     import numpy as np
@@ -77,6 +99,8 @@ def _run_sim(nombre, **overrides):
         "deriva_cl": deriva_cl,
         "dcp_te_medio_ventana": float(np.mean(np.abs(dcp_ok))) if dcp_ok.size else float("nan"),
         "cl_circ_025c": float(circ[0]["cl_circ"]) if circ else float("nan"),
+        "q_loop_025c": _loop_flux(mesh, params, 0.25),
+        "q_loop_075c": _loop_flux(mesh, params, 0.75),
         "cl_cp": cpd.get("cl_cp", float("nan")),
         "cp_min": cpd.get("cp_min", float("nan")),
         "x_suction": cpd.get("x_suction", float("nan")),
