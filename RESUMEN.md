@@ -36,8 +36,8 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
 - **CONFIG DE REFERENCIA DEL OPTIMIZADOR**: `wall_treatment="consistent"` + `turb_model="sa"` + `advection_scheme="maccormack"`. dx=0.002 para screening (Cl-0.1 vs físico, ~65 min/run), dx=0.001 para validación (Cl-0.05, ~3.6h).
 - Regresión verde tras MacCormack (5 passed; defaults intactos, "sl" sigue siendo default).
 - **POLAR VALIDADA** (`wc_mc_polar_a0/a2/a8` + `wc_mc_sa_a5_dx2`, dx=0.002 MacCormack): Cl(α)= 0(0.000), 2(0.185), 5(0.452), 8(0.708); Cd= 0.0305/0.0323/0.0404/0.0624. Monotonía ✓, pendiente 0.088/deg ✓, simetría α=0 exacta ✓, sublinealidad física en α=8 (pre-stall), Cp_min=-2.13 y succión x/c=0.015 en α=8. **DIAGNÓSTICO DE 4 CAPAS CERRADO COMPLETO.**
-- **Todo commiteado** (`a5c14b7` "lift y drag solucionados": MacCormack + sa_nu_tilde_factor + resultados wc_*; `93b6c54`: script de barrido; `5979fab`: .gitignore para npz >100MB).
-- **Script de barrido CFL/dx/α añadido**: `scripts/agent_tests/run_cfl_sweep.py` — cola resumible de 30 sims (α=0/2/5/8/10 × CFL=0.25/0.5/0.75 × dx=0.004/0.002) con la config de referencia, iteraciones auto-escaladas a t=12 convectivos, métricas JSON por sim (iteración/tiempo de convergencia de Cl/Cd), npz de estado, frames cada 1000 iters, streamlines finales, series temporales. Reanuda desde la última completada; CSV resumen + plots polar/convergencia/coste-vs-error. **Aún no ejecutado** (`results/cfl_sweep/` solo tiene `frames/` vacío).
+- **Todo commiteado** (`a5c14b7` "lift y drag solucionados": MacCormack + sa_nu_tilde_factor + resultados wc_*; `93b6c54`: script de barrido; `5979fab`: .gitignore para npz >100MB; `842fd9f`: última actualización de estado).
+- **Script de barrido CFL/dx/α añadido**: `scripts/agent_tests/run_cfl_sweep.py` — cola resumible de 30 sims (α=0/2/5/8/10 × CFL=0.25/0.5/0.75 × dx=0.004/0.002) con la config de referencia, iteraciones auto-escaladas a t=12 convectivos, métricas JSON por sim (iteración/tiempo de convergencia de Cl/Cd), npz de estado, frames cada 1000 iters, streamlines finales, series temporales. Reanuda desde la última completada; CSV resumen + plots polar/convergencia/coste-vs-error. **Aún no ejecutado** (`results/cfl_sweep/` solo tiene `frames/` vacío; verificado 2026-07-03).
 
 **Diagnóstico histórico cerrado (4 capas, evidencia en `results/agent_tests/`)**:
 1. LSB laminar a Re≥1e4 (burst t≈5-7 convectivos, colapso). Fix: **Spalart-Allmaras** (`turb_model="sa"`). WALE inerte.
@@ -49,11 +49,11 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
 **Añadido sesiones previas**: monitor Kutta (`kutta_dcp_vector`), SDF polígono (`ibm_sdf_source="polygon"`), SA completo, Kutta explícita opcional (`kutta_enforce`), fix acumulación de presión MG compatible_flux (CG ya estaba bien), checkpoints.
 
 ## Próximos pasos
-1. **Ejecutar el barrido** `scripts/agent_tests/run_cfl_sweep.py` (30 sims, resumible) para caracterizar coste/error CFL×dx×α y fijar la config del optimizador genético.
+1. **Ejecutar el barrido** `scripts/agent_tests/run_cfl_sweep.py` (30 sims, resumible) para caracterizar coste/error CFL×dx×α y fijar la config del optimizador genético. Sigue pendiente: ninguna sim lanzada aún.
 2. Diseño del optimizador sobre config de referencia: dx=0.002 MacCormack, 18k iters (~30 min/punto, estable en t≈4-5 conv), ranking con sesgo consistente Cl−0.10; validación de ganadores a dx=0.001 (Richardson → valor físico).
 3. Opcional barato: probar MacCormack+turbo_hd (~19 it/s esperado) para pre-screening si el sesgo por Q=0.026 resulta consistente entre geometrías.
 4. Opcional física: sublinealidad α=8 (deriva -0.002, TE separación creciendo) — vigilar si el optimizador explora α altos; el barrido incluye α=10 para localizar stall numérico.
-5. Limpieza menor: `RESUMEN.md.tmp` vacío sin trackear en la raíz (borrar).
+5. Limpieza menor: `RESUMEN.md.tmp` vacío sin trackear en la raíz (sigue presente, residuo del hook de regeneración; borrar).
 
 ## Tests
 - `scripts/agent_tests/run_kutta_tests.py {smoke|smoke_polygon|baseline_a5|polygon_a5|compare|regression}` — runs coarse (dx=0.004, ~5-15 min) con criterios cuantitativos, resultados en `results/agent_tests/`.
