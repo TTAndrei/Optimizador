@@ -7,7 +7,7 @@ Simulador CFD 2D incompresible (Navier-Stokes) en GPU (CuPy, RTX 3070 Ti) para p
 - Sólidos por IBM (Immersed Boundary): máscara rasterizada + ghost-cell no-slip (`ibm_wall_mode="ghost_noslip"`).
 - **Ejecutar SIEMPRE con `.venv/bin/python`** (el python3 del sistema no tiene CuPy).
 
-## Estado actual (2026-07-02, rama Malla-Variable)
+## Estado actual (2026-07-03, rama Malla-Variable)
 
 Caso de trabajo: NACA0012, α=5°, Re=1e5, Cl físico esperado ~0.55.
 
@@ -17,13 +17,13 @@ Caso de trabajo: NACA0012, α=5°, Re=1e5, Cl físico esperado ~0.55.
 3. `reforzar_impermeabilidad` desactivado (`disable_reforzar=True`) — era la cirugía que borraba masa (Q≈-0.06·U·c).
 El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y corrección anulaban la componente entera junto al sólido (proyección ciega en pared).
 
-**Resultados validados** (JSON+npz en `results/agent_tests/wc_*`):
+**Resultados validados** (JSON+npz en `results/agent_tests/wc_*`; commiteados en `a5c14b7`, npz >100MB excluidos por `.gitignore`):
 - `wc_re1e3_a5` (Re=1e3, α=5): Cl=0.211±0.0004, Cd=0.148, Q_lazo=+0.02, ΔCp_TE=0.04. **Clava el DNS de referencia (Kurtulus Re=1000: Cl~0.22, Cd~0.146)**. Legacy daba 0.14 con Q=-0.06.
 - `wc_sa_a0` (α=0, SA): Cl=0.0003, sin NaN — simetría perfecta.
 - `wc_sa_a5_dx2` (α=5, Re=1e5, SA, dx=0.002, turbo_hd): **estable sin colapso**, Kutta cierra (ΔCp_TE=0.012), pero Cl=0.274. Q_lazo=+0.026 (MG turbo saturado).
 - `wc_sa_a5_dx2_full` (sin turbo: div=0.02, outer=8, niveles=2, 24k iters): Q_lazo=0.006 ✓ pero Cl=0.312. **Hipótesis Q→Cl pendiente ~20 FALSIFICADA**: ΔQ=0.020 predecía ΔCl≈+0.4, medido +0.04.
 - `wc_sa_a5_dx2_long` (div=0.01, outer=12, 48k iters, t=18.3 conv, 2h GPU): Q=0.0032, **Cl CONVERGE en plateau 0.32** (transitorio: pico 0.40 en t≈2, mínimo 0.312 en t≈10, luego estabiliza 0.320 con deriva 0.0025). cl_cp=0.383, cl_circ=0.281 (dispersión estimadores cerrando). x_succión mejoró a 0.045. **PROYECCIÓN EXONERADA: Q→0 no recupera el Cl.**
-- **Diagnóstico actual del déficit (0.32 vs 0.55)**: SA sobre-difunde. Evidencia: BL en x/c=0.5 espesor ~0.07c (3× placa plana turbulenta Re=1e5), χ=nu_t/nu~40-50 en BL (teórico ~8), Cp_min=-0.81 (esperado ~-1.9), Cd=0.048 (alto). Causas candidatas: (a) SA fully-turbulent desde LE a Re=1e5 (flujo real laminar hasta ~x/c=0.5, penaliza succión), (b) primera celda a y+≈10 sin wall function (SA quiere y+≲1). Distancia de pared SA verificada correcta; constantes SA estándar.
+- **Diagnóstico del déficit (0.32 vs 0.55)**: SA sobre-difunde. Evidencia: BL en x/c=0.5 espesor ~0.07c (3× placa plana turbulenta Re=1e5), χ=nu_t/nu~40-50 en BL (teórico ~8), Cp_min=-0.81 (esperado ~-1.9), Cd=0.048 (alto). Causas candidatas: (a) SA fully-turbulent desde LE a Re=1e5 (flujo real laminar hasta ~x/c=0.5, penaliza succión), (b) primera celda a y+≈10 sin wall function (SA quiere y+≲1). Distancia de pared SA verificada correcta; constantes SA estándar.
 - Hallazgo menor: `mg_modo_turbo_hd` pisaba `divergencia` (arreglado: `min(divergencia, 0.05)`); runs `wc_sa_a5_dx2` y `_t02` idénticos (el fix no cambió nada porque turbo satura outers igual).
 - Añadido kwarg `sa_nu_tilde_factor` a `main()` (default 3.0; bajo ~0.1 retrasa transición SA).
 - `wc_sa_a5_dx2_lam01` (sa_nu_tilde_factor=0.1, t=14.2 conv): **PEOR** — Cl=0.266, x_succión=0.14 (LSB reapareciendo), Cp_min=-0.66, Cd=0.056; χ_max=184 (transiciona igual pero tarde). **Falsificada hipótesis (a) fully-turbulent**; retrasar transición reactiva la burbuja laminar. Mantener sa_nu_tilde_factor=3.0.
@@ -36,6 +36,8 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
 - **CONFIG DE REFERENCIA DEL OPTIMIZADOR**: `wall_treatment="consistent"` + `turb_model="sa"` + `advection_scheme="maccormack"`. dx=0.002 para screening (Cl-0.1 vs físico, ~65 min/run), dx=0.001 para validación (Cl-0.05, ~3.6h).
 - Regresión verde tras MacCormack (5 passed; defaults intactos, "sl" sigue siendo default).
 - **POLAR VALIDADA** (`wc_mc_polar_a0/a2/a8` + `wc_mc_sa_a5_dx2`, dx=0.002 MacCormack): Cl(α)= 0(0.000), 2(0.185), 5(0.452), 8(0.708); Cd= 0.0305/0.0323/0.0404/0.0624. Monotonía ✓, pendiente 0.088/deg ✓, simetría α=0 exacta ✓, sublinealidad física en α=8 (pre-stall), Cp_min=-2.13 y succión x/c=0.015 en α=8. **DIAGNÓSTICO DE 4 CAPAS CERRADO COMPLETO.**
+- **Todo commiteado** (`a5c14b7` "lift y drag solucionados": MacCormack + sa_nu_tilde_factor + resultados wc_*; `93b6c54`: script de barrido; `5979fab`: .gitignore para npz >100MB).
+- **Script de barrido CFL/dx/α añadido**: `scripts/agent_tests/run_cfl_sweep.py` — cola resumible de 30 sims (α=0/2/5/8/10 × CFL=0.25/0.5/0.75 × dx=0.004/0.002) con la config de referencia, iteraciones auto-escaladas a t=12 convectivos, métricas JSON por sim (iteración/tiempo de convergencia de Cl/Cd), npz de estado, frames cada 1000 iters, streamlines finales, series temporales. Reanuda desde la última completada; CSV resumen + plots polar/convergencia/coste-vs-error. **Aún no ejecutado** (`results/cfl_sweep/` solo tiene `frames/` vacío).
 
 **Diagnóstico histórico cerrado (4 capas, evidencia en `results/agent_tests/`)**:
 1. LSB laminar a Re≥1e4 (burst t≈5-7 convectivos, colapso). Fix: **Spalart-Allmaras** (`turb_model="sa"`). WALE inerte.
@@ -47,13 +49,15 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
 **Añadido sesiones previas**: monitor Kutta (`kutta_dcp_vector`), SDF polígono (`ibm_sdf_source="polygon"`), SA completo, Kutta explícita opcional (`kutta_enforce`), fix acumulación de presión MG compatible_flux (CG ya estaba bien), checkpoints.
 
 ## Próximos pasos
-1. **Commit pendiente** de la sesión 2026-07-03: MacCormack + sa_nu_tilde_factor + resultados wc_* (usuario debe pedirlo o revisarlo).
+1. **Ejecutar el barrido** `scripts/agent_tests/run_cfl_sweep.py` (30 sims, resumible) para caracterizar coste/error CFL×dx×α y fijar la config del optimizador genético.
 2. Diseño del optimizador sobre config de referencia: dx=0.002 MacCormack, 18k iters (~30 min/punto, estable en t≈4-5 conv), ranking con sesgo consistente Cl−0.10; validación de ganadores a dx=0.001 (Richardson → valor físico).
 3. Opcional barato: probar MacCormack+turbo_hd (~19 it/s esperado) para pre-screening si el sesgo por Q=0.026 resulta consistente entre geometrías.
-4. Opcional física: sublinealidad α=8 (deriva -0.002, TE separación creciendo) — vigilar si el optimizador explora α altos; añadir α=10-12 a la polar para localizar stall numérico.
+4. Opcional física: sublinealidad α=8 (deriva -0.002, TE separación creciendo) — vigilar si el optimizador explora α altos; el barrido incluye α=10 para localizar stall numérico.
+5. Limpieza menor: `RESUMEN.md.tmp` vacío sin trackear en la raíz (borrar).
 
 ## Tests
 - `scripts/agent_tests/run_kutta_tests.py {smoke|smoke_polygon|baseline_a5|polygon_a5|compare|regression}` — runs coarse (dx=0.004, ~5-15 min) con criterios cuantitativos, resultados en `results/agent_tests/`.
+- `scripts/agent_tests/run_cfl_sweep.py` — barrido CFL/dx/α resumible (ver Próximos pasos), resultados en `results/cfl_sweep/`.
 - `pytest tests/ --ignore=tests/test_generacion_geometrica_ga.py` (5 passed; el de GA está roto pre-existente: importa `RunGA` inexistente).
 
 ## Diagnósticos clave (métodos de Mesh)
