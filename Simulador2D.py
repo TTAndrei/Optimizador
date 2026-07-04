@@ -246,18 +246,30 @@ class Mesh:
     '''Constructor y basicos'''
     def __init__(self, Lx, Ly, p0, v0x, v0y, dx, dy,
                  usar_wale=True, turb_model=None,
-                 X_1d=None, Y_1d=None):
+                 X_1d=None, Y_1d=None,
+                 core_v0x=None, core_v0y=None, core_box=None):
         """
         Parámetros
         ----------
         Lx, Ly       : dimensiones del dominio (m).
         p0            : presión inicial.
-        v0x, v0y      : velocidad inicial.
+        v0x, v0y      : velocidad inicial (uniforme, incluye lo que luego
+                         imponen las fronteras inflow).
         dx, dy        : espaciado de referencia (uniforme si X_1d/Y_1d=None;
                          usado para CFL/estabilidad si se pasan X_1d/Y_1d).
         X_1d, Y_1d    : arrays numpy (float64) con posiciones de nodos en x/y.
                          Si se proporcionan, la malla es de densidad variable.
                          Si None, se genera malla uniforme desde dx/dy.
+        core_v0x, core_v0y : si no son None, sobreescriben la IC uniforme en
+                         una caja rectangular interior (core_box), dejando el
+                         resto del dominio (y las fronteras) en v0x/v0y. Solo
+                         afecta la condición inicial instantánea t=0 — la
+                         física evoluciona libremente después; útil para
+                         pruebas (p.ej. un núcleo con velocidad distinta al
+                         freestream). None (default) = sin efecto.
+        core_box      : (x0, x1, y0, y1) físico de la caja interior. Si None
+                         y algún core_v0* está activo, usa el 60% central del
+                         dominio (20%-80% de Lx/Ly).
         """
         self.Lx = Lx
         self.Ly = Ly
@@ -364,6 +376,21 @@ class Mesh:
         self.u[:] = v0x
         self.v[:] = v0y
         self.p[:] = p0
+
+        # IC opcional: núcleo interior con velocidad distinta al freestream
+        # (feature de prueba, ver docstring de core_v0x/core_v0y/core_box).
+        if core_v0x is not None or core_v0y is not None:
+            if core_box is not None:
+                x0, x1, y0, y1 = core_box
+            else:
+                x0, x1 = self.Lx * 0.2, self.Lx * 0.8
+                y0, y1 = self.Ly * 0.2, self.Ly * 0.8
+            core_mask = ((self.XX >= x0) & (self.XX <= x1)
+                         & (self.YY >= y0) & (self.YY <= y1))
+            if core_v0x is not None:
+                self.u = cp.where(core_mask, cp.float32(core_v0x), self.u)
+            if core_v0y is not None:
+                self.v = cp.where(core_mask, cp.float32(core_v0y), self.v)
 
         # Velocidad de referencia (para clamp en ghost-cell IBM)
         self._vel_ref = float(max(np.sqrt(v0x**2 + v0y**2), 1.0))
@@ -7054,56 +7081,128 @@ def _guardar_punto_polar(polar_data, mesh, mu, rho, U_inf, chord,
     })
 
 
+def _detect_series_convergence(serie, t_fisico, tol_abs=0.005, tol_rel=0.02, window_conv_time=0.5):
+    """
+    Convergencia = último instante en que la media móvil (ventana ~window_conv_time
+    tiempos convectivos) se sale de la banda ±tol alrededor de la media del último
+    15% de la serie. Misma métrica que scripts/agent_tests/run_cfl_sweep.py.
+    Devuelve (t_conv, converged).
+    """
+    s = np.asarray(serie, dtype=float)
+    n = len(s)
+    if n < 10 or t_fisico <= 0 or not np.all(np.isfinite(s)):
+        return float("nan"), False
+    ref = float(np.mean(s[-max(1, n * 15 // 100):]))
+    tol = max(tol_abs, tol_rel * abs(ref))
+    w = max(3, int(n / t_fisico * window_conv_time))
+    w = min(w, n // 3)
+    if w < 1:
+        return float("nan"), False
+    kernel = np.ones(w) / w
+    sm = np.convolve(s, kernel, mode="valid")
+    bad = np.where(np.abs(sm - ref) > tol)[0]
+    idx = int(bad[-1] + w) if bad.size else 0
+    converged = idx <= 0.9 * n
+    t_conv = t_fisico * idx / n
+    return float(t_conv), bool(converged)
+
+
 def main(
-    # Parámetros temporales
-    CFL=0.8,
+    # ================================================================
+    # TIEMPO / ESTABILIDAD
+    # ================================================================
+    CFL=0.8,   # Courant: dt = CFL * min(dx,dy) / |U|_max_fluido (adaptativo)
 
-    # Geometría del perfil
-    alpha_deg=5,
-    chord=1.0,
-    filepath="profiles/NACA_0012",
+    # ================================================================
+    # GEOMETRÍA DEL PERFIL
+    # ================================================================
+    alpha_deg=5,      # ángulo de ataque (deg)
+    chord=1.0,        # cuerda (m)
+    filepath="profiles/NACA_0012",  # cambiar a "profiles/NACA_0012_sharp" + min_te_height_factor=1.0
+                                     # para el perfil TE afilado de la config validada (ver __main__)
 
-    # Tamaño del dominio
-    Lx=7,
-    Ly=6,
+    # Tamaño del dominio (m)
+    Lx=8,
+    Ly=5,
 
-    # Resolución de malla
-    dx_min=0.01,       # Espaciado mínimo (zona fina alrededor del perfil)
-    dy_min=None,       # Si None, se usa dx_min
-    factor_expansion=1.05,  # Factor geométrico de crecimiento
-    ancho_zona_fina_x=None,  # Ancho de zona fina en X (None → 0.1*Lx)
-    ancho_zona_fina_y=None,  # Ancho de zona fina en Y (None → 0.1*Ly)
-    ratio_max_malla=50,  # Ratio máximo de celda gruesa respecto a dx_min/dy_min
-    dx_max=None,       # Espaciado máximo absoluto en X (si se define, pisa ratio_max_malla)
-    dy_max=None,       # Espaciado máximo absoluto en Y (si se define, pisa ratio_max_malla)
-    usar_wale=False,   # Si True, activa modelo de turbulencia WALE (legacy)
-    wale_Cw=0.325,     # Coeficiente WALE. 0.325 estandar 3D; en 2D probar 0.10-0.20
-    turb_model=None,   # "none" | "wale" | "sa". None → mapea usar_wale (legacy)
+    # Posición del perfil dentro del dominio
+    cx=2,
+    cy=None,  # None → se centra verticalmente (Ly/2)
+
+    # ================================================================
+    # RESOLUCIÓN DE MALLA (malla estirada: fina junto al perfil, gruesa lejos)
+    # ================================================================
+    dx_min=0.002,      # espaciado mínimo junto al perfil. 0.004=screening rápido,
+                       # 0.002=config de referencia (validada, ~65 min/run),
+                       # 0.001=validación final (Richardson, ~3.6h)
+    dy_min=None,       # si None, usa dx_min
+    factor_expansion=1.1,   # factor geométrico de crecimiento hacia el borde
+    ancho_zona_fina_x=1.5,  # ancho de zona fina en X (None → 0.1*Lx)
+    ancho_zona_fina_y=1.0,  # ancho de zona fina en Y (None → 0.1*Ly)
+    ratio_max_malla=50,     # ratio máx. celda gruesa/dx_min (o usar dx_max/dy_max)
+    dx_max=None,       # espaciado máximo absoluto en X (si se define, pisa ratio_max_malla)
+    dy_max=None,       # espaciado máximo absoluto en Y (si se define, pisa ratio_max_malla)
+
+    # ================================================================
+    # TURBULENCIA / ESQUEMA DE ADVECCIÓN
+    # ================================================================
+    # turb_model: "none" | "wale" | "sa". SA es el validado (resuelve el LSB
+    # laminar a Re>=1e4, ver RESUMEN.md). None → mapea el flag legacy usar_wale.
+    turb_model=None,
+    usar_wale=False,   # legacy: si turb_model=None y usar_wale=True → "wale"
+    wale_Cw=0.325,     # coeficiente WALE (solo si turb_model="wale"). 0.325
+                       # estándar 3D; en 2D probar 0.10-0.20
     sa_nu_tilde_factor=3.0,  # chi inflow/IC de SA; bajo (~0.1) retrasa transición
-    advection_scheme="sl",   # "sl" | "maccormack" (2º orden, menos difusión numérica)
-    kutta_enforce=False,  # Forzar Kutta: elimina componente transversal en franja TE
-    kutta_relax=0.7,
-    disable_reforzar=False,  # Diagnóstico: omite reforzar_impermeabilidad (test sumidero)
-    # "legacy": proyección ciega en pared + reforzar (sumidero Q≈-0.06·U·c).
+                             # (reactiva el LSB, no bajar sin motivo — ver RESUMEN)
+    # "sl" (semi-Lagrangiano bilineal, difusión numérica alta a Re>=1e5) |
+    # "maccormack" (2º orden, resuelve la 4ª capa del déficit de Cl, validado).
+    advection_scheme="sl",
+
+    # ================================================================
+    # TRATAMIENTO DE PARED (IBM) / CONDICIÓN DE KUTTA
+    # ================================================================
+    # "legacy": proyección ciega en pared + reforzar_impermeabilidad
+    #           (sumidero Q≈-0.06·U·c, ver diagnóstico histórico en RESUMEN).
     # "consistent": divergencia por caras (flujo pared=0) + gradiente one-sided
     #               + sin reforzar → la proyección impone impermeabilidad.
+    #               Validado, resuelve la capa 3 del déficit de Cl.
     wall_treatment="legacy",
+    disable_reforzar=False,  # diagnóstico: omite reforzar_impermeabilidad en
+                             # modo "legacy" (test de sumidero; "consistent" ya
+                             # lo fuerza a True internamente, este flag no aplica)
+    kutta_enforce=False,  # forzar Kutta: elimina componente transversal en franja TE
+    kutta_relax=0.7,
+    kutta_dcp_tol=0.05,   # monitor ΔCp_TE (cada `guardado` iters); →0 si Kutta cierra
+    ibm_wall_mode="ghost_noslip",  # "ghost_noslip" | "slip_only" | "solid_zero_only"
+    ibm_sdf_source="edt",          # "edt" | "polygon" (fuente de la SDF del sólido)
+    ibm_sdf_smooth_passes=None,
+    pressure_wall_reconstruction="linear_5",
+    min_te_height_factor=2.0,   # 1.0 para perfiles TE afilado (NACA_..._sharp)
+    wake_refinement_mode="base",  # "base" | "long_fine_x" (estela fina, validado)
 
-    # Posición del perfil
-    cx=2,
-    cy=None,  # Si None, se centra verticalmente
-
-    # Condiciones iniciales
+    # ================================================================
+    # CONDICIONES INICIALES
+    # ================================================================
     p0=0,      # Pa
-    v0x=5,     # m/s
+    v0x=5,     # m/s (freestream, también fija la condición inflow)
     v0y=0.0,   # m/s
+    # Núcleo interior con IC distinta al freestream (feature de prueba, sin
+    # utilidad más allá de experimentar transitorios; no afecta las fronteras).
+    # None (default) = sin efecto, comportamiento idéntico a antes de añadirlo.
+    v0x_core=None,
+    v0y_core=None,
+    core_box=None,  # (x0, x1, y0, y1) físico; None → 60% central del dominio
 
-    # Propiedades del fluido
+    # ================================================================
+    # PROPIEDADES DEL FLUIDO
+    # ================================================================
     rho=1.225,   # kg/m^3
     nu=1.5e-5,   # m^2/s (viscosidad cinemática)
-    divergencia=1e-1,
+    divergencia=0.02,   # tolerancia del solver de presión (más laxo, 0.1, en runs legacy antiguos)
 
-    # Condiciones de frontera
+    # ================================================================
+    # CONDICIONES DE FRONTERA
+    # ================================================================
     boundary_left=("inflow", None),
     boundary_top=("slip", None),
     boundary_bottom=("slip", None),
@@ -7112,11 +7211,15 @@ def main(
     # que produce picos u = 2*u[n-2] - u[n-3] en la frontera de salida.
     boundary_right=("outflow", 0.0),
 
-    # Parámetros de simulación
-    guardado=50,
-    iteraciones=2000,
+    # ================================================================
+    # PRESUPUESTO DE SIMULACIÓN
+    # ================================================================
+    guardado=50,        # cada cuántas iteraciones se muestrean Cl/Cd/div/Cp...
+    iteraciones=2000,   # tope de iteraciones (cap si hay early-stop activo)
 
-    # Tuning de proyección multigrid (por defecto conserva comportamiento actual)
+    # ================================================================
+    # MULTIGRID (proyección de presión) — defaults conservan el comportamiento base
+    # ================================================================
     mg_max_outer=8,
     mg_cycles_per_outer=5,
     mg_pre_suavizado=3,
@@ -7127,13 +7230,47 @@ def main(
     mg_rollback_on_nan=True,
     mg_compute_div_after=True,
     usar_adjoint_correction=False,
-    mg_modo_rapido=False,
-    mg_modo_turbo=False,
-    mg_modo_turbo_hd=False,    # T2_L1: turbo + 5 ciclos + niveles=1 + div=0.05 (Cl~0.65, 2.1 it/s)
-    mg_modo_turbo_ultra=False,  # T2_L2: turbo + 5 ciclos + niveles=2 + div=0.05 (Cl~0.68, 1.4 it/s)
-    mg_niveles_max=1,  # 0 = sin coarsening (compat); 1-2 = MG real
+    mg_modo_rapido=False,   # perfil rápido: recorta outer/ciclos (ver bloque más abajo)
+    mg_modo_turbo=False,    # perfil turbo: más agresivo aún, prioriza rendimiento
+    mg_modo_turbo_hd=False,    # T2_L1: turbo+5 ciclos+niveles=1+div=0.05.
+                               # OJO: satura el MG (Q residual +0.026 → Cl sesgado
+                               # a la baja, ver RESUMEN); off por defecto
+    mg_modo_turbo_ultra=False,  # T2_L2: turbo+5 ciclos+niveles=2+div=0.05
+    mg_niveles_max=1,  # 0 = sin coarsening (compat); 1-2 = MG real (2 = validado)
+    projection_variant="legacy_centered",
+    mg_pressure_accumulation="outer_sum",
+    wall_pressure_gradient_mode="masked",  # wall_treatment="consistent" lo pisa a "one_sided"
 
-    # Opciones de visualización y guardado
+    # ================================================================
+    # CRITERIOS DE PARADA POR CONVERGENCIA
+    # ================================================================
+    # Criterio de campo (u/v/p): cambio relativo entre chequeos por debajo de
+    # tol_u/tol_v/tol_p (hardcoded más abajo). Genérico, no mira Cl/Cd.
+    stop_on_convergence=True,
+
+    # Early-stop por banda de Cl/Cd (independiente del criterio de campo de
+    # arriba, compara cada serie contra su propio histórico — NO contra Cl_cp).
+    # Pensado para el optimizador: corta runs "fáciles" (α bajo) mucho antes de
+    # completar el presupuesto de iteraciones.
+    stop_on_clcd_convergence=True,
+    clcd_check_every=100,               # iteraciones entre chequeos
+    clcd_min_t_fisico_before_check=1.0,  # tiempos convectivos mínimos antes de chequear
+    clcd_tol_abs=0.005,
+    clcd_tol_rel=0.02,
+    clcd_window_conv_time=0.5,           # ventana de la media móvil, en tiempos convectivos
+    # Flag secundario (no decide convergencia): |Cl_sim - Cl_cp| > tol implica
+    # posible separación/inestabilidad residual (ver α=10 en results/cfl_sweep).
+    clcd_discrepancy_tol=0.05,
+
+    # ================================================================
+    # PLAN POLAR AUTOMÁTICO (barre varios alpha en una sola corrida)
+    # ================================================================
+    plan_polar=None,
+    polar_descarte=0.3,
+
+    # ================================================================
+    # VISUALIZACIÓN / GUARDADO DE FRAMES
+    # ================================================================
     save_frames=False,
     frames_dir_grueso=None,
     frames_dir_refinado=None,
@@ -7142,49 +7279,31 @@ def main(
     save_frame_refined_ylim=None,
     save_frame_dpi=600,
     graficos=False,
-
-    # Control de convergencia
-    stop_on_convergence=True,
-
-    # Plan polar automático
-    plan_polar=None,
-    polar_descarte=0.3,
-
-    # Vista en tiempo real
-    live_view=False,
-
-    # Visualización de malla
+    live_view=False,      # vista en tiempo real (memoria compartida)
     mostrar_malla=False,
 
-    # Correccion de deriva vertical (casos simetricos)
+    # ================================================================
+    # CORRECCIÓN DE DERIVA VERTICAL (solo casos simétricos, α=0)
+    # ================================================================
     corregir_deriva_vertical=False,
     umbral_deriva_vertical=1e-8,
     corregir_deriva_cada=1,
     factor_deriva_vertical=0.1,
 
-    # Diagnostico IBM: mantener la geometria sin rotar y rotar el flujo libre
+    # ================================================================
+    # DIAGNÓSTICO: FLUJO INCLINADO (geometría fija a 0°, se inclina el inflow;
+    # útil para IBM cartesiano en vez de rotar el perfil)
+    # ================================================================
     usar_flujo_inclinado=False,
     flujo_inclinado_signo=-1.0,
     flujo_inclinado_angulo_deg=None,
     flujo_inclinado_bc="auto_farfield",
-    projection_variant="legacy_centered",
-    mg_pressure_accumulation="outer_sum",
-    wall_pressure_gradient_mode="masked",
-    ibm_wall_mode="ghost_noslip",
-    ibm_sdf_source="edt",
-    ibm_sdf_smooth_passes=None,
-    pressure_wall_reconstruction="linear_5",
-    min_te_height_factor=2.0,
-    wake_refinement_mode="base",
 
-    # Monitor de condición de Kutta (ΔCp_TE cada `guardado` iters)
-    kutta_dcp_tol=0.05,
-
-    # Diagnóstico detallado de spikes (costoso; usar solo al depurar)
-    debug_spikes=False,
-
-    # Diagnóstico de fuerzas por cuerda (para investigar Cl espurio en TE)
-    diagnostico_fuerzas=False,
+    # ================================================================
+    # DIAGNÓSTICOS (desactivados por defecto, cuestan rendimiento)
+    # ================================================================
+    debug_spikes=False,              # detalle de spikes de velocidad; solo depurar
+    diagnostico_fuerzas=False,       # balance de Lift/Drag por zonas de cuerda
     diagnostico_fuerzas_bins=30,
     diagnostico_fuerzas_te_start=0.85,
     diagnostico_fuerzas_cada=500,
@@ -7375,7 +7494,8 @@ def main(
 
     # Crear malla con densidad variable
     mesh_gruesa = Mesh(Lx, Ly, p0, v0x, v0y, dx_min, dy_min if dy_min else dx_min,
-                       usar_wale=usar_wale, turb_model=turb_model, X_1d=X_1d, Y_1d=Y_1d)
+                       usar_wale=usar_wale, turb_model=turb_model, X_1d=X_1d, Y_1d=Y_1d,
+                       core_v0x=v0x_core, core_v0y=v0y_core, core_box=core_box)
     mesh_gruesa._wale_Cw = float(wale_Cw)
     mesh_gruesa.ibm_wall_mode = ibm_wall_mode
     mesh_gruesa.ibm_sdf_source = ibm_sdf_source
@@ -7690,13 +7810,21 @@ def main(
     check_convergence_every = 50  # Chequear cada N iteraciones
     min_iters_before_check = 200  # Mínimo de iteraciones antes de chequear
     tol_u = 1e-2  # Tolerancia relativa para velocidad u
-    tol_v = 1e-1  # Tolerancia relativa para velocidad v
+    tol_v = 1e-2  # Tolerancia relativa para velocidad v
     tol_p = 1e-2  # Tolerancia relativa para presión
 
     # Variables para almacenar campos previos
     u_prev = None
     v_prev = None
     p_prev = None
+
+    # Estado del criterio de convergencia Cl/Cd + flag de discrepancia Cl_sim vs Cl_cp
+    # (siempre presentes en mesh_gruesa aunque el early-stop esté desactivado)
+    mesh_gruesa.converged_clcd = False
+    mesh_gruesa.t_conv_clcd = float("nan")
+    mesh_gruesa.cl_cp_at_convergence = float("nan")
+    mesh_gruesa.cl_cp_discrepancy = float("nan")
+    mesh_gruesa.cl_cp_discrepancy_flag = False
     converged_to_steady = False
 
     # ============================================================
@@ -8160,6 +8288,49 @@ def main(
                         print(f"  [KUTTA] violación sostenida: ΔCp_TE={_dcp_te:+.4f} "
                               f"(|tol|={kutta_dcp_tol}) en iter {it}")
 
+                # ============================================================
+                # EARLY-STOP POR CONVERGENCIA DE Cl/Cd + FLAG DE DISCREPANCIA Cl_cp
+                # ============================================================
+                if (stop_on_clcd_convergence and it > 0
+                        and it % clcd_check_every == 0
+                        and tiempo_fisico_acumulado >= clcd_min_t_fisico_before_check):
+                    _n_samples = it // guardado + 1
+                    _cl_arr = cp.asnumpy(mesh_gruesa.clvector[:_n_samples]).astype(float)
+                    _cd_arr = cp.asnumpy(mesh_gruesa.cdvector[:_n_samples]).astype(float)
+                    _, _conv_cl = _detect_series_convergence(
+                        _cl_arr, tiempo_fisico_acumulado, clcd_tol_abs, clcd_tol_rel, clcd_window_conv_time)
+                    _, _conv_cd = _detect_series_convergence(
+                        _cd_arr, tiempo_fisico_acumulado, clcd_tol_abs, clcd_tol_rel, clcd_window_conv_time)
+                    if _conv_cl and _conv_cd:
+                        _cpd = mesh_gruesa.compute_cp_diagnostics(mu, rho, verbose=False) or {}
+                        _cl_cp_val = _cpd.get("cl_cp", float("nan"))
+                        _discrepancy = abs(cl_val - _cl_cp_val) if np.isfinite(_cl_cp_val) else float("nan")
+                        mesh_gruesa.converged_clcd = True
+                        mesh_gruesa.t_conv_clcd = tiempo_fisico_acumulado
+                        mesh_gruesa.cl_cp_at_convergence = _cl_cp_val
+                        mesh_gruesa.cl_cp_discrepancy = _discrepancy
+                        mesh_gruesa.cl_cp_discrepancy_flag = bool(
+                            np.isfinite(_discrepancy) and _discrepancy > clcd_discrepancy_tol)
+
+                        print(f"\n{'='*70}")
+                        print(f"[OK] Cl/Cd CONVERGIDOS (banda ±max({clcd_tol_abs},{clcd_tol_rel*100:.0f}%)) en iteracion {it}")
+                        print(f"{'='*70}")
+                        print(f"  Tiempo simulado: {tiempo_fisico_acumulado:.4f} s")
+                        print(f"  Cl_simulado={cl_val:+.4f}  Cl_cp={_cl_cp_val:+.4f}  |Cl_sim-Cl_cp|={_discrepancy:.4f}"
+                              + ("  [FLAG discrepancia: posible separacion/inestabilidad residual]"
+                                 if mesh_gruesa.cl_cp_discrepancy_flag else ""))
+                        print(f"{'='*70}\n")
+
+                        _last_idx = it // guardado
+                        if _last_idx < len(mesh_gruesa.cdvector) - 1:
+                            mesh_gruesa.cdvector[_last_idx + 1:] = mesh_gruesa.cdvector[_last_idx]
+                            mesh_gruesa.clvector[_last_idx + 1:] = mesh_gruesa.clvector[_last_idx]
+                            mesh_gruesa.divvector[_last_idx + 1:] = mesh_gruesa.divvector[_last_idx]
+                            mesh_gruesa.divvector_max[_last_idx + 1:] = mesh_gruesa.divvector_max[_last_idx]
+                            mesh_gruesa.clcdvector[_last_idx + 1:] = mesh_gruesa.clcdvector[_last_idx]
+                            mesh_gruesa.kutta_dcp_vector[_last_idx + 1:] = mesh_gruesa.kutta_dcp_vector[_last_idx]
+                        break
+
                 # Diagnóstico local de balance de Lift por zonas de cuerda
                 if diagnostico_fuerzas and (it % max(1, int(diagnostico_fuerzas_cada)) == 0):
                     try:
@@ -8354,12 +8525,14 @@ def main(
         print(f"  Tiempo físico simulado: {tiempo_fisico_acumulado:.4f} s")
         print(f"  Generando outputs con datos disponibles...")
         print("="*70)
-    elif converged_to_steady:
+    elif converged_to_steady or mesh_gruesa.converged_clcd:
         print("\n" + "="*70)
         print("[OK] SIMULACIÓN CONVERGIÓ A ESTADO ESTACIONARIO")
         print("="*70)
         print(f"  La simulación alcanzó convergencia antes de completar")
         print(f"  todas las iteraciones programadas.")
+        if mesh_gruesa.converged_clcd:
+            print(f"  Criterio: banda de Cl/Cd (t_conv={mesh_gruesa.t_conv_clcd:.2f} s)")
         print(f"  Los resultados representan un estado estacionario válido.")
         print("="*70)
     else:
@@ -8470,6 +8643,26 @@ def main(
         graficos=graficos, verbose=True
     )
 
+    # Si el early-stop de Cl/Cd no disparó (loop completo, interrupción, o
+    # convergencia solo por criterio de campo u/v/p), calcular igual la
+    # discrepancia Cl_sim vs Cl_cp final: el optimizador necesita el flag
+    # aunque no se haya cortado el run (p.ej. casos de stall que nunca
+    # convergen, ver α=10 en results/cfl_sweep).
+    if not mesh_gruesa.converged_clcd:
+        try:
+            _cpd_final = mesh_gruesa.compute_cp_diagnostics(mu, rho, verbose=False) or {}
+            _cl_cp_final = _cpd_final.get("cl_cp", float("nan"))
+            _cl_final = float(mesh_gruesa.clvector[-1]) if len(mesh_gruesa.clvector) else float("nan")
+            _discrepancy_final = (abs(_cl_final - _cl_cp_final)
+                                  if np.isfinite(_cl_cp_final) and np.isfinite(_cl_final)
+                                  else float("nan"))
+            mesh_gruesa.cl_cp_at_convergence = _cl_cp_final
+            mesh_gruesa.cl_cp_discrepancy = _discrepancy_final
+            mesh_gruesa.cl_cp_discrepancy_flag = bool(
+                np.isfinite(_discrepancy_final) and _discrepancy_final > clcd_discrepancy_tol)
+        except Exception as _e:
+            print(f"[ADVERTENCIA] Diagnostico Cp final (flag discrepancia) fallo: {_e}")
+
     mesh_gruesa._timing_stats = timing_stats
     mesh_gruesa._chord = float(chord)
     mesh_gruesa._U_ref = float(U_inf)
@@ -8489,11 +8682,13 @@ if __name__ == "__main__":
         Lx=12,
         Ly=8,
         cx=2,
-        CFL=0.25,
+        CFL=0.5,
         alpha_deg=5,
         polar_descarte=0.3,
-        iteraciones=60000,   # dx=0.001: estacionario en t≈6 conv ≈ 37k iters + ventana
+        iteraciones=6000,   # dx=0.001: estacionario en t≈6 conv ≈ 37k iters + ventana
         divergencia=0.02,
+        v0x_core=0,
+        v0y_core=0,
         v0x=1,
         v0y=0,
         rho=1.0,
@@ -8501,24 +8696,22 @@ if __name__ == "__main__":
         filepath="profiles/NACA_0012_sharp",
         chord=1.0,
         min_te_height_factor=1.0,
-        dx_min=0.001,
+        dx_min=0.002,
         ancho_zona_fina_x=1.5,
         ancho_zona_fina_y=1,
         factor_expansion=1.1,
         graficos=True,
         save_frames=False,
         frames_dir_grueso="",
-
-        # Config de referencia validada 2026-07-03 (Cl=0.496 a α=5, físico 0.55;
-        # polar 0/2/5/8° monótona, pendiente 0.088/deg):
         turb_model="sa",
         wall_treatment="consistent",
         advection_scheme="maccormack",
         stop_on_convergence=False,
+        stop_on_clcd_convergence=True,
         live_view=True,
         mostrar_malla=True,
         mg_modo_turbo=False,
-        mg_modo_turbo_hd=False,  # turbo satura el MG (Q residual +0.026 → Cl sesgado)
+        mg_modo_turbo_hd=False,  
         mg_modo_turbo_ultra=False,
         mg_max_outer=8,
         mg_niveles_max=2,

@@ -328,8 +328,32 @@ def make_summary():
     fig.savefig(os.path.join(OUT_DIR, "summary_coste.png"), dpi=130, bbox_inches="tight")
     plt.close(fig)
 
+    # Cl simulado (integración de fuerzas) vs Cl proveniente de Cp (∮ΔCp)
+    fig, axes = plt.subplots(2, 2, figsize=(13, 9), sharex="col")
+    for col, dx in enumerate(DXS):
+        axp, axd = axes[0, col], axes[1, col]
+        for cfl in CFLS:
+            a, d = sel(dx, cfl)
+            if not a:
+                continue
+            color = {0.25: "tab:blue", 0.5: "tab:green", 0.75: "tab:red"}[cfl]
+            cl_sim = [d[x]["cl_medio_ventana"] for x in a]
+            cl_cp = [d[x]["cl_cp"] for x in a]
+            axp.plot(a, cl_sim, "-o", color=color, ms=4, label=f"CFL={cfl} simulado")
+            axp.plot(a, cl_cp, "--s", color=color, ms=4, mfc="none", label=f"CFL={cfl} Cp")
+            axd.plot(a, [s - c for s, c in zip(cl_sim, cl_cp)], "-o", color=color, ms=4)
+        axp.set_title(f"dx={dx}"); axp.grid(alpha=0.3)
+        axd.axhline(0, color="k", lw=0.8)
+        axd.set_xlabel("α (deg)"); axd.grid(alpha=0.3)
+    axes[0, 0].set_ylabel("Cl"); axes[0, 0].legend(fontsize=6, ncol=2)
+    axes[1, 0].set_ylabel("Cl_simulado − Cl_Cp")
+    fig.suptitle("Cl integrado (fuerzas, línea sólida) vs Cl(∮ΔCp) (línea discontinua)")
+    fig.savefig(os.path.join(OUT_DIR, "summary_cl_vs_cp.png"), dpi=130, bbox_inches="tight")
+    plt.close(fig)
+
     print(f"\nSummary: {len(rows)}/{len(build_queue())} sims en {OUT_DIR}")
-    print("  summary.csv, summary_polar.png, summary_convergencia.png, summary_coste.png")
+    print("  summary.csv, summary_polar.png, summary_convergencia.png, summary_coste.png, "
+          "summary_cl_vs_cp.png")
 
 
 def main_cli():

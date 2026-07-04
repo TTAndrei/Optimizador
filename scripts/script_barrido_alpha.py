@@ -107,16 +107,19 @@ def base_config(args: argparse.Namespace) -> dict[str, Any]:
         "iteraciones": args.iteraciones,
         "guardado": args.guardado,
         "divergencia": args.divergencia,
-        "usar_wale": not args.no_wale,
-        "wale_Cw": args.wale_cw,
+        "turb_model": args.turb_model,
+        "wall_treatment": "consistent",
+        "advection_scheme": args.advection_scheme,
         "graficos": False,
         "save_frames": False,
         "live_view": False,
         "mostrar_malla": False,
         "stop_on_convergence": False,
+        "stop_on_clcd_convergence": not args.no_clcd_stop,
         "corregir_deriva_vertical": False,
         **PROJECTION_DEFAULTS,
         "wake_refinement_mode": "long_fine_x",
+        "min_te_height_factor": 1.0,
         "ibm_wall_mode": "ghost_noslip",
         "mg_modo_turbo": False,
         "mg_modo_turbo_hd": args.mg_turbo_hd,
@@ -208,6 +211,11 @@ def run_alpha(alpha: float, cfg_base: dict[str, Any], discard_frac: float) -> di
         "n_muestras_cd": n_cd,
         "n_muestras_cl": n_cl,
         "elapsed_s": float(elapsed),
+        "converged_clcd": bool(getattr(mesh, "converged_clcd", False)),
+        "t_conv_clcd": finite_or_nan(getattr(mesh, "t_conv_clcd", float("nan"))),
+        "cl_cp_at_convergence": finite_or_nan(getattr(mesh, "cl_cp_at_convergence", float("nan"))),
+        "cl_cp_discrepancy": finite_or_nan(getattr(mesh, "cl_cp_discrepancy", float("nan"))),
+        "cl_cp_discrepancy_flag": bool(getattr(mesh, "cl_cp_discrepancy_flag", False)),
     }
     try:
         raw_summary = mesh.extract_surface_force_audit(
@@ -330,31 +338,34 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Barrido de alpha con proyeccion MG corregida.")
     parser.add_argument("--alphas", default=DEFAULT_ALPHAS,
                         help="lista '0,2,4' o rango 'inicio:fin:paso' inclusive")
-    parser.add_argument("--profile", default="profiles/NACA_0012")
-    parser.add_argument("--output-suffix", default="naca0012_outer_sum_cfl025_long_wake",
+    parser.add_argument("--profile", default="profiles/NACA_0012_sharp")
+    parser.add_argument("--output-suffix", default="naca0012_sa_maccormack_consistent",
                         help="nombre del subdirectorio en results/barridos")
     parser.add_argument("--force", action="store_true",
                         help="recalcula aunque exista summary.csv")
     parser.add_argument("--iteraciones", type=int, default=2000)
     parser.add_argument("--guardado", type=int, default=50)
     parser.add_argument("--discard-frac", type=float, default=0.30)
-    parser.add_argument("--dx-min", type=float, default=0.001)
+    parser.add_argument("--dx-min", type=float, default=0.002)
     parser.add_argument("--u-inf", type=float, default=1.0)
     parser.add_argument("--rho", type=float, default=1.0)
-    parser.add_argument("--nu", type=float, default=1e-6)
-    parser.add_argument("--cfl", type=float, default=0.25)
-    parser.add_argument("--divergencia", type=float, default=0.10)
+    parser.add_argument("--nu", type=float, default=1e-5)
+    parser.add_argument("--cfl", type=float, default=0.5)
+    parser.add_argument("--divergencia", type=float, default=0.02)
     parser.add_argument("--lx", type=float, default=12.0)
     parser.add_argument("--ly", type=float, default=8.0)
     parser.add_argument("--cx", type=float, default=2.0)
     parser.add_argument("--cy", type=float, default=4.0)
     parser.add_argument("--factor-expansion", type=float, default=1.10)
-    parser.add_argument("--fine-width-x", type=float, default=2.4)
+    parser.add_argument("--fine-width-x", type=float, default=1.5)
     parser.add_argument("--fine-width-y", type=float, default=1.0)
-    parser.add_argument("--ratio-max-malla", type=float, default=100.0)
-    parser.add_argument("--wale-cw", type=float, default=0.15)
-    parser.add_argument("--no-wale", action="store_true")
-    parser.add_argument("--mg-turbo-hd", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--ratio-max-malla", type=float, default=50.0)
+    parser.add_argument("--turb-model", default="sa", choices=["none", "wale", "sa"])
+    parser.add_argument("--advection-scheme", default="maccormack", choices=["sl", "maccormack"])
+    parser.add_argument("--no-clcd-stop", action="store_true",
+                        help="desactiva el early-stop por convergencia de Cl/Cd")
+    parser.add_argument("--mg-turbo-hd", action=argparse.BooleanOptionalAction, default=False,
+                         help="turbo satura el MG (Q residual +0.026 -> Cl sesgado), off por defecto")
     parser.add_argument("--mg-turbo-ultra", action="store_true")
     parser.add_argument("--flow-inclined", action="store_true",
                         help="mantiene geometria a 0 deg e inclina el flujo libre")
