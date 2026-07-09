@@ -271,6 +271,7 @@ def ejecutar_islas(cal, deadline_total_s, t_start,
     # dat actual de cada isla (arranca en la semilla original)
     actuales = {nm: os.path.join(ROOT, sp) if not os.path.isabs(sp) else sp
                 for nm, sp in islas}
+    originales = dict(actuales)  # semilla genuina de cada isla (para graficar)
 
     hist = []  # por época: fitness y dispersión de forma inter-isla
     n_islas = len(islas)
@@ -289,7 +290,8 @@ def ejecutar_islas(cal, deadline_total_s, t_start,
             migrantes = [actuales[o] for o, _ in islas if o != nm]
             semillas = [actuales[nm]] + migrantes
             cfg = {**base_sim,
-                   "archivo_base": actuales[nm], "archivos_base": semillas}
+                   "archivo_base": actuales[nm], "archivos_base": semillas,
+                   "archivo_original": originales[nm]}
             _run_ga(f"islands/{nm}/e{ep}", dir_ep, cfg, share)
             g = _cargar_ganador(dir_ep)
             if g is None:

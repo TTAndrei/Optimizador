@@ -158,6 +158,10 @@ CONFIG = {
     #   Si es None, se usa 'archivo_base'.
     'archivos_base': None,
 
+    # --- Semilla original genuina (opcional). En islas, archivo_base es el
+    #   padre de la época previa; esto permite graficar también el perfil real. ---
+    'archivo_original': None,
+
     # --- Límite de tiempo (deadline). None = sin límite. ---
     'tiempo_limite_s': None,
 
@@ -1527,14 +1531,26 @@ def guardar_top_perfiles(poblacion, coords_base, gen, directorio_base, n_top=2):
         print(f"   Imágenes top {len(mejores)} guardadas en: {carpeta_gen}")
 
 
-def visualizar_comparativa(original, optimizado, fitness, resultados, save_path=None):
-    """Gráfico comparativo: perfil original vs optimizado + eficiencia por ángulo"""
+def visualizar_comparativa(original, optimizado, fitness, resultados, save_path=None,
+                           original_real=None):
+    """Gráfico comparativo: perfil vs optimizado + eficiencia por ángulo.
+
+    `original` es la base directa de esta corrida (en islas = el padre de la
+    época previa). `original_real`, si se pasa y difiere, es la semilla genuina;
+    se dibuja aparte para no confundir padre con original.
+    """
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # Panel 1: Perfiles superpuestos
     ax1 = axes[0]
+    es_padre = (original_real is not None
+                and not (len(original_real) == len(original)
+                         and np.allclose(original_real, original)))
+    if original_real is not None:
+        ax1.plot(original_real[:, 0], original_real[:, 1], '--', color='green',
+                 alpha=0.6, linewidth=1.5, label='Original real (semilla)')
     ax1.plot(original[:, 0], original[:, 1], '--k', alpha=0.5,
-             linewidth=1.5, label='Original')
+             linewidth=1.5, label='Base (padre)' if es_padre else 'Original')
     ax1.plot(optimizado[:, 0], optimizado[:, 1], 'r-', linewidth=2.0,
              label=f'Optimizado (L/D={fitness:.2f})')
 
@@ -2188,13 +2204,20 @@ def main(config=None):
 
         # Generar gráficos finales
         try:
+            _orig_real = None
+            _orig_path = CONFIG.get('archivo_original')
+            if _orig_path and os.path.exists(_orig_path):
+                _oc, _, _, _ = cargar_perfil(_orig_path)
+                if len(_oc) > 0:
+                    _orig_real = _oc
             visualizar_comparativa(
                 coords_base, mejor_global.genes, mejor_global.fitness,
                 mejor_global.resultados,
                 save_path=os.path.join(
                     CONFIG['directorio_resultados'],
                     "comparativa_perfiles.png"
-                )
+                ),
+                original_real=_orig_real,
             )
             plot_convergencia(
                 historial_fitness,
