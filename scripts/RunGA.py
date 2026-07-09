@@ -99,6 +99,11 @@ CONFIG = {
                                          # Desplazamiento óptimo de camber concentrado en TE
     'te_espesor_shift_std': PARAMETROS_OPTIMOS_HIJOS['te_espesor_shift_std'],
                                          # Ajuste óptimo extra del espesor en TE
+
+    # S1: mutación adaptativa (exploración temprana -> refinamiento tardío).
+    'sigma_adaptativa': False,           # True = escala las *_mut_std por generación
+    'sigma_factor_inicial': 3.0,         # Factor de sigma en gen 0
+    'sigma_factor_final': 1.0,           # Factor de sigma en la última generación
     'le_proteccion_x': 0.06,             # Zona [0, x] con mutación atenuada en LE
     'espesor_min_global': 2e-4,          # Espesor mínimo global (excepto LE)
     'te_espesor_min_absoluto': 3e-4,     # Cota inferior absoluta para espesor TE
@@ -110,15 +115,26 @@ CONFIG = {
     'le_puntos_preservar': 5,            # Puntos por lado del LE a preservar parcialmente
     'reportar_diagnostico_geometria': True,
 
-    # --- Simulación CFD ---
-    'simulacion_iteraciones': 2000,     # Iteraciones por simulación CFD
+    # --- Simulación CFD (config de referencia validada: consistent+sa+maccormack) ---
+    'simulacion_iteraciones': 8000,     # Iteraciones por simulación CFD (lo fija el orquestador)
     'v0x': 1,                         # Velocidad del flujo libre (m/s)
     'alpha_deg': 4.0,                   # Ángulo de ataque base (grados)
     'chord': 1.0,                       # Longitud de cuerda (m)
-    'dx_min': 0.001,                    # Espaciado mínimo malla variable (m)
+    'dx_min': 0.002,                    # Espaciado mínimo malla variable (m)
     'CFL': 0.5,                         # Número de Courant
-    'rho': 1,                       # Densidad del aire (kg/m³)
-    'nu': 1/100000,                       # Viscosidad cinemática (m²/s)
+    'rho': 1.0,                       # Densidad del aire (kg/m³)
+    'nu': 1e-5,                       # Viscosidad cinemática (m²/s) -> Re=1e5
+
+    # Config de referencia del solver (fiable). Ver RESUMEN.md.
+    'turb_model': 'sa',                 # Spalart-Allmaras (elimina LSB/colapso)
+    'wall_treatment': 'consistent',     # divergencia face_flux + grad one-sided + reforzar OFF
+    'advection_scheme': 'maccormack',   # corrige difusión numérica del SL bilineal
+    'min_te_height_factor': 1.0,        # perfiles con TE afilado
+    'wake_refinement_mode': 'long_fine_x',
+    'mg_niveles_max': 2,
+    'mg_max_outer': 8,
+    'divergencia': 0.02,                # tolerancia de la proyección
+    'stop_on_clcd_convergence': True,   # parada temprana cuando Cl/Cd se estacionan
 
     # --- Multi-ángulo (opcional) ---
     #   Si activo, cada perfil se simula a alpha-delta, alpha, alpha+delta.
@@ -136,12 +152,20 @@ CONFIG = {
     # --- Suavizado ---
     'suavizado_iteraciones': 2,         # Pasadas de suavizado laplaciano post-mutación
 
-    # --- Parámetros extra del simulador (opcionales) ---
-    #   Dict con parámetros adicionales para Simulador2D.main()
-    #   Ej: {'Lx': 12, 'Ly': 8, 'usar_wale': True}
-    'sim_extra_params': {'Lx': 12, 'Ly': 8, 'usar_wale': True,'divergencia': 1e-1, 'ancho_zona_fina_x':1.2,'ancho_zona_fina_y':1,'factor_expansion':1.1, 'mg_modo_turbo_hd':True},
-        
-        
+    # --- Semillas múltiples (opcional; habilita población mixta / Arm B) ---
+    #   Si es una lista de rutas .dat, la población inicial se siembra en
+    #   round-robin sobre TODAS las semillas (permite convergencia inter-semilla).
+    #   Si es None, se usa 'archivo_base'.
+    'archivos_base': None,
+
+    # --- Límite de tiempo (deadline). None = sin límite. ---
+    'tiempo_limite_s': None,
+
+    # --- Parámetros extra del simulador (mesh/dominio de la config de referencia) ---
+    'sim_extra_params': {'Lx': 8, 'Ly': 5, 'cx': 2,
+                         'ancho_zona_fina_x': 1.5, 'ancho_zona_fina_y': 1.0,
+                         'factor_expansion': 1.1},
+
 }
 
 
@@ -650,6 +674,31 @@ def descomponer_camber_espesor(puntos, le_idx, n_muestras=None):
     espesor[0] = 0.0  # LE cerrado
 
     return x_common, camber, espesor
+
+
+def resamplear_a_grid(seed_coords, seed_le_idx, ref_coords, ref_le_idx):
+    """
+    Reproyecta un perfil `seed` sobre la rejilla X del perfil `ref` (mismo nº de
+    puntos, mismo le_idx y mismas X que ref), interpolando su Y. Esto hace que
+    semillas con distinto nº de puntos sean compatibles con cruce/mutación en una
+    población mixta. Devuelve genes (N,2) con las X de ref y las Y de la semilla.
+    """
+    ref = np.asarray(ref_coords, dtype=float)
+    seed = np.asarray(seed_coords, dtype=float)
+
+    s_up = seed[:seed_le_idx + 1]      # TE sup -> LE
+    s_lo = seed[seed_le_idx:]          # LE -> TE inf
+    s_up_x = _asegurar_x_estrictamente_creciente(s_up[::-1, 0])
+    s_up_y = np.asarray(s_up[::-1, 1], dtype=float)
+    s_lo_x = _asegurar_x_estrictamente_creciente(s_lo[:, 0])
+    s_lo_y = np.asarray(s_lo[:, 1], dtype=float)
+
+    out = ref.copy()
+    # Parte superior de ref: TE sup -> LE (X decreciente)
+    out[:ref_le_idx + 1, 1] = np.interp(ref[:ref_le_idx + 1, 0], s_up_x, s_up_y)
+    # Parte inferior de ref: LE -> TE inf (X creciente)
+    out[ref_le_idx:, 1] = np.interp(ref[ref_le_idx:, 0], s_lo_x, s_lo_y)
+    return out
 
 
 def estimar_radio_le(puntos, le_idx):
@@ -1175,22 +1224,34 @@ def simular_perfil(filepath_temp, alpha_deg, config):
     mesh_gruesa = None
 
     try:
-        # Construir parámetros del simulador
+        # Construir parámetros del simulador (config de referencia validada)
+        # 'consistent' fuerza internamente one_sided/face_flux/reforzar OFF.
         sim_params = {
             'filepath': filepath_temp,
             'iteraciones': config['simulacion_iteraciones'],
             'v0x': config['v0x'],
+            'v0y': 0.0,
             'CFL': config['CFL'],
             'dx_min': config['dx_min'],
             'alpha_deg': alpha_deg,
             'chord': config['chord'],
+            'rho': config.get('rho', 1.0),
+            'nu': config.get('nu', 1e-5),
+            'turb_model': config.get('turb_model', 'sa'),
+            'wall_treatment': config.get('wall_treatment', 'consistent'),
+            'advection_scheme': config.get('advection_scheme', 'maccormack'),
+            'min_te_height_factor': config.get('min_te_height_factor', 1.0),
+            'wake_refinement_mode': config.get('wake_refinement_mode', 'long_fine_x'),
+            'mg_niveles_max': config.get('mg_niveles_max', 2),
+            'mg_max_outer': config.get('mg_max_outer', 8),
+            'divergencia': config.get('divergencia', 0.02),
+            'stop_on_clcd_convergence': config.get('stop_on_clcd_convergence', True),
             'graficos': False,
-            'projection_variant': 'legacy_centered',
-            'mg_pressure_accumulation': 'outer_sum',
-            'wall_pressure_gradient_mode': 'masked',
+            'live_view': False,
+            'mostrar_malla': False,
         }
 
-        # Parámetros extra opcionales del usuario
+        # Parámetros extra opcionales del usuario (mesh/dominio)
         sim_params.update(config.get('sim_extra_params', {}))
 
         mesh_gruesa = Simulador2D.main(**sim_params)
@@ -1199,12 +1260,12 @@ def simular_perfil(filepath_temp, alpha_deg, config):
         if mesh_gruesa.cdvector is None or len(mesh_gruesa.cdvector) == 0:
             return None
 
-        # Promediar descartando 10% inicial (transitorio)
+        # Promediar sobre la ventana del último 20% (estacionario)
         n_datos = len(mesh_gruesa.cdvector)
-        inicio = max(1, int(n_datos * 0.1))
+        w = max(1, n_datos // 5)
 
-        cd_arr = mesh_gruesa.cdvector[inicio:]
-        cl_arr = mesh_gruesa.clvector[inicio:]
+        cd_arr = mesh_gruesa.cdvector[-w:]
+        cl_arr = mesh_gruesa.clvector[-w:]
 
         cd_val = float(cp.mean(cd_arr).get())
         cl_val = float(cp.mean(cl_arr).get())
@@ -1598,9 +1659,17 @@ def guardar_estado_ga(filepath, poblacion, mejor_global, gen, historial):
 # ==========================================
 # 11. FUNCIÓN PRINCIPAL
 # ==========================================
-def main():
+def main(config=None):
+    """Ejecuta el GA. `config` (dict opcional) sobreescribe CONFIG para esta corrida
+    (permite lanzar N corridas distintas en un mismo proceso). Devuelve un resumen."""
     global PARADA_SOLICITADA
-    signal.signal(signal.SIGINT, manejar_parada)
+    PARADA_SOLICITADA = False
+    if config:
+        CONFIG.update(config)
+    try:
+        signal.signal(signal.SIGINT, manejar_parada)
+    except ValueError:
+        pass  # signal solo funciona en el hilo principal
 
     print("\n" + "=" * 60)
     print(" OPTIMIZADOR GENÉTICO DE PERFILES AERODINÁMICOS")
@@ -1621,11 +1690,14 @@ def main():
     os.makedirs(CONFIG['directorio_resultados'], exist_ok=True)
 
     # =====================
-    # PASO 1: Cargar perfil base
+    # PASO 1: Cargar perfil(es) base
     # =====================
-    coords_base, header_base, le_idx, te_indices = cargar_perfil(
-        CONFIG['archivo_base']
-    )
+    #   Si CONFIG['archivos_base'] es una lista, se usa la 1ª como referencia de
+    #   rejilla y el resto se reproyecta sobre ella -> población mixta (Arm B).
+    _semillas_paths = CONFIG.get('archivos_base')
+    _ref_path = (_semillas_paths[0] if _semillas_paths else CONFIG['archivo_base'])
+
+    coords_base, header_base, le_idx, te_indices = cargar_perfil(_ref_path)
     if len(coords_base) == 0:
         print("\nERROR CRÍTICO: No se encontró el archivo de perfil base.")
         return
@@ -1633,6 +1705,23 @@ def main():
     restricciones_geom = construir_restricciones_geometricas(
         coords_base, le_idx, CONFIG
     )
+
+    # Semillas adicionales reproyectadas a la rejilla de referencia
+    semillas_genes = [coords_base.copy()]
+    if _semillas_paths:
+        print(f"\n Población mixta: {len(_semillas_paths)} semillas -> rejilla de "
+              f"{os.path.basename(_ref_path)} ({len(coords_base)} puntos)")
+        for _sp in _semillas_paths[1:]:
+            _sc, _sh, _sle, _ste = cargar_perfil(_sp)
+            if len(_sc) == 0:
+                print(f"   [!] Semilla no cargada: {_sp}")
+                continue
+            try:
+                semillas_genes.append(
+                    resamplear_a_grid(_sc, _sle, coords_base, le_idx)
+                )
+            except Exception as e:
+                print(f"   [!] Fallo reproyectando {_sp}: {e}")
     print("\n Restricciones geométricas activas:")
     print(f"   TE espesor base: {restricciones_geom['te_base']:.6f}")
     print(f"   TE espesor rango: [{restricciones_geom['te_gap_min']:.6f}, "
@@ -1724,9 +1813,25 @@ def main():
         CONFIG.get('max_intentos_geometria', 120)
     )
 
+    # Población mixta: sembrar cada forma-semilla (proyectada válida, sin mutar)
+    # para que la generación 0 contenga literalmente cada perfil base.
+    if len(semillas_genes) > 1:
+        for _sg in semillas_genes:
+            if len(poblacion) >= CONFIG['poblacion_tamano']:
+                break
+            try:
+                _sg_valido = proyectar_perfil_parametrico(
+                    _sg.copy(), le_idx, restricciones_geom, CONFIG,
+                    perturbar=False
+                )
+                poblacion.append(Individuo(_sg_valido, header_base))
+            except Exception:
+                pass
+
     while (len(poblacion) < CONFIG['poblacion_tamano']
            and intentos_ini < max_intentos_ini):
-        genes_semilla = coords_base.copy()
+        # Round-robin sobre las semillas (una sola en modo clásico)
+        genes_semilla = semillas_genes[intentos_ini % len(semillas_genes)].copy()
         genes_nuevo, valido, modo_usado, _ = mutar_y_validar_hijo(
             genes_semilla,
             le_idx,
@@ -1776,12 +1881,37 @@ def main():
     print(f"{'=' * 60}")
 
     t_total_inicio = time.time()
+    _tiempo_limite = CONFIG.get('tiempo_limite_s')
+
+    # S1: sigma de mutación adaptativa. Factor grande al inicio (exploración,
+    # escape de cuenca) que decae a 1.0 (refinamiento). Ataca el "no convergen"
+    # por hill-climb local con mutación diminuta (camber_mut_std=0.0035).
+    _sigma_adaptativa = CONFIG.get('sigma_adaptativa', False)
+    _sigma_keys = ('camber_mut_std', 'espesor_mut_std',
+                   'te_camber_shift_std', 'te_espesor_shift_std')
+    _sigma_base = {k: float(CONFIG[k]) for k in _sigma_keys}
+    _sigma_f0 = float(CONFIG.get('sigma_factor_inicial', 3.0))
+    _sigma_f1 = float(CONFIG.get('sigma_factor_final', 1.0))
 
     for gen in range(CONFIG['generaciones']):
         gen_actual = gen
 
+        if _sigma_adaptativa:
+            _g = CONFIG['generaciones']
+            _frac = gen / max(1, _g - 1)
+            _factor = _sigma_f0 + (_sigma_f1 - _sigma_f0) * _frac
+            for _k in _sigma_keys:
+                CONFIG[_k] = _sigma_base[_k] * _factor
+            print(f"   [S1] sigma_factor={_factor:.2f} "
+                  f"(camber_std={CONFIG['camber_mut_std']:.4f})")
+
         if PARADA_SOLICITADA:
             print("\n Parada solicitada. Saliendo del bucle evolutivo...")
+            break
+
+        if _tiempo_limite is not None and (time.time() - t_total_inicio) > _tiempo_limite:
+            print(f"\n Deadline alcanzado ({_tiempo_limite:.0f}s). Cerrando tras "
+                  f"{gen} generaciones completas...")
             break
 
         t_gen_inicio = time.time()
@@ -2086,6 +2216,16 @@ def main():
             print(f"   - {f_name} ({size_kb:.1f} KB)")
 
     print()
+
+    return {
+        'directorio': CONFIG['directorio_resultados'],
+        'mejor_fitness': (mejor_global.fitness if mejor_global else None),
+        'mejor_resultados': (mejor_global.resultados if mejor_global else None),
+        'fitness_base': fitness_base,
+        'generaciones_completadas': gen_actual + 1,
+        'tiempo_seg': round(t_total, 1),
+        'historial': historial_fitness,
+    }
 
 
 if __name__ == "__main__":

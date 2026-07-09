@@ -13,9 +13,15 @@ import argparse
 import json
 import os
 import random
+import sys
 from collections import Counter
 
 import numpy as np
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (_ROOT, os.path.join(_ROOT, "scripts")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import RunGA
 
