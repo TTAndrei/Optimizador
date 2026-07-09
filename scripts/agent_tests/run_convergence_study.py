@@ -42,9 +42,12 @@ import matplotlib.pyplot as plt
 import RunGA
 
 OUT_DIR = os.path.join(ROOT, "results", "convergence_study")
-ARMA_DIR = os.path.join(OUT_DIR, "armA")
-ARMB_DIR = os.path.join(OUT_DIR, "armB")
-for d in (OUT_DIR, ARMA_DIR, ARMB_DIR):
+BASE_DIR = os.path.join(OUT_DIR, "base_study")   # estudio base (Arm A/B + análisis)
+PLOTS_DIR = os.path.join(BASE_DIR, "plots")
+TESTS_DIR = os.path.join(OUT_DIR, "tests")
+ARMA_DIR = os.path.join(BASE_DIR, "armA")
+ARMB_DIR = os.path.join(BASE_DIR, "armB")
+for d in (OUT_DIR, BASE_DIR, PLOTS_DIR, TESTS_DIR, ARMA_DIR, ARMB_DIR):
     os.makedirs(d, exist_ok=True)
 
 CALIB_JSON = os.path.join(OUT_DIR, "calibration.json")
@@ -347,7 +350,7 @@ def _veredicto_islas(hist):
     return v
 
 
-REFINE_JSON = os.path.join(OUT_DIR, "refine_dx002.json")
+REFINE_JSON = os.path.join(ISLAS_DIR, "refine_dx002.json")
 
 
 def refinar_top_k(cal, k=3, dx_ref=0.002, deadline_s=None, t_start=None):
@@ -382,7 +385,7 @@ def refinar_top_k(cal, k=3, dx_ref=0.002, deadline_s=None, t_start=None):
     cfg["simulacion_iteraciones"] = iters_for(CFL, dx_ref)
     cfg["CFL"] = CFL
 
-    tmp_dir = os.path.join(OUT_DIR, "_refine_tmp")
+    tmp_dir = os.path.join(ISLAS_DIR, "refine_tmp")
     os.makedirs(tmp_dir, exist_ok=True)
     filas = []
     for c in top:
@@ -543,7 +546,7 @@ def analizar_convergencia():
                            f"(quizá pocas generaciones dentro del deadline).")
     out["veredicto"] = verdict
 
-    with open(os.path.join(OUT_DIR, "convergencia.json"), "w") as f:
+    with open(os.path.join(BASE_DIR, "convergencia.json"), "w") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
 
     _generar_plots(arma, armb, formas, nombres, dist)
@@ -561,7 +564,7 @@ def _generar_plots(arma, armb, formas, nombres, dist):
             plt.plot(g[:, 0], g[:, 1], lw=1.2, label=w["nombre"])
         plt.axis("equal"); plt.legend(fontsize=8); plt.title("Ganadores (α=4°, Re=1e5)")
         plt.grid(alpha=0.3); plt.tight_layout()
-        plt.savefig(os.path.join(OUT_DIR, "formas_ganadoras.png"), dpi=130); plt.close()
+        plt.savefig(os.path.join(PLOTS_DIR, "formas_ganadoras.png"), dpi=130); plt.close()
     except Exception as e:
         _log(f"  [!] plot formas: {e}")
 
@@ -572,7 +575,7 @@ def _generar_plots(arma, armb, formas, nombres, dist):
         plt.bar(nm, ld, color=cols)
         plt.ylabel("L/D"); plt.title("L/D por semilla (azul=Arm A, rojo=Arm B mixto)")
         plt.xticks(rotation=20, ha="right"); plt.grid(alpha=0.3, axis="y")
-        plt.tight_layout(); plt.savefig(os.path.join(OUT_DIR, "ld_por_semilla.png"), dpi=130)
+        plt.tight_layout(); plt.savefig(os.path.join(PLOTS_DIR, "ld_por_semilla.png"), dpi=130)
         plt.close()
     except Exception as e:
         _log(f"  [!] plot LD: {e}")
@@ -585,7 +588,7 @@ def _generar_plots(arma, armb, formas, nombres, dist):
                 a1.plot(x, c, lw=1.3, label=w["nombre"]); a2.plot(x, t, lw=1.3)
         a1.set_title("Camber c(x)"); a2.set_title("Espesor t(x)")
         a1.legend(fontsize=8); a1.grid(alpha=0.3); a2.grid(alpha=0.3)
-        plt.tight_layout(); plt.savefig(os.path.join(OUT_DIR, "camber_espesor.png"), dpi=130)
+        plt.tight_layout(); plt.savefig(os.path.join(PLOTS_DIR, "camber_espesor.png"), dpi=130)
         plt.close()
     except Exception as e:
         _log(f"  [!] plot camber: {e}")
@@ -601,7 +604,7 @@ def _generar_plots(arma, armb, formas, nombres, dist):
             plt.xlabel("generación"); plt.ylabel("L/D")
             plt.title("Arm B: convergencia de la población mixta")
             plt.legend(); plt.grid(alpha=0.3); plt.tight_layout()
-            plt.savefig(os.path.join(OUT_DIR, "armB_convergencia.png"), dpi=130); plt.close()
+            plt.savefig(os.path.join(PLOTS_DIR, "armB_convergencia.png"), dpi=130); plt.close()
         except Exception as e:
             _log(f"  [!] plot armB conv: {e}")
 
@@ -613,7 +616,7 @@ def _generar_plots(arma, armb, formas, nombres, dist):
             plt.xticks(range(len(nombres)), nombres, rotation=45, ha="right", fontsize=8)
             plt.yticks(range(len(nombres)), nombres, fontsize=8)
             plt.title("Distancia entre ganadores"); plt.tight_layout()
-            plt.savefig(os.path.join(OUT_DIR, "distancia_forma.png"), dpi=130); plt.close()
+            plt.savefig(os.path.join(PLOTS_DIR, "distancia_forma.png"), dpi=130); plt.close()
         except Exception as e:
             _log(f"  [!] plot heatmap: {e}")
 
@@ -646,7 +649,7 @@ def _escribir_informe(out, arma, armb):
                  f"(máx {out['metricas'].get('shape_distance_max'):.4f}).\n")
     L.append("\n## Figuras\n- formas_ganadoras.png\n- ld_por_semilla.png\n"
              "- camber_espesor.png\n- armB_convergencia.png\n- distancia_forma.png\n")
-    with open(os.path.join(OUT_DIR, "RESUMEN_convergencia.md"), "w") as f:
+    with open(os.path.join(BASE_DIR, "RESUMEN_convergencia.md"), "w") as f:
         f.writelines(L)
 
 

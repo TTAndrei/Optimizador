@@ -23,11 +23,11 @@ CS = os.path.join(ROOT, "results", "convergence_study")
 
 # (nombre, ruta_dat, ld_dx004_estudio)
 GANADORES = [
-    ("AG24", "armA/AG24/AG24_Re100000_a4.0_LD9.95.dat", 9.9469),
-    ("GM15", "armA/GM15/GM15_Re100000_a4.0_LD9.31.dat", 9.3051),
-    ("NACA_0012_sharp", "armA/NACA_0012_sharp/NACA_0012_sharp_Re100000_a4.0_LD6.95.dat", 6.9534),
-    ("s1014", "armA/s1014/s1014_Re100000_a4.0_LD6.71.dat", 6.7127),
-    ("mixed", "armB/mixed/NACA_0012_sharp_Re100000_a4.0_LD9.03.dat", 9.0306),
+    ("AG24", "base_study/armA/AG24/AG24_Re100000_a4.0_LD9.95.dat", 9.9469),
+    ("GM15", "base_study/armA/GM15/GM15_Re100000_a4.0_LD9.31.dat", 9.3051),
+    ("NACA_0012_sharp", "base_study/armA/NACA_0012_sharp/NACA_0012_sharp_Re100000_a4.0_LD6.95.dat", 6.9534),
+    ("s1014", "base_study/armA/s1014/s1014_Re100000_a4.0_LD6.71.dat", 6.7127),
+    ("mixed", "base_study/armB/mixed/NACA_0012_sharp_Re100000_a4.0_LD9.03.dat", 9.0306),
 ]
 
 
@@ -86,7 +86,8 @@ def main():
             f"Ganador dx004={ganador_004}, dx002={ganador_002}."
         ),
     }
-    dst = os.path.join(CS, "t1_ranking_dx.json")
+    dst = os.path.join(CS, "tests", "t1_ranking_dx.json")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
     with open(dst, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
     print("\n[T1] " + out["veredicto"])
