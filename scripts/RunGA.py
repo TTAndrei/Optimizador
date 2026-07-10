@@ -104,6 +104,11 @@ CONFIG = {
     'sigma_adaptativa': False,           # True = escala las *_mut_std por generación
     'sigma_factor_inicial': 3.0,         # Factor de sigma en gen 0
     'sigma_factor_final': 1.0,           # Factor de sigma en la última generación
+
+    # Parada por estancamiento (correr hasta converger, no a nº fijo de gens).
+    'parada_estancamiento': False,       # True = cortar al estancarse el mejor
+    'paciencia_generaciones': 6,         # gens sin mejora antes de cortar
+    'tol_mejora_fitness': 0.05,          # mejora mínima de L/D que cuenta
     'le_proteccion_x': 0.06,             # Zona [0, x] con mutación atenuada en LE
     'espesor_min_global': 2e-4,          # Espesor mínimo global (excepto LE)
     'te_espesor_min_absoluto': 3e-4,     # Cota inferior absoluta para espesor TE
@@ -1909,6 +1914,15 @@ def main(config=None):
     _sigma_f0 = float(CONFIG.get('sigma_factor_inicial', 3.0))
     _sigma_f1 = float(CONFIG.get('sigma_factor_final', 1.0))
 
+    # Parada por estancamiento: corta si el mejor global no mejora más de
+    # `tol_mejora_fitness` durante `paciencia_generaciones` consecutivas.
+    # Permite "correr hasta converger" sin fijar un nº exacto de generaciones.
+    _parada_estancamiento = CONFIG.get('parada_estancamiento', False)
+    _paciencia = int(CONFIG.get('paciencia_generaciones', 6))
+    _tol_mejora = float(CONFIG.get('tol_mejora_fitness', 0.05))
+    _mejor_visto = -float('inf')
+    _gens_sin_mejora = 0
+
     for gen in range(CONFIG['generaciones']):
         gen_actual = gen
 
@@ -2037,6 +2051,20 @@ def main(config=None):
             os.path.join(CONFIG['directorio_resultados'], "estado_ga.json"),
             poblacion, mejor_global, gen, historial_fitness
         )
+
+        # --- Parada por estancamiento (converge sin fijar nº de gens) ---
+        if _parada_estancamiento and mejor_global is not None:
+            if mejor_global.fitness > _mejor_visto + _tol_mejora:
+                _mejor_visto = mejor_global.fitness
+                _gens_sin_mejora = 0
+            else:
+                _gens_sin_mejora += 1
+                print(f"   [estancamiento] {_gens_sin_mejora}/{_paciencia} gens "
+                      f"sin mejora > {_tol_mejora}")
+                if _gens_sin_mejora >= _paciencia:
+                    print(f"\n Convergencia por estancamiento tras {gen + 1} "
+                          f"generaciones (mejor L/D={mejor_global.fitness:.4f}).")
+                    break
 
         # --- D. REPRODUCCIÓN ---
         nueva_poblacion = []

@@ -246,12 +246,82 @@ def ejecutar_estudio(cal, deadline_total_s, t_start, reforzado=False):
 
 
 ISLAS_DIR = os.path.join(OUT_DIR, "islands")
+AISLADO_DIR = os.path.join(OUT_DIR, "aislado_sin_migracion_convergido")
 
 
 def _shape_dist(g1, g2, n=120):
     _, c1, t1 = _camber_espesor(g1, n)
     _, c2, t2 = _camber_espesor(g2, n)
     return float(np.sqrt(np.mean((c1 - c2) ** 2) + np.mean((t1 - t2) ** 2)))
+
+
+def ejecutar_aislado(cal, deadline_total_s, t_start, pop=12, gen_max=30,
+                     paciencia=6):
+    """Test definitivo SIN migración: cada semilla evoluciona sola hasta
+    converger (parada por estancamiento), con muchas generaciones disponibles.
+    Responde si perfiles distintos alcanzan el MISMO óptimo por su cuenta.
+    Salida en aislado_sin_migracion_convergido/<semilla>/.
+    """
+    os.makedirs(AISLADO_DIR, exist_ok=True)
+    use_dx, iters = cal["use_dx"], cal["iters"]
+    base_sim = dict(dx_min=use_dx, simulacion_iteraciones=iters, CFL=CFL,
+                    poblacion_tamano=pop, generaciones=gen_max,
+                    elites=max(1, pop // 4), sigma_adaptativa=True,
+                    sigma_factor_inicial=3.0, sigma_factor_final=1.0,
+                    parada_estancamiento=True, paciencia_generaciones=paciencia,
+                    tol_mejora_fitness=0.05)
+
+    seeds = SEEDS_ALL
+    for sp in seeds:
+        nm = os.path.splitext(os.path.basename(sp))[0]
+        dir_out = os.path.join(AISLADO_DIR, nm)
+        remaining = deadline_total_s - (time.time() - t_start)
+        if remaining <= 300:
+            _log("  Aislado: sin presupuesto; se detiene.")
+            break
+        # Cap generoso por semilla: lo que quede repartido entre las pendientes.
+        pend = [s for s in seeds if not os.path.exists(os.path.join(
+            AISLADO_DIR, os.path.splitext(os.path.basename(s))[0],
+            "estado_ga_final.json"))]
+        share = remaining * 0.95 / max(1, len(pend))
+        cfg = {**base_sim, "archivo_base": sp, "archivos_base": None,
+               "archivo_original": os.path.join(ROOT, sp) if not os.path.isabs(sp) else sp}
+        _run_ga(f"aislado/{nm}", dir_out, cfg, share)
+
+    # Análisis de convergencia entre los 4 ganadores independientes.
+    gan = {}
+    for sp in seeds:
+        nm = os.path.splitext(os.path.basename(sp))[0]
+        g = _cargar_ganador(os.path.join(AISLADO_DIR, nm))
+        if g is not None:
+            gan[nm] = g
+    out = {"condiciones": {"alpha_deg": ALPHA, "Re": 1e5, "CFL": CFL},
+           "config": {"pop": pop, "gen_max": gen_max, "paciencia": paciencia,
+                      "dx": use_dx, "sin_migracion": True}}
+    if len(gan) >= 2:
+        nombres = list(gan.keys())
+        lds = [gan[n]["fitness"] for n in nombres]
+        genes = [gan[n]["genes"] for n in nombres]
+        dists = [_shape_dist(genes[i], genes[j])
+                 for i in range(len(genes)) for j in range(i + 1, len(genes))]
+        out["ganadores"] = {n: {"ld": gan[n]["fitness"], "cl": gan[n]["cl"],
+                                "cd": gan[n]["cd"],
+                                "gens": len(gan[n].get("historial", []))}
+                            for n in nombres}
+        out["ld_spread"] = float(max(lds) - min(lds))
+        out["shape_dist_media"] = float(np.mean(dists)) if dists else 0.0
+        out["shape_dist_max"] = float(max(dists)) if dists else 0.0
+        out["veredicto"] = (
+            f"Sin migración, {len(gan)} semillas hasta converger: dist-forma "
+            f"media={out['shape_dist_media']:.4f}, spread L/D={out['ld_spread']:.2f}. "
+            + ("CONVERGEN solas -> óptimo único real."
+               if out["shape_dist_media"] < 0.015 else
+               "NO convergen solas -> cuencas locales distintas; la migración era el motor."))
+    with open(os.path.join(AISLADO_DIR, "convergencia_aislado.json"), "w",
+              encoding="utf-8") as f:
+        json.dump(out, f, indent=2, ensure_ascii=False)
+    _log("  Aislado: " + out.get("veredicto", "sin veredicto (pocos ganadores)"))
+    return out
 
 
 def ejecutar_islas(cal, deadline_total_s, t_start,
@@ -674,6 +744,11 @@ def main():
     ap.add_argument("--refine", action="store_true",
                     help="S3: re-rankea los ganadores existentes a dx 0.002 (dos niveles)")
     ap.add_argument("--refine-k", type=int, default=3)
+    ap.add_argument("--aislado", action="store_true",
+                    help="Test definitivo: cada semilla sola hasta converger (sin migración, más gens)")
+    ap.add_argument("--aislado-pop", type=int, default=12)
+    ap.add_argument("--aislado-gen-max", type=int, default=30)
+    ap.add_argument("--aislado-paciencia", type=int, default=6)
     args = ap.parse_args()
 
     t_start = time.time()
@@ -694,6 +769,13 @@ def main():
         _log("ABORTADO: el solver no reproduce Cl físico (NACA α=5 dx=0.002 fuera de "
              f"[0.30,0.60]: cl={cal.get('cl_ref_naca_a5_dx002')}). Revisar config antes "
              "de gastar presupuesto.")
+        return
+
+    if args.aislado:
+        ejecutar_aislado(cal, deadline_total_s, t_start,
+                         pop=args.aislado_pop, gen_max=args.aislado_gen_max,
+                         paciencia=args.aislado_paciencia)
+        _log(f"FIN aislado. Tiempo total: {(time.time()-t_start)/60:.1f} min")
         return
 
     if args.islands:
