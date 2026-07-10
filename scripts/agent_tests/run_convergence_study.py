@@ -405,6 +405,11 @@ def refinar_top_k(cal, k=3, dx_ref=0.002, deadline_s=None, t_start=None):
         _log(f"    {c['id']}: expl {c['ld_expl']:.2f} -> dx{dx_ref} {res['ld']:.2f}")
 
     ok = [f for f in filas if not f.get("error")]
+    if not ok:
+        # Sin refinados (p.ej. deadline agotado): no sobrescribir un refine_dx002
+        # previo válido con un resultado vacío.
+        _log("  S3: 0 refinados; se conserva refine_dx002.json previo si existe.")
+        return None
     ok.sort(key=lambda f: f["ld_ref"], reverse=True)
     ganador_expl = top[0]["id"] if top else None
     ganador_ref = ok[0]["id"] if ok else None
