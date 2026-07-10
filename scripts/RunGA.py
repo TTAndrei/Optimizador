@@ -1642,13 +1642,18 @@ def plot_convergencia(historial, save_path=None):
 # ==========================================
 # 10. PERSISTENCIA DEL ESTADO DEL GA
 # ==========================================
-def guardar_estado_ga(filepath, poblacion, mejor_global, gen, historial):
+def guardar_estado_ga(filepath, poblacion, mejor_global, gen, historial,
+                      estancamiento=None):
     """
     Guarda el estado completo del GA en JSON para inspección y reanudación.
+    `estancamiento` (dict opcional) persiste los contadores de parada por
+    estancamiento para reanudar sin perderlos. La población se guarda con genes
+    para poder reconstruirla al reanudar mid-corrida.
     """
     estado = {
         'timestamp': datetime.now().isoformat(),
         'generacion_actual': gen,
+        'estancamiento': estancamiento,
         'config': {k: v for k, v in CONFIG.items()
                    if isinstance(v, (int, float, str, bool, list, dict))},
         'historial': historial,
@@ -1662,6 +1667,8 @@ def guardar_estado_ga(filepath, poblacion, mejor_global, gen, historial):
             {
                 'fitness': ind.fitness,
                 'resultados': ind.resultados,
+                'genes': ind.genes.tolist(),
+                'header': ind.header,
             }
             for ind in poblacion
         ],
@@ -1893,6 +1900,40 @@ def main(config=None):
     mejor_global = None
     historial_fitness = []
     gen_actual = -1
+    _gen_inicio = 0
+    _estanc_load = None
+
+    # --- Reanudación mid-corrida: si hay checkpoint (estado_ga.json) y la corrida
+    #     no terminó (sin estado_ga_final.json), reconstruir población y continuar.
+    _ck_path = os.path.join(CONFIG['directorio_resultados'], "estado_ga.json")
+    _final_path = os.path.join(CONFIG['directorio_resultados'],
+                               "estado_ga_final.json")
+    if (CONFIG.get('reanudar', True) and os.path.exists(_ck_path)
+            and not os.path.exists(_final_path)):
+        try:
+            with open(_ck_path, encoding='utf-8') as _f:
+                _ck = json.load(_f)
+            _pr = _ck.get('poblacion_resumen', [])
+            if _pr and all('genes' in _p for _p in _pr):
+                poblacion = [Individuo(np.array(_p['genes']),
+                                       _p.get('header', header_base))
+                             for _p in _pr]
+                _mg = _ck.get('mejor_global') or {}
+                if _mg.get('genes') is not None:
+                    mejor_global = Individuo(np.array(_mg['genes']),
+                                             _mg.get('header', header_base))
+                    mejor_global.fitness = _mg.get('fitness', 0.0)
+                    mejor_global.resultados = _mg.get('resultados', {})
+                historial_fitness = _ck.get('historial', [])
+                gen_actual = int(_ck.get('generacion_actual', -1))
+                _gen_inicio = gen_actual + 1
+                _estanc_load = _ck.get('estancamiento')
+                print(f"\n{'=' * 60}")
+                print(f" REANUDANDO desde checkpoint: gen {gen_actual + 1} "
+                      f"completadas, mejor L/D={mejor_global.fitness if mejor_global else 0:.4f}")
+                print(f"{'=' * 60}")
+        except Exception as _e:
+            print(f" [reanudar] checkpoint ilegible ({_e}); empiezo de cero.")
 
     # =====================
     # PASO 5: BUCLE EVOLUTIVO
@@ -1922,8 +1963,11 @@ def main(config=None):
     _tol_mejora = float(CONFIG.get('tol_mejora_fitness', 0.05))
     _mejor_visto = -float('inf')
     _gens_sin_mejora = 0
+    if _estanc_load:
+        _mejor_visto = _estanc_load.get('mejor_visto', _mejor_visto)
+        _gens_sin_mejora = _estanc_load.get('gens_sin_mejora', 0)
 
-    for gen in range(CONFIG['generaciones']):
+    for gen in range(_gen_inicio, CONFIG['generaciones']):
         gen_actual = gen
 
         if _sigma_adaptativa:
@@ -2049,7 +2093,9 @@ def main(config=None):
         # --- Guardar estado del GA ---
         guardar_estado_ga(
             os.path.join(CONFIG['directorio_resultados'], "estado_ga.json"),
-            poblacion, mejor_global, gen, historial_fitness
+            poblacion, mejor_global, gen, historial_fitness,
+            estancamiento={'mejor_visto': _mejor_visto,
+                           'gens_sin_mejora': _gens_sin_mejora}
         )
 
         # --- Parada por estancamiento (converge sin fijar nº de gens) ---
@@ -2223,12 +2269,16 @@ def main(config=None):
             json.dump(historial_fitness, f, indent=2, ensure_ascii=False)
         print(f" Historial guardado en: {historial_path}")
 
-        # Guardar estado final del GA
-        guardar_estado_ga(
-            os.path.join(CONFIG['directorio_resultados'],
-                         "estado_ga_final.json"),
-            poblacion, mejor_global, gen_actual, historial_fitness
-        )
+        # Guardar estado final del GA (salvo pausa: mantener reanudable).
+        if PARADA_SOLICITADA:
+            print("\n [pausa] corrida interrumpida; NO se marca completada. "
+                  "Relanza el mismo comando para reanudar desde el checkpoint.")
+        else:
+            guardar_estado_ga(
+                os.path.join(CONFIG['directorio_resultados'],
+                             "estado_ga_final.json"),
+                poblacion, mejor_global, gen_actual, historial_fitness
+            )
 
         # Generar gráficos finales
         try:
