@@ -1,0 +1,44 @@
+{
+  "condiciones": {
+    "alpha_deg": 4.0,
+    "Re": 100000.0,
+    "CFL": 0.5
+  },
+  "config": {
+    "pop": 12,
+    "gen_max": 30,
+    "paciencia": 6,
+    "dx": 0.004,
+    "sin_migracion": true
+  },
+  "ganadores": {
+    "NACA_0012_sharp": {
+      "ld": 11.018,
+      "cl": 0.949721,
+      "cd": 0.086197,
+      "gens": 25
+    },
+    "AG24": {
+      "ld": 11.945,
+      "cl": 0.835426,
+      "cd": 0.069939,
+      "gens": 20
+    },
+    "GM15": {
+      "ld": 10.9087,
+      "cl": 0.758516,
+      "cd": 0.069533,
+      "gens": 7
+    },
+    "s1014": {
+      "ld": 9.5028,
+      "cl": 1.113002,
+      "cd": 0.117124,
+      "gens": 21
+    }
+  },
+  "ld_spread": 2.4421999999999997,
+  "shape_dist_media": 0.05571624576098171,
+  "shape_dist_max": 0.09213863412156205,
+  "veredicto": "Sin migración, 4 semillas hasta converger: dist-forma media=0.0557, spread L/D=2.44. NO convergen solas -> cuencas locales distintas; la migración era el motor."
+}
