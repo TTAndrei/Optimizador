@@ -1,0 +1,71 @@
+{
+  "alpha": 4.0,
+  "dx_ref": 0.002,
+  "iters": 13000,
+  "filas": [
+    {
+      "seed": "NACA_0012_sharp",
+      "wall_min": 8.4,
+      "ld_dx004": 11.018,
+      "cl_dx004": 0.949721,
+      "cd_dx004": 0.086197,
+      "ld_dx002": 12.6658,
+      "cl_dx002": 1.0218,
+      "cd_dx002": 0.0807,
+      "d_ld_pct": 15.0,
+      "d_cl_pct": 7.6
+    },
+    {
+      "seed": "AG24",
+      "wall_min": 8.5,
+      "ld_dx004": 11.945,
+      "cl_dx004": 0.835426,
+      "cd_dx004": 0.069939,
+      "ld_dx002": 14.2914,
+      "cl_dx002": 0.9923,
+      "cd_dx002": 0.0694,
+      "d_ld_pct": 19.6,
+      "d_cl_pct": 18.8
+    },
+    {
+      "seed": "GM15",
+      "wall_min": 7.9,
+      "ld_dx004": 10.9087,
+      "cl_dx004": 0.758516,
+      "cd_dx004": 0.069533,
+      "ld_dx002": 13.9327,
+      "cl_dx002": 0.8625,
+      "cd_dx002": 0.0619,
+      "d_ld_pct": 27.7,
+      "d_cl_pct": 13.7
+    },
+    {
+      "seed": "s1014",
+      "wall_min": 11.3,
+      "ld_dx004": 9.5028,
+      "cl_dx004": 1.113002,
+      "cd_dx004": 0.117124,
+      "ld_dx002": 10.7636,
+      "cl_dx002": 1.2789,
+      "cd_dx002": 0.1188,
+      "d_ld_pct": 13.3,
+      "d_cl_pct": 14.9
+    }
+  ],
+  "orden_dx004": [
+    "AG24",
+    "NACA_0012_sharp",
+    "GM15",
+    "s1014"
+  ],
+  "orden_dx002": [
+    "AG24",
+    "GM15",
+    "NACA_0012_sharp",
+    "s1014"
+  ],
+  "ganador_dx004": "AG24",
+  "ganador_dx002": "AG24",
+  "cambia_ganador": false,
+  "veredicto": "Ganador dx004=AG24 -> dx002=AG24. El ranking se mantiene tras refinar."
+}

@@ -108,6 +108,9 @@ def base_config(args: argparse.Namespace) -> dict[str, Any]:
         "guardado": args.guardado,
         "divergencia": args.divergencia,
         "turb_model": args.turb_model,
+        "transition_model": args.transition_model,
+        "freestream_Tu": args.freestream_tu,
+        "mg_niveles_max": args.mg_niveles_max,
         "wall_treatment": "consistent",
         "advection_scheme": args.advection_scheme,
         "graficos": False,
@@ -365,6 +368,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fine-width-y", type=float, default=1.0)
     parser.add_argument("--ratio-max-malla", type=float, default=50.0)
     parser.add_argument("--turb-model", default="sa", choices=["none", "wale", "sa"])
+    parser.add_argument("--transition-model", default="none", choices=["none", "sa_bc"],
+                        help="sa_bc: transición algebraica Bas-Cakmakcıoğlu sobre SA")
+    parser.add_argument("--freestream-tu", type=float, default=0.1,
+                        help="intensidad de turbulencia libre en %% (solo sa_bc)")
+    parser.add_argument("--mg-niveles-max", type=int, default=1)
     parser.add_argument("--advection-scheme", default="maccormack", choices=["sl", "maccormack"])
     parser.add_argument("--no-clcd-stop", action="store_true",
                         help="desactiva el early-stop por convergencia de Cl/Cd")

@@ -241,6 +241,10 @@ SA_CHI_MAX = 5.0e3      # cap de seguridad chi = nu_tilde/nu
 SA_STILDE_FLOOR = 0.3   # S_tilde >= 0.3*omega (clip estándar)
 SA_R_MAX = 10.0
 
+# Transición SA-BC (Bas-Cakmakcıoğlu 2016): gamma algebraica sobre producción SA
+SA_BC_CHI1 = 0.002
+SA_BC_CHI2 = 5.0
+
 
 class Mesh:
     '''Constructor y basicos'''
@@ -277,6 +281,8 @@ class Mesh:
         self.nu_tilde = None    # campo SA
         self.sa_nu_t = None     # nu_t = nu_tilde*f_v1 cacheado por update_sa
         self._sa_d = None       # distancia física a pared (cache)
+        self.sa_gamma = None    # intermitencia SA-BC (diagnóstico)
+        self._sa_bc = False     # transición SA-BC activa
 
         # ================================================================
         # MALLA DE POSICIONES  (nueva infraestructura de malla variable)
@@ -2600,10 +2606,16 @@ class Mesh:
     # ================================================================
     # SPALART-ALLMARAS (URANS 2D, fully-turbulent, sin trip)
     # ================================================================
-    def init_sa(self, nu, nu_tilde_factor=3.0):
-        """IC/BC fully-turbulent: nu_tilde=3*nu en fluido, 0 en sólido."""
+    def init_sa(self, nu, nu_tilde_factor=3.0, transition_model="none",
+                freestream_Tu=0.1):
+        """IC/BC fully-turbulent: nu_tilde=3*nu en fluido, 0 en sólido.
+        transition_model="sa_bc": intermitencia algebraica Bas-Cakmakcıoğlu
+        (Tu en %, correlación Re_theta_c de Menter)."""
         self._sa_nu_molecular = float(nu)
         self._sa_nu_inflow = float(nu_tilde_factor) * float(nu)
+        self._sa_bc = (transition_model == "sa_bc")
+        if self._sa_bc:
+            self._sa_bc_rethc = 803.73 * (float(freestream_Tu) + 0.6067) ** (-1.027)
         self.nu_tilde = cp.full((self.ny, self.nx), cp.float32(self._sa_nu_inflow),
                                 dtype=cp.float32)
         self.nu_tilde[self.solid] = 0.0
@@ -2687,6 +2699,8 @@ class Mesh:
         om = cp.abs(dv_dx - du_dy)
 
         k2d2_inv = self._sa_d2_inv * cp.float32(1.0 / SA_KAPPA**2)
+        if self._sa_bc:
+            rethc = cp.float32(self._sa_bc_rethc)
 
         # Sub-stepping por estabilidad difusiva: difusividad SA = (nu+nu_tilde)/sigma
         dx_min_loc = float(min(cp.min(self.vol_x), cp.min(self.vol_y)))
@@ -2726,6 +2740,15 @@ class Mesh:
                    * cp.float32(1.0 / SA_SIGMA)
 
             prod = cp.float32(SA_CB1) * S_tilde * nt
+            if self._sa_bc:
+                # SA-BC: gamma = 1-exp(-sqrt(T1)-sqrt(T2)); Re_v = d²·S/nu local,
+                # max(Re_v) ≈ 2.193·Re_theta. Solo modula producción (paper).
+                re_v = om / (nu_f * self._sa_d2_inv)
+                t1 = cp.maximum(re_v * cp.float32(1.0 / 2.193) - rethc, 0.0) \
+                    * cp.float32(1.0 / (SA_BC_CHI1 * self._sa_bc_rethc))
+                t2 = (nt * fv1) * cp.float32(1.0 / (SA_BC_CHI2 * float(nu)))
+                gamma = 1.0 - cp.exp(-cp.sqrt(t1) - cp.sqrt(t2))
+                prod = gamma * prod
             # Destrucción point-implicit: divide, nunca resta → incondicional
             D_coef = cp.float32(SA_CW1) * fw * nt * self._sa_d2_inv
             nt_new = (nt + dt_sub * (prod + diff)) / (1.0 + dt_sub * D_coef)
@@ -2736,6 +2759,8 @@ class Mesh:
             self.nu_tilde = nt_new
             self._apply_sa_boundaries()
 
+        if self._sa_bc:
+            self.sa_gamma = gamma.astype(cp.float32, copy=False)
         self.sa_nu_t = self._sa_nu_t_from_tilde(float(nu))
         return self.sa_nu_t
 
@@ -7144,6 +7169,10 @@ def main(
                        # estándar 3D; en 2D probar 0.10-0.20
     sa_nu_tilde_factor=3.0,  # chi inflow/IC de SA; bajo (~0.1) retrasa transición
                              # (reactiva el LSB, no bajar sin motivo — ver RESUMEN)
+    # "none" (SA fully-turbulent) | "sa_bc" (transición algebraica
+    # Bas-Cakmakcıoğlu 2016: gamma local sobre producción SA; requiere turb_model="sa")
+    transition_model="none",
+    freestream_Tu=0.1,  # intensidad de turbulencia libre en % (solo sa_bc)
     # "sl" (semi-Lagrangiano bilineal, difusión numérica alta a Re>=1e5) |
     # "maccormack" (2º orden, resuelve la 4ª capa del déficit de Cl, validado).
     advection_scheme="sl",
@@ -7339,6 +7368,11 @@ def main(
     if turb_model not in {"none", "wale", "sa"}:
         raise ValueError("turb_model debe ser 'none', 'wale' o 'sa'")
     usar_wale = (turb_model == "wale")
+    transition_model = str(transition_model)
+    if transition_model not in {"none", "sa_bc"}:
+        raise ValueError("transition_model debe ser 'none' o 'sa_bc'")
+    if transition_model == "sa_bc" and turb_model != "sa":
+        raise ValueError("transition_model='sa_bc' requiere turb_model='sa'")
     pressure_wall_reconstruction = str(pressure_wall_reconstruction)
     if pressure_wall_reconstruction not in {
         "linear_5", "linear_9", "weighted_linear_9", "quadratic_9", "robust_huber_9"
@@ -7559,7 +7593,9 @@ def main(
 
     mesh_gruesa.advection_scheme = str(advection_scheme)
     if turb_model == "sa":
-        mesh_gruesa.init_sa(nu, nu_tilde_factor=sa_nu_tilde_factor)
+        mesh_gruesa.init_sa(nu, nu_tilde_factor=sa_nu_tilde_factor,
+                            transition_model=transition_model,
+                            freestream_Tu=freestream_Tu)
     if kutta_enforce:
         mesh_gruesa._precomputar_kutta_te()
 
@@ -8003,6 +8039,12 @@ def main(
                     ratio_nu = nu_eff_max / nu
                     print(f"\n[ADVERTENCIA] [Iter {it}] nu_efectiva muy alta: {nu_eff_max:.2e} ({ratio_nu:.1f}x nu molecular)")
                     print(f"    Esto puede reducir dt significativamente")
+
+                if (mesh_gruesa.sa_gamma is not None
+                        and it % (guardado * 10) == 0):
+                    g = mesh_gruesa.sa_gamma[~mesh_gruesa.solid]
+                    print(f"\n[SA-BC] [Iter {it}] gamma min={float(cp.min(g)):.3f} "
+                          f"media={float(cp.mean(g)):.3f}")
 
                 C_visc = 0.25
                 if nu_eff_max > 1e-12:
@@ -8659,6 +8701,7 @@ def main(
     mesh_gruesa._nu_molecular = float(nu)
     mesh_gruesa._usar_wale_run = bool(usar_wale)
     mesh_gruesa._turb_model_run = str(turb_model)
+    mesh_gruesa._transition_model_run = str(transition_model)
     mesh_gruesa._t_fisico = float(tiempo_fisico_acumulado)
 
     return mesh_gruesa
