@@ -273,7 +273,11 @@ def plot_curves(rows: list[dict[str, Any]], out_dir: Path) -> None:
         return np.asarray([finite_or_nan(r.get(key)) for r in rows], dtype=float)
 
     plots = [
-        ("Cl", "Cl vs alpha", [("Cl_final", "Cl final"), ("Cl_from_Cp_force_consistent", "Cl Cp force")]),
+        ("Cl", "Cl vs alpha", [
+            ("Cl_final", "Cl simulacion"),
+            ("Cl_from_Cp_force_consistent", "Cl Cp force"),
+            ("cl_cp_at_convergence", "Cl_cp (∮ΔCp)"),
+        ]),
         ("Cd", "Cd vs alpha", [
             ("Cd_final", "Cd final"),
             ("Cd_p", "Cd presion IBM"),

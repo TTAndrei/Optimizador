@@ -1,0 +1,72 @@
+[
+  {
+    "gen": 0,
+    "mejor": 6.6898,
+    "media": 5.704225,
+    "peor": 4.7752,
+    "evaluados": 20,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 1759.0,
+    "vs_base": 0.6716,
+    "descartados_geom_repro": 0,
+    "reparados_param_repro": 15,
+    "fallback_legacy_repro": 0
+  },
+  {
+    "gen": 1,
+    "mejor": 7.0335,
+    "media": 5.989225,
+    "peor": 4.3281,
+    "evaluados": 20,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 1346.5,
+    "vs_base": 1.0153,
+    "descartados_geom_repro": 25,
+    "reparados_param_repro": 15,
+    "fallback_legacy_repro": 0
+  },
+  {
+    "gen": 2,
+    "mejor": 7.7195,
+    "media": 6.638445,
+    "peor": 5.3153,
+    "evaluados": 20,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 1238.5,
+    "vs_base": 1.7013,
+    "descartados_geom_repro": 66,
+    "reparados_param_repro": 2,
+    "fallback_legacy_repro": 13
+  },
+  {
+    "gen": 3,
+    "mejor": 7.8171,
+    "media": 7.014419999999999,
+    "peor": 6.1906,
+    "evaluados": 20,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 1346.8,
+    "vs_base": 1.7989,
+    "descartados_geom_repro": 17,
+    "reparados_param_repro": 9,
+    "fallback_legacy_repro": 2
+  },
+  {
+    "gen": 4,
+    "mejor": 8.1656,
+    "media": 7.152395,
+    "peor": 5.7584,
+    "evaluados": 20,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 1217.3,
+    "vs_base": 2.1474,
+    "descartados_geom_repro": 16,
+    "reparados_param_repro": 7,
+    "fallback_legacy_repro": 2
+  }
+]

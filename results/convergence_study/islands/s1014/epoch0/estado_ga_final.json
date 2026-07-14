@@ -1,0 +1,427 @@
+{
+  "timestamp": "2026-07-09T12:55:48.421451",
+  "generacion_actual": 1,
+  "config": {
+    "archivo_base": "/home/ttandrei/Proyectos/Optimizador/Optimizador/profiles/s1014.dat",
+    "archivo_memoria_ia": "cerebro_aerodinamico.pkl",
+    "archivo_datos_ml": "aprendizaje_ML.jsonl",
+    "directorio_resultados": "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/s1014/epoch0",
+    "poblacion_tamano": 8,
+    "generaciones": 2,
+    "elites": 2,
+    "torneo_tamano": 4,
+    "prob_mutacion": 0.85,
+    "n_bumps_min": 1,
+    "n_bumps_max": 4,
+    "sigma_bump_min": 0.03,
+    "sigma_bump_max": 0.15,
+    "amplitud_mutacion": 0.008,
+    "prob_mutar_trailing_edge": 0.3,
+    "amplitud_trailing_edge": 0.002,
+    "modo_mutacion": "parametrica",
+    "usar_legacy_fallback": true,
+    "max_intentos_geometria": 120,
+    "n_control_mutacion": 7,
+    "camber_mut_std": 0.0035,
+    "espesor_mut_std": 0.0045,
+    "te_camber_shift_std": 0.0015,
+    "te_espesor_shift_std": 0.0012,
+    "sigma_adaptativa": true,
+    "sigma_factor_inicial": 3.0,
+    "sigma_factor_final": 1.0,
+    "le_proteccion_x": 0.06,
+    "espesor_min_global": 0.0002,
+    "te_espesor_min_absoluto": 0.0003,
+    "te_espesor_rel_min": 0.65,
+    "te_espesor_rel_max": 3.5,
+    "te_validacion_tol": 1e-09,
+    "le_radio_factor_min": 0.4,
+    "le_radio_min_absoluto": 0.0002,
+    "le_puntos_preservar": 5,
+    "reportar_diagnostico_geometria": true,
+    "simulacion_iteraciones": 7000,
+    "v0x": 1,
+    "alpha_deg": 4.0,
+    "chord": 1.0,
+    "dx_min": 0.004,
+    "CFL": 0.5,
+    "rho": 1.0,
+    "nu": 1e-05,
+    "turb_model": "sa",
+    "wall_treatment": "consistent",
+    "advection_scheme": "maccormack",
+    "min_te_height_factor": 1.0,
+    "wake_refinement_mode": "long_fine_x",
+    "mg_niveles_max": 2,
+    "mg_max_outer": 8,
+    "divergencia": 0.02,
+    "stop_on_clcd_convergence": true,
+    "multi_angulo": false,
+    "delta_angulo": 1.0,
+    "fitness_modo": "mean",
+    "peso_angulo_base": 2.0,
+    "usar_ia": false,
+    "umbral_calidad": 0.7,
+    "suavizado_iteraciones": 2,
+    "archivos_base": [
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/profiles/s1014.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/NACA_0012_sharp/epoch0/NACA_0012_sharp_winner.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/AG24/epoch0/AG24_winner.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/GM15/epoch0/GM15_winner.dat"
+    ],
+    "tiempo_limite_s": 1619.9999898344279,
+    "sim_extra_params": {
+      "Lx": 8,
+      "Ly": 5,
+      "cx": 2,
+      "ancho_zona_fina_x": 1.5,
+      "ancho_zona_fina_y": 1.0,
+      "factor_expansion": 1.1
+    }
+  },
+  "historial": [
+    {
+      "gen": 0,
+      "mejor": 5.1414,
+      "media": 4.8065,
+      "peor": 4.2871,
+      "evaluados": 5,
+      "descartados_ia": 0,
+      "descartados_geom_eval": 3,
+      "tiempo_seg": 417.3,
+      "vs_base": 0.5486,
+      "descartados_geom_repro": 0,
+      "reparados_param_repro": 6,
+      "fallback_legacy_repro": 0
+    },
+    {
+      "gen": 1,
+      "mejor": 5.3241,
+      "media": 4.793424999999999,
+      "peor": 3.7086,
+      "evaluados": 8,
+      "descartados_ia": 0,
+      "descartados_geom_eval": 0,
+      "tiempo_seg": 617.7,
+      "vs_base": 0.7313,
+      "descartados_geom_repro": 0,
+      "reparados_param_repro": 6,
+      "fallback_legacy_repro": 0
+    }
+  ],
+  "mejor_global": {
+    "genes": [
+      [
+        1.0,
+        -0.007294698273696486
+      ],
+      [
+        0.9961,
+        -0.006743283499842823
+      ],
+      [
+        0.98465,
+        -0.005124386279169897
+      ],
+      [
+        0.96622,
+        -0.0025096210290022148
+      ],
+      [
+        0.94151,
+        0.0014807005916304794
+      ],
+      [
+        0.91119,
+        0.007015995582626758
+      ],
+      [
+        0.87604,
+        0.014430057788830077
+      ],
+      [
+        0.83705,
+        0.023937690511438427
+      ],
+      [
+        0.79532,
+        0.03549593997950436
+      ],
+      [
+        0.75202,
+        0.04797409597716543
+      ],
+      [
+        0.70829,
+        0.05958729107409097
+      ],
+      [
+        0.66413,
+        0.0686842538751513
+      ],
+      [
+        0.61835,
+        0.07428005739204913
+      ],
+      [
+        0.57065,
+        0.07759434502226405
+      ],
+      [
+        0.52167,
+        0.07935188090772637
+      ],
+      [
+        0.47199,
+        0.08034751315474857
+      ],
+      [
+        0.42222,
+        0.08063301277127563
+      ],
+      [
+        0.37293,
+        0.08015543380551468
+      ],
+      [
+        0.32472,
+        0.07877487602162084
+      ],
+      [
+        0.27812,
+        0.07651285325727814
+      ],
+      [
+        0.2337,
+        0.0733787650340228
+      ],
+      [
+        0.19197,
+        0.06896383803646708
+      ],
+      [
+        0.15346,
+        0.0634009411917472
+      ],
+      [
+        0.11862,
+        0.05641021843976256
+      ],
+      [
+        0.08788,
+        0.04755748883624131
+      ],
+      [
+        0.06153,
+        0.037179694842513655
+      ],
+      [
+        0.03978,
+        0.025990866509554376
+      ],
+      [
+        0.02271,
+        0.01642477872729428
+      ],
+      [
+        0.01032,
+        0.009864529178834867
+      ],
+      [
+        0.00265,
+        0.005954664535206676
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.00265,
+        -0.005954867394257421
+      ],
+      [
+        0.01032,
+        -0.009865966015424044
+      ],
+      [
+        0.02271,
+        -0.0164288522381187
+      ],
+      [
+        0.03978,
+        -0.025999434015647332
+      ],
+      [
+        0.06153,
+        -0.03719511093156503
+      ],
+      [
+        0.08788,
+        -0.047585221165587714
+      ],
+      [
+        0.11862,
+        -0.05645998316864174
+      ],
+      [
+        0.15346,
+        -0.06349180200146479
+      ],
+      [
+        0.19197,
+        -0.06913128822867844
+      ],
+      [
+        0.2337,
+        -0.0736834362712879
+      ],
+      [
+        0.27812,
+        -0.07704449615258767
+      ],
+      [
+        0.32472,
+        -0.07958689393350127
+      ],
+      [
+        0.37293,
+        -0.08125027819527249
+      ],
+      [
+        0.42222,
+        -0.08192236700086297
+      ],
+      [
+        0.47199,
+        -0.08143589401587338
+      ],
+      [
+        0.52167,
+        -0.07929625135557801
+      ],
+      [
+        0.57065,
+        -0.0754210881770159
+      ],
+      [
+        0.61835,
+        -0.06967453458426986
+      ],
+      [
+        0.66413,
+        -0.06278308313992634
+      ],
+      [
+        0.70829,
+        -0.05484774701817393
+      ],
+      [
+        0.75202,
+        -0.046215254387137784
+      ],
+      [
+        0.79532,
+        -0.03742819230234774
+      ],
+      [
+        0.83705,
+        -0.029309165290137794
+      ],
+      [
+        0.87604,
+        -0.022506725420073717
+      ],
+      [
+        0.91119,
+        -0.01719465698758917
+      ],
+      [
+        0.94151,
+        -0.013334535913013536
+      ],
+      [
+        0.96622,
+        -0.010668094677581012
+      ],
+      [
+        0.98465,
+        -0.009028263933520348
+      ],
+      [
+        0.9961,
+        -0.008014871307788544
+      ],
+      [
+        1.0,
+        -0.0076696982736964864
+      ]
+    ],
+    "header": "S1014\n",
+    "fitness": 5.3241,
+    "resultados": {
+      "4.0": {
+        "cl": 0.400476,
+        "cd": 0.075219,
+        "ld": 5.3241,
+        "cl_raw": 0.399612,
+        "cl_std": 0.0,
+        "cd_std": 0.0,
+        "n_samples": 28
+      }
+    }
+  },
+  "poblacion_resumen": [
+    {
+      "fitness": 5.3241,
+      "resultados": {
+        "4.0": {
+          "cl": 0.400476,
+          "cd": 0.075219,
+          "ld": 5.3241,
+          "cl_raw": 0.399612,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 5.1414,
+      "resultados": {
+        "4.0": {
+          "cl": 0.3857,
+          "cd": 0.075019,
+          "ld": 5.1414,
+          "cl_raw": 0.384854,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    }
+  ]
+}

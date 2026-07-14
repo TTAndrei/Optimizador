@@ -1,0 +1,7 @@
+GM15 Re=100k
+Cl simulado: Cl_from_Cp_force_consistent
+Cd simulado: Cd_final
+============================================================
+Cd  MAE=0.10190 RMSE=0.11078 R2=-9.7338 rel=368.9% max=0.18863
+Cl  MAE=0.22919 RMSE=0.25460 R2=0.8493 rel=98.5% max=0.46640
+Ef  MAE=20.30420 RMSE=28.83142 R2=-0.2473 rel=76.1% max=58.03183

@@ -1,0 +1,58 @@
+[
+  {
+    "gen": 0,
+    "mejor": 8.8304,
+    "media": 8.135575,
+    "peor": 6.5712,
+    "evaluados": 8,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 781.9,
+    "vs_base": -0.131,
+    "descartados_geom_repro": 0,
+    "reparados_param_repro": 6,
+    "fallback_legacy_repro": 0
+  },
+  {
+    "gen": 1,
+    "mejor": 9.4034,
+    "media": 8.691637499999999,
+    "peor": 7.9055,
+    "evaluados": 8,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 632.6,
+    "vs_base": 0.442,
+    "descartados_geom_repro": 12,
+    "reparados_param_repro": 1,
+    "fallback_legacy_repro": 5
+  },
+  {
+    "gen": 2,
+    "mejor": 9.9469,
+    "media": 8.6539375,
+    "peor": 7.328,
+    "evaluados": 8,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 650.7,
+    "vs_base": 0.9855,
+    "descartados_geom_repro": 1,
+    "reparados_param_repro": 0,
+    "fallback_legacy_repro": 2
+  },
+  {
+    "gen": 3,
+    "mejor": 9.9469,
+    "media": 8.5779625,
+    "peor": 7.1725,
+    "evaluados": 8,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 485.0,
+    "vs_base": 0.9855,
+    "descartados_geom_repro": 1,
+    "reparados_param_repro": 0,
+    "fallback_legacy_repro": 0
+  }
+]

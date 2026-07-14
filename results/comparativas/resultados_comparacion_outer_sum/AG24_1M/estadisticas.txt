@@ -1,7 +1,8 @@
 AG24 Re=1M
-Cl simulado: Cl_from_Cp_force_consistent
+Cl simulado: Cl_final
+Cl_cp: cl_cp_at_convergence
 Cd simulado: Cd_final
 ============================================================
 Cd  MAE=0.09357 RMSE=0.10205 R2=-14.7466 rel=850.2% max=0.16538
-Cl  MAE=0.21299 RMSE=0.25118 R2=0.8361 rel=47.5% max=0.58990
-Ef  MAE=46.92073 RMSE=58.99366 R2=-0.3809 rel=75.5% max=96.87466
+Cl  MAE=0.21143 RMSE=0.25024 R2=0.8373 rel=47.3% max=0.59111
+Ef  MAE=46.93458 RMSE=59.01762 R2=-0.3821 rel=75.5% max=96.85340

@@ -1,7 +1,9 @@
 NACA0012 Re=1M
-Cl simulado: Cl_from_Cp_force_consistent
+Cl simulado: Cl_final
+Cl_cp: cl_cp_at_convergence
 Cd simulado: Cd_final
 ============================================================
-Cd  MAE=0.08319 RMSE=0.09045 R2=-798.8668 rel=875.4% max=0.15121
-Cl  MAE=0.06577 RMSE=0.07591 R2=0.9874 rel=16.6% max=0.12577
-Ef  MAE=50.72221 RMSE=54.29141 R2=0.2103 rel=89.1% max=67.20979
+Cd  MAE=0.04684 RMSE=0.04684 R2=-70872.5176 rel=842.2% max=0.04692
+Cl  MAE=0.03266 RMSE=0.04184 R2=0.7715 rel=30.7% max=0.06402
+Cl_cp MAE=0.09895 RMSE=0.12443 R2=-1.0211 rel=95.6% max=0.18307
+Ef  MAE=17.40755 RMSE=22.28345 R2=-1.1851 rel=92.5% max=34.05033

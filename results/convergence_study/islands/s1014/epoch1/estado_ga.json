@@ -1,0 +1,484 @@
+{
+  "timestamp": "2026-07-09T14:10:55.203010",
+  "generacion_actual": 1,
+  "config": {
+    "archivo_base": "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/s1014/epoch0/s1014_winner.dat",
+    "archivo_memoria_ia": "cerebro_aerodinamico.pkl",
+    "archivo_datos_ml": "aprendizaje_ML.jsonl",
+    "directorio_resultados": "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/s1014/epoch1",
+    "poblacion_tamano": 8,
+    "generaciones": 2,
+    "elites": 2,
+    "torneo_tamano": 4,
+    "prob_mutacion": 0.85,
+    "n_bumps_min": 1,
+    "n_bumps_max": 4,
+    "sigma_bump_min": 0.03,
+    "sigma_bump_max": 0.15,
+    "amplitud_mutacion": 0.008,
+    "prob_mutar_trailing_edge": 0.3,
+    "amplitud_trailing_edge": 0.002,
+    "modo_mutacion": "parametrica",
+    "usar_legacy_fallback": true,
+    "max_intentos_geometria": 120,
+    "n_control_mutacion": 7,
+    "camber_mut_std": 0.0035,
+    "espesor_mut_std": 0.0045,
+    "te_camber_shift_std": 0.0015,
+    "te_espesor_shift_std": 0.0012,
+    "sigma_adaptativa": true,
+    "sigma_factor_inicial": 3.0,
+    "sigma_factor_final": 1.0,
+    "le_proteccion_x": 0.06,
+    "espesor_min_global": 0.0002,
+    "te_espesor_min_absoluto": 0.0003,
+    "te_espesor_rel_min": 0.65,
+    "te_espesor_rel_max": 3.5,
+    "te_validacion_tol": 1e-09,
+    "le_radio_factor_min": 0.4,
+    "le_radio_min_absoluto": 0.0002,
+    "le_puntos_preservar": 5,
+    "reportar_diagnostico_geometria": true,
+    "simulacion_iteraciones": 7000,
+    "v0x": 1,
+    "alpha_deg": 4.0,
+    "chord": 1.0,
+    "dx_min": 0.004,
+    "CFL": 0.5,
+    "rho": 1.0,
+    "nu": 1e-05,
+    "turb_model": "sa",
+    "wall_treatment": "consistent",
+    "advection_scheme": "maccormack",
+    "min_te_height_factor": 1.0,
+    "wake_refinement_mode": "long_fine_x",
+    "mg_niveles_max": 2,
+    "mg_max_outer": 8,
+    "divergencia": 0.02,
+    "stop_on_clcd_convergence": true,
+    "multi_angulo": false,
+    "delta_angulo": 1.0,
+    "fitness_modo": "mean",
+    "peso_angulo_base": 2.0,
+    "usar_ia": false,
+    "umbral_calidad": 0.7,
+    "suavizado_iteraciones": 2,
+    "archivos_base": [
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/s1014/epoch0/s1014_winner.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/NACA_0012_sharp/epoch1/NACA_0012_sharp_winner.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/AG24/epoch1/AG24_winner.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/GM15/epoch1/GM15_winner.dat"
+    ],
+    "tiempo_limite_s": 1820.7005826294424,
+    "sim_extra_params": {
+      "Lx": 8,
+      "Ly": 5,
+      "cx": 2,
+      "ancho_zona_fina_x": 1.5,
+      "ancho_zona_fina_y": 1.0,
+      "factor_expansion": 1.1
+    }
+  },
+  "historial": [
+    {
+      "gen": 0,
+      "mejor": 7.4744,
+      "media": 5.808300000000001,
+      "peor": 5.2266,
+      "evaluados": 5,
+      "descartados_ia": 0,
+      "descartados_geom_eval": 3,
+      "tiempo_seg": 373.8,
+      "vs_base": 2.1503,
+      "descartados_geom_repro": 0,
+      "reparados_param_repro": 5,
+      "fallback_legacy_repro": 0
+    },
+    {
+      "gen": 1,
+      "mejor": 8.7432,
+      "media": 7.058949999999999,
+      "peor": 5.4811,
+      "evaluados": 8,
+      "descartados_ia": 0,
+      "descartados_geom_eval": 0,
+      "tiempo_seg": 587.0,
+      "vs_base": 3.4191
+    }
+  ],
+  "mejor_global": {
+    "genes": [
+      [
+        1.0,
+        0.0056482679601125695
+      ],
+      [
+        0.9961,
+        0.005876844800644372
+      ],
+      [
+        0.98465,
+        0.006547922960667224
+      ],
+      [
+        0.96622,
+        0.007627851576600216
+      ],
+      [
+        0.94151,
+        0.009062621507295083
+      ],
+      [
+        0.91119,
+        0.010775037223771228
+      ],
+      [
+        0.87604,
+        0.012795942268896278
+      ],
+      [
+        0.83705,
+        0.015735524386765412
+      ],
+      [
+        0.79532,
+        0.020706739634554452
+      ],
+      [
+        0.75202,
+        0.027137353079754952
+      ],
+      [
+        0.70829,
+        0.03360940078560048
+      ],
+      [
+        0.66413,
+        0.03904527315990313
+      ],
+      [
+        0.61835,
+        0.04269015260860803
+      ],
+      [
+        0.57065,
+        0.04558165537712473
+      ],
+      [
+        0.52167,
+        0.04851576936881953
+      ],
+      [
+        0.47199,
+        0.05218135086628966
+      ],
+      [
+        0.42222,
+        0.05567910103858817
+      ],
+      [
+        0.37293,
+        0.057535203724313914
+      ],
+      [
+        0.32472,
+        0.05711493801889238
+      ],
+      [
+        0.27812,
+        0.05492732395839641
+      ],
+      [
+        0.2337,
+        0.05203073452269981
+      ],
+      [
+        0.19197,
+        0.04861139569736732
+      ],
+      [
+        0.15346,
+        0.04461939648032652
+      ],
+      [
+        0.11862,
+        0.039704040098099275
+      ],
+      [
+        0.08788,
+        0.03347313953072496
+      ],
+      [
+        0.06153,
+        0.026142890733828663
+      ],
+      [
+        0.03978,
+        0.018288308211327934
+      ],
+      [
+        0.02271,
+        0.011683201616141694
+      ],
+      [
+        0.01032,
+        0.007413159167428704
+      ],
+      [
+        0.00265,
+        0.004944856147575319
+      ],
+      [
+        0.0,
+        -0.00023
+      ],
+      [
+        0.00265,
+        -0.0017548730869748905
+      ],
+      [
+        0.01032,
+        -0.004489184722045973
+      ],
+      [
+        0.02271,
+        -0.008129939857303736
+      ],
+      [
+        0.03978,
+        -0.012543212317941942
+      ],
+      [
+        0.06153,
+        -0.017561409531267624
+      ],
+      [
+        0.08788,
+        -0.021873429717671273
+      ],
+      [
+        0.11862,
+        -0.02490936371219002
+      ],
+      [
+        0.15346,
+        -0.02630302800118304
+      ],
+      [
+        0.19197,
+        -0.026150904275673965
+      ],
+      [
+        0.2337,
+        -0.024530220838633033
+      ],
+      [
+        0.27812,
+        -0.021341093912982556
+      ],
+      [
+        0.32472,
+        -0.017417923517527314
+      ],
+      [
+        0.37293,
+        -0.013882394300283077
+      ],
+      [
+        0.42222,
+        -0.011147348510488927
+      ],
+      [
+        0.47199,
+        -0.008926964546689195
+      ],
+      [
+        0.52167,
+        -0.007457354074650373
+      ],
+      [
+        0.57065,
+        -0.006971948605784262
+      ],
+      [
+        0.61835,
+        -0.007722071525567068
+      ],
+      [
+        0.66413,
+        -0.008860683736690723
+      ],
+      [
+        0.70829,
+        -0.009210378568291346
+      ],
+      [
+        0.75202,
+        -0.009126179002412332
+      ],
+      [
+        0.79532,
+        -0.0087521904454633
+      ],
+      [
+        0.83705,
+        -0.00764928901788951
+      ],
+      [
+        0.87604,
+        -0.005651654218620704
+      ],
+      [
+        0.91119,
+        -0.0030218322950539304
+      ],
+      [
+        0.94151,
+        -0.00039705512931921766
+      ],
+      [
+        0.96622,
+        0.0017334025930264233
+      ],
+      [
+        0.98465,
+        0.003155112980075242
+      ],
+      [
+        0.9961,
+        0.004035796987985822
+      ],
+      [
+        1.0,
+        0.004335767960112572
+      ]
+    ],
+    "header": "s1014_islas_e0\n",
+    "fitness": 8.7432,
+    "resultados": {
+      "4.0": {
+        "cl": 0.451675,
+        "cd": 0.05166,
+        "ld": 8.7432,
+        "cl_raw": 0.450806,
+        "cl_std": 0.0,
+        "cd_std": 0.0,
+        "n_samples": 28
+      }
+    }
+  },
+  "poblacion_resumen": [
+    {
+      "fitness": 8.7432,
+      "resultados": {
+        "4.0": {
+          "cl": 0.451675,
+          "cd": 0.05166,
+          "ld": 8.7432,
+          "cl_raw": 0.450806,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 7.7025,
+      "resultados": {
+        "4.0": {
+          "cl": 0.351816,
+          "cd": 0.045676,
+          "ld": 7.7025,
+          "cl_raw": 0.351154,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 7.4835,
+      "resultados": {
+        "4.0": {
+          "cl": 0.566641,
+          "cd": 0.075719,
+          "ld": 7.4835,
+          "cl_raw": 0.565689,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 7.4744,
+      "resultados": {
+        "4.0": {
+          "cl": 0.400692,
+          "cd": 0.053608,
+          "ld": 7.4744,
+          "cl_raw": 0.39972,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 7.3391,
+      "resultados": {
+        "4.0": {
+          "cl": 0.523203,
+          "cd": 0.07129,
+          "ld": 7.3391,
+          "cl_raw": 0.521967,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 6.7532,
+      "resultados": {
+        "4.0": {
+          "cl": 0.447617,
+          "cd": 0.066282,
+          "ld": 6.7532,
+          "cl_raw": 0.446801,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 5.4946,
+      "resultados": {
+        "4.0": {
+          "cl": 0.408789,
+          "cd": 0.074398,
+          "ld": 5.4946,
+          "cl_raw": 0.408139,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 5.4811,
+      "resultados": {
+        "4.0": {
+          "cl": 0.418017,
+          "cd": 0.076266,
+          "ld": 5.4811,
+          "cl_raw": 0.417233,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    }
+  ]
+}

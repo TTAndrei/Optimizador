@@ -247,7 +247,7 @@ class Mesh:
     def __init__(self, Lx, Ly, p0, v0x, v0y, dx, dy,
                  usar_wale=True, turb_model=None,
                  X_1d=None, Y_1d=None,
-                 core_v0x=None, core_v0y=None, core_box=None):
+                 v0x_ic=None, v0y_ic=None):
         """
         Parámetros
         ----------
@@ -260,16 +260,13 @@ class Mesh:
         X_1d, Y_1d    : arrays numpy (float64) con posiciones de nodos en x/y.
                          Si se proporcionan, la malla es de densidad variable.
                          Si None, se genera malla uniforme desde dx/dy.
-        core_v0x, core_v0y : si no son None, sobreescriben la IC uniforme en
-                         una caja rectangular interior (core_box), dejando el
-                         resto del dominio (y las fronteras) en v0x/v0y. Solo
-                         afecta la condición inicial instantánea t=0 — la
-                         física evoluciona libremente después; útil para
-                         pruebas (p.ej. un núcleo con velocidad distinta al
-                         freestream). None (default) = sin efecto.
-        core_box      : (x0, x1, y0, y1) físico de la caja interior. Si None
-                         y algún core_v0* está activo, usa el 60% central del
-                         dominio (20%-80% de Lx/Ly).
+        v0x_ic, v0y_ic : si no son None, sobreescriben v0x/v0y como condición
+                         inicial uniforme en TODA la malla (freestream y
+                         fronteras siguen gobernados por v0x/v0y; solo cambia
+                         el campo u/v en t=0). Feature de prueba, sin más
+                         utilidad que experimentar transitorios. None
+                         (default) = sin efecto, comportamiento idéntico al
+                         previo a añadir esto.
         """
         self.Lx = Lx
         self.Ly = Ly
@@ -377,20 +374,13 @@ class Mesh:
         self.v[:] = v0y
         self.p[:] = p0
 
-        # IC opcional: núcleo interior con velocidad distinta al freestream
-        # (feature de prueba, ver docstring de core_v0x/core_v0y/core_box).
-        if core_v0x is not None or core_v0y is not None:
-            if core_box is not None:
-                x0, x1, y0, y1 = core_box
-            else:
-                x0, x1 = self.Lx * 0.2, self.Lx * 0.8
-                y0, y1 = self.Ly * 0.2, self.Ly * 0.8
-            core_mask = ((self.XX >= x0) & (self.XX <= x1)
-                         & (self.YY >= y0) & (self.YY <= y1))
-            if core_v0x is not None:
-                self.u = cp.where(core_mask, cp.float32(core_v0x), self.u)
-            if core_v0y is not None:
-                self.v = cp.where(core_mask, cp.float32(core_v0y), self.v)
+        # IC opcional: velocidad inicial distinta a v0x/v0y, uniforme en TODA
+        # la malla (ver docstring de v0x_ic/v0y_ic). No afecta v0x/v0y, que
+        # siguen gobernando las fronteras/freestream.
+        if v0x_ic is not None:
+            self.u[:] = v0x_ic
+        if v0y_ic is not None:
+            self.v[:] = v0y_ic
 
         # Velocidad de referencia (para clamp en ghost-cell IBM)
         self._vel_ref = float(max(np.sqrt(v0x**2 + v0y**2), 1.0))
@@ -7186,12 +7176,11 @@ def main(
     p0=0,      # Pa
     v0x=5,     # m/s (freestream, también fija la condición inflow)
     v0y=0.0,   # m/s
-    # Núcleo interior con IC distinta al freestream (feature de prueba, sin
-    # utilidad más allá de experimentar transitorios; no afecta las fronteras).
-    # None (default) = sin efecto, comportamiento idéntico a antes de añadirlo.
-    v0x_core=None,
-    v0y_core=None,
-    core_box=None,  # (x0, x1, y0, y1) físico; None → 60% central del dominio
+    # IC uniforme distinta a v0x/v0y en TODA la malla (feature de prueba, sin
+    # utilidad más allá de experimentar transitorios; no afecta las fronteras,
+    # que siguen gobernadas por v0x/v0y). None (default) = sin efecto.
+    v0x_ic=None,
+    v0y_ic=None,
 
     # ================================================================
     # PROPIEDADES DEL FLUIDO
@@ -7495,7 +7484,7 @@ def main(
     # Crear malla con densidad variable
     mesh_gruesa = Mesh(Lx, Ly, p0, v0x, v0y, dx_min, dy_min if dy_min else dx_min,
                        usar_wale=usar_wale, turb_model=turb_model, X_1d=X_1d, Y_1d=Y_1d,
-                       core_v0x=v0x_core, core_v0y=v0y_core, core_box=core_box)
+                       v0x_ic=v0x_ic, v0y_ic=v0y_ic)
     mesh_gruesa._wale_Cw = float(wale_Cw)
     mesh_gruesa.ibm_wall_mode = ibm_wall_mode
     mesh_gruesa.ibm_sdf_source = ibm_sdf_source
@@ -8685,15 +8674,13 @@ if __name__ == "__main__":
         CFL=0.5,
         alpha_deg=5,
         polar_descarte=0.3,
-        iteraciones=6000,   # dx=0.001: estacionario en t≈6 conv ≈ 37k iters + ventana
+        iteraciones=10000,   # dx=0.001: estacionario en t≈6 conv ≈ 37k iters + ventana
         divergencia=0.02,
-        v0x_core=0,
-        v0y_core=0,
         v0x=1,
         v0y=0,
         rho=1.0,
         nu=1/100000,
-        filepath="profiles/NACA_0012_sharp",
+        filepath="profiles/AG24",
         chord=1.0,
         min_te_height_factor=1.0,
         dx_min=0.002,
@@ -8702,12 +8689,12 @@ if __name__ == "__main__":
         factor_expansion=1.1,
         graficos=True,
         save_frames=False,
-        frames_dir_grueso="",
+        frames_dir_grueso="prueba_inicialesdiferentes",
         turb_model="sa",
         wall_treatment="consistent",
         advection_scheme="maccormack",
         stop_on_convergence=False,
-        stop_on_clcd_convergence=True,
+        stop_on_clcd_convergence=False,
         live_view=True,
         mostrar_malla=True,
         mg_modo_turbo=False,

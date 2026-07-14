@@ -1,0 +1,15 @@
+{
+  "alpha": 4.0,
+  "dx_exploracion": 0.004,
+  "dx_refinado": 0.002,
+  "k": 3,
+  "filas_ordenadas_por_ref": [
+    {"id": "islands/AG24/epoch3", "ld_expl": 11.2081, "ld_ref": 13.043, "cl_ref": 1.074821, "cd_ref": 0.082406},
+    {"id": "islands/s1014/epoch3", "ld_expl": 11.4486, "ld_ref": 12.6128, "cl_ref": 1.058577, "cd_ref": 0.083929},
+    {"id": "islands/GM15/epoch3", "ld_expl": 11.3529, "ld_ref": 12.3315, "cl_ref": 1.030422, "cd_ref": 0.08356}
+  ],
+  "ganador_exploracion": "islands/s1014/epoch3",
+  "ganador_refinado": "islands/AG24/epoch3",
+  "cambio_ganador": true,
+  "veredicto": "Ganador exploracion=islands/s1014/epoch3 -> refinado=islands/AG24/epoch3. El refinado CAMBIA al ganador (dos niveles necesario)."
+}

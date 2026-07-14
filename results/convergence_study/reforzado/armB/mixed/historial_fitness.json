@@ -1,0 +1,16 @@
+[
+  {
+    "gen": 0,
+    "mejor": 9.2705,
+    "media": 4.398625,
+    "peor": 0.068,
+    "evaluados": 20,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 3,
+    "tiempo_seg": 10137.3,
+    "vs_base": 3.2523,
+    "descartados_geom_repro": 7,
+    "reparados_param_repro": 8,
+    "fallback_legacy_repro": 2
+  }
+]

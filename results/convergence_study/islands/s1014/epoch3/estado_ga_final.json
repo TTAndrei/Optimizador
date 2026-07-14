@@ -1,0 +1,427 @@
+{
+  "timestamp": "2026-07-09T18:52:23.757102",
+  "generacion_actual": 1,
+  "config": {
+    "archivo_base": "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/s1014/epoch2/s1014_winner.dat",
+    "archivo_memoria_ia": "cerebro_aerodinamico.pkl",
+    "archivo_datos_ml": "aprendizaje_ML.jsonl",
+    "directorio_resultados": "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/s1014/epoch3",
+    "poblacion_tamano": 8,
+    "generaciones": 2,
+    "elites": 2,
+    "torneo_tamano": 4,
+    "prob_mutacion": 0.85,
+    "n_bumps_min": 1,
+    "n_bumps_max": 4,
+    "sigma_bump_min": 0.03,
+    "sigma_bump_max": 0.15,
+    "amplitud_mutacion": 0.008,
+    "prob_mutar_trailing_edge": 0.3,
+    "amplitud_trailing_edge": 0.002,
+    "modo_mutacion": "parametrica",
+    "usar_legacy_fallback": true,
+    "max_intentos_geometria": 120,
+    "n_control_mutacion": 7,
+    "camber_mut_std": 0.0035,
+    "espesor_mut_std": 0.0045,
+    "te_camber_shift_std": 0.0015,
+    "te_espesor_shift_std": 0.0012,
+    "sigma_adaptativa": true,
+    "sigma_factor_inicial": 3.0,
+    "sigma_factor_final": 1.0,
+    "le_proteccion_x": 0.06,
+    "espesor_min_global": 0.0002,
+    "te_espesor_min_absoluto": 0.0003,
+    "te_espesor_rel_min": 0.65,
+    "te_espesor_rel_max": 3.5,
+    "te_validacion_tol": 1e-09,
+    "le_radio_factor_min": 0.4,
+    "le_radio_min_absoluto": 0.0002,
+    "le_puntos_preservar": 5,
+    "reportar_diagnostico_geometria": true,
+    "simulacion_iteraciones": 7000,
+    "v0x": 1,
+    "alpha_deg": 4.0,
+    "chord": 1.0,
+    "dx_min": 0.004,
+    "CFL": 0.5,
+    "rho": 1.0,
+    "nu": 1e-05,
+    "turb_model": "sa",
+    "wall_treatment": "consistent",
+    "advection_scheme": "maccormack",
+    "min_te_height_factor": 1.0,
+    "wake_refinement_mode": "long_fine_x",
+    "mg_niveles_max": 2,
+    "mg_max_outer": 8,
+    "divergencia": 0.02,
+    "stop_on_clcd_convergence": true,
+    "multi_angulo": false,
+    "delta_angulo": 1.0,
+    "fitness_modo": "mean",
+    "peso_angulo_base": 2.0,
+    "usar_ia": false,
+    "umbral_calidad": 0.7,
+    "suavizado_iteraciones": 2,
+    "archivos_base": [
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/s1014/epoch2/s1014_winner.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/NACA_0012_sharp/epoch3/NACA_0012_sharp_winner.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/AG24/epoch3/AG24_winner.dat",
+      "/home/ttandrei/Proyectos/Optimizador/Optimizador/results/convergence_study/islands/GM15/epoch3/GM15_winner.dat"
+    ],
+    "tiempo_limite_s": 2798.4247615456584,
+    "sim_extra_params": {
+      "Lx": 8,
+      "Ly": 5,
+      "cx": 2,
+      "ancho_zona_fina_x": 1.5,
+      "ancho_zona_fina_y": 1.0,
+      "factor_expansion": 1.1
+    }
+  },
+  "historial": [
+    {
+      "gen": 0,
+      "mejor": 11.1112,
+      "media": 10.8274375,
+      "peor": 10.3743,
+      "evaluados": 8,
+      "descartados_ia": 0,
+      "descartados_geom_eval": 0,
+      "tiempo_seg": 1387.9,
+      "vs_base": -0.009,
+      "descartados_geom_repro": 0,
+      "reparados_param_repro": 0,
+      "fallback_legacy_repro": 0
+    },
+    {
+      "gen": 1,
+      "mejor": 11.4486,
+      "media": 10.8219,
+      "peor": 10.2907,
+      "evaluados": 8,
+      "descartados_ia": 0,
+      "descartados_geom_eval": 0,
+      "tiempo_seg": 1083.0,
+      "vs_base": 0.3284,
+      "descartados_geom_repro": 0,
+      "reparados_param_repro": 0,
+      "fallback_legacy_repro": 0
+    }
+  ],
+  "mejor_global": {
+    "genes": [
+      [
+        1.0,
+        -0.016214934850384718
+      ],
+      [
+        0.9961,
+        -0.014820727950617233
+      ],
+      [
+        0.98465,
+        -0.01072747948847939
+      ],
+      [
+        0.96622,
+        -0.004143385814369252
+      ],
+      [
+        0.94151,
+        0.004445224562568797
+      ],
+      [
+        0.91119,
+        0.014657281861771116
+      ],
+      [
+        0.87604,
+        0.025872539548949778
+      ],
+      [
+        0.83705,
+        0.03715077227549001
+      ],
+      [
+        0.79532,
+        0.04723759750915095
+      ],
+      [
+        0.75202,
+        0.05568119555319598
+      ],
+      [
+        0.70829,
+        0.06270279888579476
+      ],
+      [
+        0.66413,
+        0.06825418106623504
+      ],
+      [
+        0.61835,
+        0.07230924029837049
+      ],
+      [
+        0.57065,
+        0.07522302295657789
+      ],
+      [
+        0.52167,
+        0.07645802145121358
+      ],
+      [
+        0.47199,
+        0.07561237923854149
+      ],
+      [
+        0.42222,
+        0.07337125039854511
+      ],
+      [
+        0.37293,
+        0.07121872776694645
+      ],
+      [
+        0.32472,
+        0.06973965957757586
+      ],
+      [
+        0.27812,
+        0.06846655445331117
+      ],
+      [
+        0.2337,
+        0.06598719636112159
+      ],
+      [
+        0.19197,
+        0.06101784559241383
+      ],
+      [
+        0.15346,
+        0.0541013736306425
+      ],
+      [
+        0.11862,
+        0.04564541109457746
+      ],
+      [
+        0.08788,
+        0.036234352234143036
+      ],
+      [
+        0.06153,
+        0.026731005647101548
+      ],
+      [
+        0.03978,
+        0.017781925535750885
+      ],
+      [
+        0.02271,
+        0.01033184231141209
+      ],
+      [
+        0.01032,
+        0.004728759174825963
+      ],
+      [
+        0.00265,
+        0.0011388406663331355
+      ],
+      [
+        0.0,
+        -0.000191
+      ],
+      [
+        0.00265,
+        -0.0005070849257595554
+      ],
+      [
+        0.01032,
+        -0.0012474712283105048
+      ],
+      [
+        0.02271,
+        -0.0023153213838050728
+      ],
+      [
+        0.03978,
+        -0.003634017305137836
+      ],
+      [
+        0.06153,
+        -0.005005151361901947
+      ],
+      [
+        0.08788,
+        -0.005853237323904533
+      ],
+      [
+        0.11862,
+        -0.005847090685340697
+      ],
+      [
+        0.15346,
+        -0.004628038742849432
+      ],
+      [
+        0.19197,
+        -0.002180956319079234
+      ],
+      [
+        0.2337,
+        0.0013120009052697522
+      ],
+      [
+        0.27812,
+        0.005671054447499249
+      ],
+      [
+        0.32472,
+        0.010705413301757477
+      ],
+      [
+        0.37293,
+        0.01672796074480329
+      ],
+      [
+        0.42222,
+        0.023548215579958173
+      ],
+      [
+        0.47199,
+        0.029944034070249387
+      ],
+      [
+        0.52167,
+        0.03327195288541188
+      ],
+      [
+        0.57065,
+        0.032632536455897865
+      ],
+      [
+        0.61835,
+        0.029277887425502115
+      ],
+      [
+        0.66413,
+        0.02604441475307641
+      ],
+      [
+        0.70829,
+        0.02513577042148198
+      ],
+      [
+        0.75202,
+        0.025096975806899548
+      ],
+      [
+        0.79532,
+        0.023903519156655433
+      ],
+      [
+        0.83705,
+        0.01958381992544494
+      ],
+      [
+        0.87604,
+        0.011781316627695205
+      ],
+      [
+        0.91119,
+        0.0028151773084295322
+      ],
+      [
+        0.94151,
+        -0.005584371932234842
+      ],
+      [
+        0.96622,
+        -0.012645883526988484
+      ],
+      [
+        0.98465,
+        -0.018038859375424175
+      ],
+      [
+        0.9961,
+        -0.021391298069113693
+      ],
+      [
+        1.0,
+        -0.022533176750807075
+      ]
+    ],
+    "header": "s1014_islas_e2\n",
+    "fitness": 11.4486,
+    "resultados": {
+      "4.0": {
+        "cl": 0.988379,
+        "cd": 0.086332,
+        "ld": 11.4486,
+        "cl_raw": 0.987029,
+        "cl_std": 0.0,
+        "cd_std": 0.0,
+        "n_samples": 28
+      }
+    }
+  },
+  "poblacion_resumen": [
+    {
+      "fitness": 11.4486,
+      "resultados": {
+        "4.0": {
+          "cl": 0.988379,
+          "cd": 0.086332,
+          "ld": 11.4486,
+          "cl_raw": 0.987029,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 11.1112,
+      "resultados": {
+        "4.0": {
+          "cl": 0.955336,
+          "cd": 0.08598,
+          "ld": 11.1112,
+          "cl_raw": 0.953941,
+          "cl_std": 0.0,
+          "cd_std": 0.0,
+          "n_samples": 28
+        }
+      }
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    },
+    {
+      "fitness": 0.0,
+      "resultados": {}
+    }
+  ]
+}

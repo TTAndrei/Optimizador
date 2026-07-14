@@ -24,7 +24,7 @@ ROOT_DIR = SCRIPT_DIR.parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from sim_defaults import preferred_cl_column, preferred_cd_column
+from sim_defaults import preferred_cd_column
 
 SCRIPT_ALPHA = SCRIPT_DIR / "script_barrido_alpha.py"
 COMP_DIR = ROOT_DIR / "data" / "ComparativasReales"
@@ -45,17 +45,21 @@ def re_label(reynolds: int) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Barridos alpha outer_sum vs XFoil.")
-    parser.add_argument("--alphas", default="-10:10:1")
+    parser.add_argument("--alphas", default="0:10:1")
     parser.add_argument("--force", action="store_true", help="recalcula los barridos existentes")
-    parser.add_argument("--iteraciones", type=int, default=2000)
+    parser.add_argument("--iteraciones", type=int, default=6000)
     parser.add_argument("--guardado", type=int, default=50)
-    parser.add_argument("--dx-min", type=float, default=0.001)
+    parser.add_argument("--dx-min", type=float, default=0.002)
+    parser.add_argument("--smoke", action="store_true",
+                         help="smoke test: 1 perfil, 1 Re, 3 alphas, pocas iteraciones, mesh gruesa")
     return parser.parse_args()
 
 
 def run_one(profile: dict[str, str], reynolds: int, args: argparse.Namespace) -> Path:
     label = re_label(reynolds)
     suffix = f"{profile['name'].lower()}_{label.lower()}_outer_sum"
+    if args.smoke:
+        suffix += "_smoke"
     barrido_dir = BARRIDOS_ROOT / f"barrido_alpha_{suffix}"
     summary_csv = barrido_dir / "summary.csv"
 
@@ -94,13 +98,14 @@ def run_one(profile: dict[str, str], reynolds: int, args: argparse.Namespace) ->
 def load_simulated(barrido_dir: Path) -> pd.DataFrame:
     path = barrido_dir / "summary.csv"
     df = pd.read_csv(path)
-    cl_col = preferred_cl_column(set(df.columns))
-    cd_col = preferred_cd_column(set(df.columns), prefer_bl=True)
+    cd_col = preferred_cd_column(set(df.columns), prefer_bl=False)
     df = df.copy()
-    df["Cl_eval"] = df[cl_col]
+    df["Cl_eval"] = df["Cl_final"]
+    df["Cl_cp_eval"] = df["cl_cp_at_convergence"] if "cl_cp_at_convergence" in df.columns else np.nan
     df["Cd_eval"] = df[cd_col]
     df["Ef_eval"] = df["Cl_eval"] / df["Cd_eval"].replace(0, np.nan)
-    df.attrs["cl_column"] = cl_col
+    df.attrs["cl_column"] = "Cl_final"
+    df.attrs["cl_cp_column"] = "cl_cp_at_convergence"
     df.attrs["cd_column"] = cd_col
     return df
 
@@ -149,8 +154,9 @@ def interpolate_xfoil(xfoil_df: pd.DataFrame, sim_alphas: np.ndarray, col: str) 
 
 
 COEFS = [
-    ("Cd", "Cd_eval", "Cd", "Coeficiente de resistencia Cd"),
-    ("Cl", "Cl_eval", "Cl", "Coeficiente de sustentacion Cl"),
+    ("Cd", "Cd_eval", "Cd", "Coeficiente de resistencia Cd (final)"),
+    ("Cl", "Cl_eval", "Cl", "Coeficiente de sustentacion Cl (simulado)"),
+    ("Cl_cp", "Cl_cp_eval", "Cl", "Coeficiente de sustentacion Cl (integral Cp)"),
     ("Ef", "Ef_eval", "Ef", "Eficiencia Cl/Cd"),
 ]
 
@@ -229,6 +235,7 @@ def plot_comparison(
         f.write(
             f"{profile_name} Re={label}\n"
             f"Cl simulado: {sim_df.attrs.get('cl_column')}\n"
+            f"Cl_cp: {sim_df.attrs.get('cl_cp_column')}\n"
             f"Cd simulado: {sim_df.attrs.get('cd_column')}\n"
             f"{'=' * 60}\n"
             + "\n".join(stats_lines)
@@ -239,13 +246,25 @@ def plot_comparison(
 
 def main() -> int:
     args = parse_args()
-    OUT_ROOT.mkdir(parents=True, exist_ok=True)
+    profiles = PROFILES
+    reynolds_list = REYNOLDS_LIST
+    out_root = OUT_ROOT
+    if args.smoke:
+        profiles = PROFILES[:1]
+        reynolds_list = REYNOLDS_LIST[:1]
+        args.alphas = "0:10:5"
+        args.iteraciones = 50
+        args.guardado = 10
+        args.dx_min = 0.01
+        args.force = True
+        out_root = ROOT_DIR / "results" / "comparativas" / "smoke_test"
+    out_root.mkdir(parents=True, exist_ok=True)
     all_stats: list[dict[str, Any]] = []
 
-    for profile in PROFILES:
-        for reynolds in REYNOLDS_LIST:
+    for profile in profiles:
+        for reynolds in reynolds_list:
             barrido_dir = run_one(profile, reynolds, args)
-            out_dir = OUT_ROOT / f"{profile['name']}_{re_label(reynolds)}"
+            out_dir = out_root / f"{profile['name']}_{re_label(reynolds)}"
             print(f"  Comparando {profile['name']} Re={re_label(reynolds)} ...")
             sim_df = load_simulated(barrido_dir)
             xfoil_df = load_xfoil(profile["name"], reynolds)
@@ -253,7 +272,7 @@ def main() -> int:
 
     if all_stats:
         summary_df = pd.DataFrame(all_stats)
-        summary_path = OUT_ROOT / "resumen_estadisticas.csv"
+        summary_path = out_root / "resumen_estadisticas.csv"
         summary_df.to_csv(summary_path, index=False, float_format="%.6f")
         print(f"\nResumen global: {summary_path.relative_to(ROOT_DIR)}")
 
@@ -268,7 +287,7 @@ def main() -> int:
             )
         print("=" * 80)
 
-    print(f"\nFinalizado. Resultados en: {OUT_ROOT.relative_to(ROOT_DIR)}")
+    print(f"\nFinalizado. Resultados en: {out_root.relative_to(ROOT_DIR)}")
     return 0
 
 

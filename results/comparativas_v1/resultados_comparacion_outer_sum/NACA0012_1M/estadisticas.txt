@@ -1,0 +1,7 @@
+NACA0012 Re=1M
+Cl simulado: Cl_from_Cp_force_consistent
+Cd simulado: Cd_final
+============================================================
+Cd  MAE=0.08319 RMSE=0.09045 R2=-798.8668 rel=875.4% max=0.15121
+Cl  MAE=0.06577 RMSE=0.07591 R2=0.9874 rel=16.6% max=0.12577
+Ef  MAE=50.72221 RMSE=54.29141 R2=0.2103 rel=89.1% max=67.20979
