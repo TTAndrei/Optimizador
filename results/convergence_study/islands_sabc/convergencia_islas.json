@@ -1,0 +1,91 @@
+{
+  "condiciones": {
+    "alpha_deg": 4.0,
+    "Re": 100000.0,
+    "CFL": 0.5
+  },
+  "config": {
+    "n_epocas": 4,
+    "migrate_every": 2,
+    "pop": 6,
+    "dx": 0.004
+  },
+  "historia": [
+    {
+      "epoca": 0,
+      "islas": [
+        "NACA_0012_sharp",
+        "AG24",
+        "GM15",
+        "s1014"
+      ],
+      "ld": {
+        "NACA_0012_sharp": 9.8119,
+        "AG24": 13.4542,
+        "GM15": 14.6108,
+        "s1014": 8.4552
+      },
+      "ld_spread": 6.1556,
+      "shape_dist_media": 0.05288774778672928,
+      "shape_dist_max": 0.09077968193467503
+    },
+    {
+      "epoca": 1,
+      "islas": [
+        "NACA_0012_sharp",
+        "AG24",
+        "GM15",
+        "s1014"
+      ],
+      "ld": {
+        "NACA_0012_sharp": 12.4971,
+        "AG24": 14.4847,
+        "GM15": 15.0555,
+        "s1014": 12.8118
+      },
+      "ld_spread": 2.5584000000000007,
+      "shape_dist_media": 0.015459959393888972,
+      "shape_dist_max": 0.026562104879912025
+    },
+    {
+      "epoca": 2,
+      "islas": [
+        "NACA_0012_sharp",
+        "AG24",
+        "GM15",
+        "s1014"
+      ],
+      "ld": {
+        "NACA_0012_sharp": 16.0612,
+        "AG24": 15.0443,
+        "GM15": 16.0503,
+        "s1014": 15.7512
+      },
+      "ld_spread": 1.0168999999999997,
+      "shape_dist_media": 0.0027587504098778182,
+      "shape_dist_max": 0.004173329724807875
+    },
+    {
+      "epoca": 3,
+      "islas": [
+        "NACA_0012_sharp",
+        "AG24",
+        "GM15",
+        "s1014"
+      ],
+      "ld": {
+        "NACA_0012_sharp": 15.622,
+        "AG24": 14.5341,
+        "GM15": 16.0013,
+        "s1014": 15.9389
+      },
+      "ld_spread": 1.4672,
+      "shape_dist_media": 0.0027928837208062566,
+      "shape_dist_max": 0.004451613847666447
+    }
+  ],
+  "veredicto": [
+    "Distancia de forma media: 0.0529 (época 0) -> 0.0028 (época 3). CONVERGE (migración acerca las islas).",
+    "Spread L/D: 6.16 -> 1.47."
+  ]
+}

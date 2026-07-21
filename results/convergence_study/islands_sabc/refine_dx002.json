@@ -1,0 +1,33 @@
+{
+  "alpha": 4.0,
+  "dx_exploracion": 0.004,
+  "dx_refinado": 0.002,
+  "k": 3,
+  "filas_ordenadas_por_ref": [
+    {
+      "id": "GM15/epoch3",
+      "ld_expl": 16.0013,
+      "ld_ref": 19.1123,
+      "cl_ref": 0.762483,
+      "cd_ref": 0.039895
+    },
+    {
+      "id": "GM15/epoch2",
+      "ld_expl": 16.0503,
+      "ld_ref": 12.0806,
+      "cl_ref": 0.647851,
+      "cd_ref": 0.053627
+    },
+    {
+      "id": "NACA_0012_sharp/epoch2",
+      "ld_expl": 16.0612,
+      "ld_ref": 11.9498,
+      "cl_ref": 0.613278,
+      "cd_ref": 0.051321
+    }
+  ],
+  "ganador_exploracion": "NACA_0012_sharp/epoch2",
+  "ganador_refinado": "GM15/epoch3",
+  "cambio_ganador": true,
+  "veredicto": "Ganador exploración=NACA_0012_sharp/epoch2 -> refinado=GM15/epoch3. El refinado CAMBIA al ganador (dos niveles necesario)."
+}

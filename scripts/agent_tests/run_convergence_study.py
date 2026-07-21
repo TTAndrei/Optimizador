@@ -65,6 +65,14 @@ SEEDS_ALL = [
     "profiles/s1014.dat",
 ]
 
+# Semillas nuevas (airfoiltools.com, low-Re aptas para Re=1e5)
+SEEDS_NUEVAS = [
+    "profiles/SD7037.dat",
+    "profiles/E387.dat",
+    "profiles/SG6043.dat",
+    "profiles/MH32.dat",
+]
+
 
 def iters_for(cfl, dx, t_target=T_TARGET):
     n = t_target * U_FAC / (cfl * dx)
@@ -324,6 +332,45 @@ def ejecutar_aislado(cal, deadline_total_s, t_start, pop=12, gen_max=30,
     return out
 
 
+def ejecutar_mixto(cal, deadline_total_s, t_start, seeds, pop, gen_max,
+                   paciencia, tag):
+    """GA único de población MIXTA (estilo Arm B) con parada por estancamiento.
+
+    Dos estudios previstos (lanzador scripts/agent_tests/mixto.sh):
+      - masgen:      las 4 semillas de siempre, MÁS generaciones.
+      - masperfiles: 8 semillas (4 + airfoiltools), MENOS generaciones.
+    Pausable con Ctrl+C y reanudable relanzando (checkpoint estado_ga.json).
+    Salida en mixto_<tag>/.
+    """
+    dir_out = os.path.join(OUT_DIR, f"mixto_{tag}")
+    use_dx, iters = cal["use_dx"], cal["iters"]
+    cfg = dict(dx_min=use_dx, simulacion_iteraciones=iters, CFL=CFL,
+               poblacion_tamano=pop, generaciones=gen_max,
+               elites=max(2, pop // 4), sigma_adaptativa=True,
+               sigma_factor_inicial=3.0, sigma_factor_final=1.0,
+               parada_estancamiento=True, paciencia_generaciones=paciencia,
+               tol_mejora_fitness=0.05,
+               archivo_base=seeds[0], archivos_base=seeds,
+               archivo_original=os.path.join(ROOT, seeds[0]))
+    remaining = deadline_total_s - (time.time() - t_start)
+    _run_ga(f"mixto/{tag}", dir_out, cfg, remaining * 0.95)
+
+    g = _cargar_ganador(dir_out)
+    out = {"condiciones": {"alpha_deg": ALPHA, "Re": 1e5, "CFL": CFL},
+           "config": {"tag": tag, "seeds": seeds, "pop": pop,
+                      "gen_max": gen_max, "paciencia": paciencia, "dx": use_dx}}
+    if g is not None:
+        out["ganador"] = {"ld": g["fitness"], "cl": g["cl"], "cd": g["cd"],
+                          "gens_completadas": len(g.get("historial", []))}
+        out["historial"] = g.get("historial", [])
+    with open(os.path.join(dir_out, "resumen_mixto.json"), "w",
+              encoding="utf-8") as f:
+        json.dump(out, f, indent=2, ensure_ascii=False)
+    _log(f"  Mixto {tag}: " + (f"L/D={g['fitness']:.2f} en "
+         f"{len(g.get('historial', []))} gens" if g else "sin ganador aún"))
+    return out
+
+
 def ejecutar_islas(cal, deadline_total_s, t_start,
                    n_epocas=4, migrate_every=2, pop=8):
     """S2 — Modelo de islas con migración.
@@ -421,6 +468,7 @@ def _veredicto_islas(hist):
 
 
 REFINE_JSON = os.path.join(ISLAS_DIR, "refine_dx002.json")
+REFINE_SCOPE = OUT_DIR  # raíz del glob de candidatos (se acota con --run-tag)
 
 
 def refinar_top_k(cal, k=3, dx_ref=0.002, deadline_s=None, t_start=None):
@@ -433,13 +481,13 @@ def refinar_top_k(cal, k=3, dx_ref=0.002, deadline_s=None, t_start=None):
     """
     # Recoger candidatos: cualquier estado_ga_final.json bajo el estudio.
     dirs = sorted(set(os.path.dirname(p) for p in glob.glob(
-        os.path.join(OUT_DIR, "**", "estado_ga_final.json"), recursive=True)))
+        os.path.join(REFINE_SCOPE, "**", "estado_ga_final.json"), recursive=True)))
     cands = []
     for d in dirs:
         g = _cargar_ganador(d)
         if g is None or g.get("fitness") is None:
             continue
-        rel = os.path.relpath(d, OUT_DIR)
+        rel = os.path.relpath(d, REFINE_SCOPE)
         cands.append({"id": rel, "genes": g["genes"],
                       "ld_expl": float(g["fitness"]), "header": g["nombre"]})
     if not cands:
@@ -749,7 +797,33 @@ def main():
     ap.add_argument("--aislado-pop", type=int, default=12)
     ap.add_argument("--aislado-gen-max", type=int, default=30)
     ap.add_argument("--aislado-paciencia", type=int, default=6)
+    ap.add_argument("--mixto", default="",
+                    help="GA población mixta con parada por estancamiento; valor=tag de salida (mixto_<tag>/)")
+    ap.add_argument("--mixto-seeds", default="4",
+                    help="'4' (semillas clásicas), '8' (4+airfoiltools) o lista de paths separados por coma")
+    ap.add_argument("--mixto-pop", type=int, default=16)
+    ap.add_argument("--mixto-gen-max", type=int, default=40)
+    ap.add_argument("--mixto-paciencia", type=int, default=8)
+    ap.add_argument("--run-tag", default="",
+                    help="sufijo de directorio (islands_<tag>) para no pisar corridas previas")
+    ap.add_argument("--transition-model", default="none", choices=["none", "sa_bc"])
+    ap.add_argument("--freestream-tu", type=float, default=0.1)
     args = ap.parse_args()
+
+    global ISLAS_DIR, REFINE_JSON, REFINE_SCOPE
+    if args.run_tag:
+        ISLAS_DIR = os.path.join(OUT_DIR, f"islands_{args.run_tag}")
+        REFINE_JSON = os.path.join(ISLAS_DIR, "refine_dx002.json")
+        REFINE_SCOPE = ISLAS_DIR
+    if args.transition_model != "none":
+        # Inyección única: sim_extra_params fluye a Simulador2D.main() en TODAS
+        # las evaluaciones (GA, calibración y refinado).
+        RunGA.CONFIG["sim_extra_params"] = {
+            **RunGA.CONFIG["sim_extra_params"],
+            "transition_model": args.transition_model,
+            "freestream_Tu": args.freestream_tu,
+        }
+        _log(f"Transición activa: {args.transition_model} (Tu={args.freestream_tu}%)")
 
     t_start = time.time()
     deadline_total_s = args.deadline_hours * 3600.0
@@ -769,6 +843,19 @@ def main():
         _log("ABORTADO: el solver no reproduce Cl físico (NACA α=5 dx=0.002 fuera de "
              f"[0.30,0.60]: cl={cal.get('cl_ref_naca_a5_dx002')}). Revisar config antes "
              "de gastar presupuesto.")
+        return
+
+    if args.mixto:
+        if args.mixto_seeds == "4":
+            seeds = SEEDS_ALL
+        elif args.mixto_seeds == "8":
+            seeds = SEEDS_ALL + SEEDS_NUEVAS
+        else:
+            seeds = [s.strip() for s in args.mixto_seeds.split(",") if s.strip()]
+        ejecutar_mixto(cal, deadline_total_s, t_start, seeds,
+                       pop=args.mixto_pop, gen_max=args.mixto_gen_max,
+                       paciencia=args.mixto_paciencia, tag=args.mixto)
+        _log(f"FIN mixto. Tiempo total: {(time.time()-t_start)/60:.1f} min")
         return
 
     if args.aislado:
