@@ -7096,30 +7096,39 @@ def _guardar_punto_polar(polar_data, mesh, mu, rho, U_inf, chord,
     })
 
 
-def _detect_series_convergence(serie, t_fisico, tol_abs=0.005, tol_rel=0.02, window_conv_time=0.5):
+def _detect_series_convergence(t_arr, serie, tol_drift=0.005, tol_noise=0.05,
+                               window_conv_time=1.0):
     """
-    Convergencia = último instante en que la media móvil (ventana ~window_conv_time
-    tiempos convectivos) se sale de la banda ±tol alrededor de la media del último
-    15% de la serie. Misma métrica que scripts/agent_tests/run_cfl_sweep.py.
-    Devuelve (t_conv, converged).
+    ¿Ha dejado de cambiar la serie? Mide la *tendencia* en una ventana móvil.
+
+    El criterio anterior comparaba la señal con la media de su propio último 15%:
+    preguntaba "¿me parezco a mí mismo hace poco?", no "¿he dejado de cambiar?".
+    Una deriva lenta y monótona lo satisface siempre, y por eso paraba en t≈1-2
+    midiendo flujo no desarrollado, con errores de hasta el 47%. Recalibrar sus
+    tolerancias tampoco bastó (ver docs/verificacion_numerica.md §2.1).
+
+      drift = |pendiente| / |media|   cambio relativo por tiempo convectivo
+      noise = std / |media|           dispersión dentro de la ventana
+
+    Ajustado por validación cruzada sobre 20 series completas y verificado sobre 5
+    que no intervinieron en ninguna decisión: error máximo 1.14%.
+
+    Devuelve (drift, converged).
     """
+    t = np.asarray(t_arr, dtype=float)
     s = np.asarray(serie, dtype=float)
-    n = len(s)
-    if n < 10 or t_fisico <= 0 or not np.all(np.isfinite(s)):
+    if len(s) < 10 or not np.all(np.isfinite(s)) or not np.all(np.isfinite(t)):
         return float("nan"), False
-    ref = float(np.mean(s[-max(1, n * 15 // 100):]))
-    tol = max(tol_abs, tol_rel * abs(ref))
-    w = max(3, int(n / t_fisico * window_conv_time))
-    w = min(w, n // 3)
-    if w < 1:
+    w = t >= (t[-1] - window_conv_time)
+    if w.sum() < 8:
         return float("nan"), False
-    kernel = np.ones(w) / w
-    sm = np.convolve(s, kernel, mode="valid")
-    bad = np.where(np.abs(sm - ref) > tol)[0]
-    idx = int(bad[-1] + w) if bad.size else 0
-    converged = idx <= 0.9 * n
-    t_conv = t_fisico * idx / n
-    return float(t_conv), bool(converged)
+    tw, sw = t[w], s[w]
+    media = float(np.mean(sw))
+    if abs(media) < 1e-9:
+        return float("nan"), False
+    drift = abs(float(np.polyfit(tw, sw, 1)[0])) / abs(media)
+    noise = float(np.std(sw)) / abs(media)
+    return drift, bool(drift < tol_drift and noise < tol_noise)
 
 
 def main(
@@ -7266,16 +7275,20 @@ def main(
     # tol_u/tol_v/tol_p (hardcoded más abajo). Genérico, no mira Cl/Cd.
     stop_on_convergence=True,
 
-    # Early-stop por banda de Cl/Cd (independiente del criterio de campo de
-    # arriba, compara cada serie contra su propio histórico — NO contra Cl_cp).
+    # Early-stop por meseta de L/D: para cuando la serie deja de tener tendencia.
     # Pensado para el optimizador: corta runs "fáciles" (α bajo) mucho antes de
-    # completar el presupuesto de iteraciones.
+    # completar el presupuesto de iteraciones. Valores de la validación cruzada
+    # sobre 20 series (results/verificacion_numerica/criterio_parada.json).
     stop_on_clcd_convergence=True,
-    clcd_check_every=100,               # iteraciones entre chequeos
-    clcd_min_t_fisico_before_check=1.0,  # tiempos convectivos mínimos antes de chequear
-    clcd_tol_abs=0.005,
-    clcd_tol_rel=0.02,
-    clcd_window_conv_time=0.5,           # ventana de la media móvil, en tiempos convectivos
+    clcd_check_every=100,                # iteraciones entre chequeos (2 muestras a guardado=50)
+    # min_t=5.0 no es un umbral cualquiera: por debajo de t≈5 la burbuja laminar
+    # aún no ha reatacado y aparecen mesetas falsas. Sin él dos series de la
+    # validación paraban en t≈4.2 con errores de +10.6% y +19.6%.
+    clcd_min_t_fisico_before_check=5.0,  # tiempos convectivos mínimos antes de chequear
+    clcd_tol_drift=0.005,                # deriva relativa de L/D por tiempo convectivo
+    clcd_tol_noise=0.05,                 # dispersión relativa dentro de la ventana
+    clcd_n_sostenido=1,                  # chequeos consecutivos que deben cumplirse
+    clcd_window_conv_time=1.0,           # ventana, en tiempos convectivos
     # Flag secundario (no decide convergencia): |Cl_sim - Cl_cp| > tol implica
     # posible separación/inestabilidad residual (ver α=10 en results/cfl_sweep).
     clcd_discrepancy_tol=0.05,
@@ -7620,6 +7633,15 @@ def main(
         iteraciones += guardado - (iteraciones % guardado)
     # Inicializar vectores de resultados para ambas mallas
     mesh_gruesa.guardado = guardado
+    # Eje de tiempo físico de las series (dt es adaptativo, no se puede reconstruir
+    # a posteriori a partir del índice de iteración).
+    mesh_gruesa.tvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
+    # Cambios relativos de campo (u, v, p) en cada muestra. Un criterio de parada que
+    # solo mire Cl/Cd no distingue una serie estancada de una convergida; el residual
+    # sí, y ya se calcula. Se guardan las tres componentes y no su máximo porque
+    # change_v se normaliza por la norma de v, que es pequeña, y domina el máximo
+    # sistemáticamente sin que eso signifique nada.
+    mesh_gruesa.resvector = cp.full((iteraciones // guardado, 3), cp.nan, dtype=cp.float32)
     mesh_gruesa.cdvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.clvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
     mesh_gruesa.divvector = cp.zeros(iteraciones // guardado, dtype=cp.float32)
@@ -7781,6 +7803,8 @@ def main(
         if total_plan > iteraciones:
             iteraciones = total_plan
             # Redimensionar vectores
+            mesh_gruesa.tvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
+            mesh_gruesa.resvector = cp.full((iteraciones // guardado + 1, 3), cp.nan, dtype=cp.float32)
             mesh_gruesa.cdvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.clvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
             mesh_gruesa.divvector = cp.zeros(iteraciones // guardado + 1, dtype=cp.float32)
@@ -7843,6 +7867,14 @@ def main(
     v_prev = None
     p_prev = None
 
+    # Último residual de campo conocido. Se refresca cada check_convergence_every,
+    # que es más a menudo que `guardado`, así que la muestra siempre lleva un valor
+    # reciente. NaN hasta el primer chequeo.
+    residual_campo = (float("nan"),) * 3
+
+    # Chequeos consecutivos de meseta de L/D ya superados (criterio n_sostenido).
+    _clcd_seguidos = 0
+
     # Estado del criterio de convergencia Cl/Cd + flag de discrepancia Cl_sim vs Cl_cp
     # (siempre presentes en mesh_gruesa aunque el early-stop esté desactivado)
     mesh_gruesa.converged_clcd = False
@@ -7850,6 +7882,7 @@ def main(
     mesh_gruesa.cl_cp_at_convergence = float("nan")
     mesh_gruesa.cl_cp_discrepancy = float("nan")
     mesh_gruesa.cl_cp_discrepancy_flag = False
+    mesh_gruesa.n_muestras_validas = None  # se fija al salir por early-stop
     converged_to_steady = False
 
     # ============================================================
@@ -8287,6 +8320,8 @@ def main(
                     print(f"   Cd={cd_val}, Cl={cl_val}")
                     raise RuntimeError(f"Simulación abortada: NaN en Cd/Cl en iteración {it}")
 
+                mesh_gruesa.tvector[it // guardado] = tiempo_fisico_acumulado
+                mesh_gruesa.resvector[it // guardado] = cp.asarray(residual_campo, dtype=cp.float32)
                 mesh_gruesa.cdvector[it // guardado] = cd_val
                 mesh_gruesa.clvector[it // guardado] = cl_val
                 try:
@@ -8326,13 +8361,18 @@ def main(
                         and it % clcd_check_every == 0
                         and tiempo_fisico_acumulado >= clcd_min_t_fisico_before_check):
                     _n_samples = it // guardado + 1
+                    _t_arr = cp.asnumpy(mesh_gruesa.tvector[:_n_samples]).astype(float)
                     _cl_arr = cp.asnumpy(mesh_gruesa.clvector[:_n_samples]).astype(float)
                     _cd_arr = cp.asnumpy(mesh_gruesa.cdvector[:_n_samples]).astype(float)
-                    _, _conv_cl = _detect_series_convergence(
-                        _cl_arr, tiempo_fisico_acumulado, clcd_tol_abs, clcd_tol_rel, clcd_window_conv_time)
-                    _, _conv_cd = _detect_series_convergence(
-                        _cd_arr, tiempo_fisico_acumulado, clcd_tol_abs, clcd_tol_rel, clcd_window_conv_time)
-                    if _conv_cl and _conv_cd:
+                    # Sobre L/D, que es la magnitud que optimiza el GA y sobre la que
+                    # se validó el criterio. Cl y Cd por separado pueden derivar a la
+                    # vez sin que su cociente lo haga.
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        _ld_arr = np.where(np.abs(_cd_arr) > 1e-9, _cl_arr / _cd_arr, np.nan)
+                    _drift, _conv = _detect_series_convergence(
+                        _t_arr, _ld_arr, clcd_tol_drift, clcd_tol_noise, clcd_window_conv_time)
+                    _clcd_seguidos = _clcd_seguidos + 1 if _conv else 0
+                    if _clcd_seguidos >= clcd_n_sostenido:
                         _cpd = mesh_gruesa.compute_cp_diagnostics(mu, rho, verbose=False) or {}
                         _cl_cp_val = _cpd.get("cl_cp", float("nan"))
                         _discrepancy = abs(cl_val - _cl_cp_val) if np.isfinite(_cl_cp_val) else float("nan")
@@ -8344,7 +8384,7 @@ def main(
                             np.isfinite(_discrepancy) and _discrepancy > clcd_discrepancy_tol)
 
                         print(f"\n{'='*70}")
-                        print(f"[OK] Cl/Cd CONVERGIDOS (banda ±max({clcd_tol_abs},{clcd_tol_rel*100:.0f}%)) en iteracion {it}")
+                        print(f"[OK] L/D EN MESETA (drift={_drift:.2e} < {clcd_tol_drift}) en iteracion {it}")
                         print(f"{'='*70}")
                         print(f"  Tiempo simulado: {tiempo_fisico_acumulado:.4f} s")
                         print(f"  Cl_simulado={cl_val:+.4f}  Cl_cp={_cl_cp_val:+.4f}  |Cl_sim-Cl_cp|={_discrepancy:.4f}"
@@ -8352,14 +8392,10 @@ def main(
                                  if mesh_gruesa.cl_cp_discrepancy_flag else ""))
                         print(f"{'='*70}\n")
 
-                        _last_idx = it // guardado
-                        if _last_idx < len(mesh_gruesa.cdvector) - 1:
-                            mesh_gruesa.cdvector[_last_idx + 1:] = mesh_gruesa.cdvector[_last_idx]
-                            mesh_gruesa.clvector[_last_idx + 1:] = mesh_gruesa.clvector[_last_idx]
-                            mesh_gruesa.divvector[_last_idx + 1:] = mesh_gruesa.divvector[_last_idx]
-                            mesh_gruesa.divvector_max[_last_idx + 1:] = mesh_gruesa.divvector_max[_last_idx]
-                            mesh_gruesa.clcdvector[_last_idx + 1:] = mesh_gruesa.clcdvector[_last_idx]
-                            mesh_gruesa.kutta_dcp_vector[_last_idx + 1:] = mesh_gruesa.kutta_dcp_vector[_last_idx]
+                        # Marcar la última muestra real; el truncado se hace tras el bucle.
+                        # Rellenar con el último valor falsearía cualquier promedio de cola
+                        # posterior (daría std=0 exacto y media = valor instantáneo).
+                        mesh_gruesa.n_muestras_validas = it // guardado + 1
                         break
 
                 # Diagnóstico local de balance de Lift por zonas de cuerda
@@ -8477,6 +8513,8 @@ def main(
                     norm_p = float(cp.sqrt(cp.mean(mesh_gruesa.p[fluid_mask]**2)))
                     change_p = norm_dp / (norm_p + 1e-12)
 
+                    residual_campo = (change_u, change_v, change_p)
+
                     # Verificar convergencia
                     if change_u < tol_u and change_v < tol_v and change_p < tol_p:
                         # Solo imprimir el mensaje la primera vez que se detecta convergencia
@@ -8493,19 +8531,9 @@ def main(
                             print(f"{'='*70}\\n")
                             converged_to_steady = True
 
-                            # Ajustar vectores para que tengan el tamaño correcto
-                            # Rellenar el resto con el último valor válido
-                            if stop_on_convergence and it // guardado < len(mesh_gruesa.cdvector) - 1:
-                                last_idx = it // guardado
-                                mesh_gruesa.cdvector[last_idx+1:] = mesh_gruesa.cdvector[last_idx]
-                                mesh_gruesa.clvector[last_idx+1:] = mesh_gruesa.clvector[last_idx]
-                                mesh_gruesa.divvector[last_idx+1:] = mesh_gruesa.divvector[last_idx]
-                                mesh_gruesa.divvector_max[last_idx+1:] = mesh_gruesa.divvector_max[last_idx]
-                                mesh_gruesa.clcdvector[last_idx+1:] = mesh_gruesa.clcdvector[last_idx]
-                                mesh_gruesa.kutta_dcp_vector[last_idx+1:] = mesh_gruesa.kutta_dcp_vector[last_idx]
-
                         # Salir del bucle solo si stop_on_convergence está activado
                         if stop_on_convergence:
+                            mesh_gruesa.n_muestras_validas = it // guardado + 1
                             break
 
                     # Imprimir progreso ocasionalmente
@@ -8527,10 +8555,17 @@ def main(
     # ============================================================
     # FIN DEL BUCLE PRINCIPAL
     # ============================================================
-    # Si se interrumpió, ajustar datos para reflejar solo lo simulado
-    if interrupcion_solicitada:
-        # Truncar vectores de resultados al tamaño real
-        idx_final = min((it // guardado) + 1, len(mesh_gruesa.cdvector))
+    # Truncar los vectores de series temporales al número de muestras realmente
+    # escritas: por interrupción de usuario o por early-stop (steady / banda Cl-Cd).
+    # Sin esto la cola queda a ceros o rellena y contamina cualquier estadística.
+    if interrupcion_solicitada or mesh_gruesa.n_muestras_validas is not None:
+        idx_final = min(
+            mesh_gruesa.n_muestras_validas if not interrupcion_solicitada else (it // guardado) + 1,
+            len(mesh_gruesa.cdvector),
+        )
+        mesh_gruesa.n_muestras_validas = idx_final
+        mesh_gruesa.tvector = mesh_gruesa.tvector[:idx_final]
+        mesh_gruesa.resvector = mesh_gruesa.resvector[:idx_final]
         mesh_gruesa.cdvector = mesh_gruesa.cdvector[:idx_final]
         mesh_gruesa.clvector = mesh_gruesa.clvector[:idx_final]
         mesh_gruesa.divvector = mesh_gruesa.divvector[:idx_final]
@@ -8543,6 +8578,8 @@ def main(
         mesh_gruesa.kutta_dcp_vector = mesh_gruesa.kutta_dcp_vector[:idx_final]
         mesh_gruesa.mg_cycles_vector = mesh_gruesa.mg_cycles_vector[:it+1]
         iteraciones = it  # Actualizar para reportes
+    else:
+        mesh_gruesa.n_muestras_validas = int(len(mesh_gruesa.cdvector))
 
 
     # ============================================================

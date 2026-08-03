@@ -1,0 +1,2 @@
+[16:03:34] validación XFOIL: MAE(Cl)=0.0912  MAE(Cd)=0.03598  Cd medio +123.8%  dCl/dα sim=0.10211 vs xfoil=0.11107
+[16:03:35] OK -> /home/ttandrei/Proyectos/Optimizador/Optimizador/results/verificacion_numerica

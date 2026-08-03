@@ -86,15 +86,26 @@ def _log(msg):
 # ============================================================
 # FASE 0 — Calibración de dx
 # ============================================================
-def calibrar():
-    if os.path.exists(CALIB_JSON):
-        with open(CALIB_JSON) as f:
+def calib_path(re):
+    if re == 1e5:
+        return CALIB_JSON
+    return os.path.join(OUT_DIR, f"calibration_re{re:.0e}.json")
+
+
+def calibrar(re=1e5):
+    """Calibra dx para el Reynolds dado. Re=1e5 es el régimen validado (gate
+    estricto de Cl físico). Para otros Re el gate es informativo, no aborta:
+    no tenemos aún un rango de Cl "conocido bueno" para 1e3/1e6/1e7."""
+    RunGA.CONFIG["nu"] = 1.0 / re
+    cpath = calib_path(re)
+    if os.path.exists(cpath):
+        with open(cpath) as f:
             cal = json.load(f)
-        _log(f"Calibración ya existente -> USE_DX={cal.get('use_dx')} "
+        _log(f"Calibración Re={re:.0e} ya existente -> USE_DX={cal.get('use_dx')} "
              f"(abort={cal.get('abort')})")
         return cal
 
-    _log("FASE 0: calibración dx (0.004 y 0.002 a α=4 y α=5)...")
+    _log(f"FASE 0: calibración dx Re={re:.0e} (0.004 y 0.002 a α=4 y α=5)...")
     resultados = {}
     for dx in (0.004, 0.002):
         for a in (4.0, 5.0):
@@ -122,8 +133,13 @@ def calibrar():
         return resultados.get(f"dx{int(dx*1000)}_a{a:.0f}", {}).get("cd")
 
     # Gate del solver: NACA α=5 dx=0.002 debe dar Cl físico (~0.45).
+    # Solo aborta a Re=1e5 (régimen validado); en otros Re es informativo.
     cl_ref = _cl(0.002, 5)
-    abort = not (cl_ref is not None and 0.30 <= cl_ref <= 0.60)
+    cl_gate_fail = not (cl_ref is not None and 0.30 <= cl_ref <= 0.60)
+    abort = cl_gate_fail if re == 1e5 else False
+    if cl_gate_fail and re != 1e5:
+        _log(f"  [aviso] Re={re:.0e}: cl_ref={cl_ref} fuera de [0.30,0.60] "
+             "(gate no aplicable a este régimen, no aborta)")
 
     # ¿Aceptar dx=0.004? (no colapsa, Cd físico, offset consistente con dx=0.002)
     accept004 = True
@@ -153,11 +169,12 @@ def calibrar():
         "iters": iters_for(CFL, use_dx),
         "t_eval_s": t_eval,
         "cfl": CFL,
+        "re": re,
     }
-    with open(CALIB_JSON, "w") as f:
+    with open(cpath, "w") as f:
         json.dump(cal, f, indent=2, ensure_ascii=False)
-    _log(f"FASE 0 done: use_dx={use_dx} accept004={accept004} abort={abort} "
-         f"reasons={reasons}")
+    _log(f"FASE 0 done Re={re:.0e}: use_dx={use_dx} accept004={accept004} "
+         f"abort={abort} reasons={reasons}")
     return cal
 
 
@@ -333,7 +350,7 @@ def ejecutar_aislado(cal, deadline_total_s, t_start, pop=12, gen_max=30,
 
 
 def ejecutar_mixto(cal, deadline_total_s, t_start, seeds, pop, gen_max,
-                   paciencia, tag):
+                   paciencia, tag, re=1e5):
     """GA único de población MIXTA (estilo Arm B) con parada por estancamiento.
 
     Dos estudios previstos (lanzador scripts/agent_tests/mixto.sh):
@@ -356,7 +373,7 @@ def ejecutar_mixto(cal, deadline_total_s, t_start, seeds, pop, gen_max,
     _run_ga(f"mixto/{tag}", dir_out, cfg, remaining * 0.95)
 
     g = _cargar_ganador(dir_out)
-    out = {"condiciones": {"alpha_deg": ALPHA, "Re": 1e5, "CFL": CFL},
+    out = {"condiciones": {"alpha_deg": ALPHA, "Re": re, "CFL": CFL},
            "config": {"tag": tag, "seeds": seeds, "pop": pop,
                       "gen_max": gen_max, "paciencia": paciencia, "dx": use_dx}}
     if g is not None:
@@ -806,8 +823,16 @@ def main():
     ap.add_argument("--mixto-paciencia", type=int, default=8)
     ap.add_argument("--run-tag", default="",
                     help="sufijo de directorio (islands_<tag>) para no pisar corridas previas")
+    ap.add_argument("--multipunto", action="store_true",
+                    help="Optimizar sobre alpha-delta, alpha, alpha+delta en vez de un solo angulo.")
+    ap.add_argument("--delta-angulo", type=float, default=2.0,
+                    help="Semiancho del barrido multipunto (2.0 con alpha=4 -> 2/4/6 grados).")
+    ap.add_argument("--fitness-modo", default="mean", choices=["mean", "min", "weighted"],
+                    help="Agregacion del L/D sobre los angulos: media, peor caso o ponderada.")
     ap.add_argument("--transition-model", default="none", choices=["none", "sa_bc"])
     ap.add_argument("--freestream-tu", type=float, default=0.1)
+    ap.add_argument("--re", type=float, default=1e5,
+                    help="Reynolds (v0x=1, chord=1 -> nu=1/Re). Cambia dx_min/iters via calibración propia.")
     args = ap.parse_args()
 
     global ISLAS_DIR, REFINE_JSON, REFINE_SCOPE
@@ -825,6 +850,36 @@ def main():
         }
         _log(f"Transición activa: {args.transition_model} (Tu={args.freestream_tu}%)")
 
+    # El fitness del GA es solo tan bueno como el instante en que se mide. El
+    # criterio validado lo produce criterio_parada.py; sin él se usan los valores
+    # por defecto de Simulador2D, que son los mismos pero sin constancia de haber
+    # sido verificados sobre estas series.
+    _calib = os.path.join(OUT_DIR, "..", "verificacion_numerica", "criterio_parada.json")
+    if os.path.exists(_calib):
+        j = json.load(open(_calib))
+        c = j["criterio"]
+        RunGA.CONFIG["sim_extra_params"] = {
+            **RunGA.CONFIG["sim_extra_params"],
+            "clcd_tol_drift": c["tol_drift"],
+            "clcd_tol_noise": c["tol_noise"],
+            "clcd_window_conv_time": c["window"],
+            "clcd_n_sostenido": c["n_sostenido"],
+            "clcd_min_t_fisico_before_check": c["min_t"],
+        }
+        _log(f"Criterio de parada validado: drift<{c['tol_drift']} noise<{c['tol_noise']} "
+             f"window={c['window']} min_t={c['min_t']} n={c['n_sostenido']} "
+             f"(test err_max={j['test']['err_max']:.2f}%, coste={j['test']['coste_medio']:.2f})")
+    else:
+        _log("[!] Sin criterio_parada.json: se usan los defaults de Simulador2D")
+
+    if args.multipunto:
+        RunGA.CONFIG["multi_angulo"] = True
+        RunGA.CONFIG["delta_angulo"] = args.delta_angulo
+        RunGA.CONFIG["fitness_modo"] = args.fitness_modo
+        angs = [ALPHA - args.delta_angulo, ALPHA, ALPHA + args.delta_angulo]
+        _log(f"Multipunto activo: alpha={angs}° modo={args.fitness_modo} "
+             f"(coste CFD x3 por individuo)")
+
     t_start = time.time()
     deadline_total_s = args.deadline_hours * 3600.0
     _log(f"INICIO estudio. deadline={args.deadline_hours}h")
@@ -832,7 +887,7 @@ def main():
     if args.analyze_only:
         analizar_convergencia(); return
 
-    cal = calibrar()
+    cal = calibrar(re=args.re)
     if args.calib_only:
         return
     if args.refine:
@@ -854,7 +909,7 @@ def main():
             seeds = [s.strip() for s in args.mixto_seeds.split(",") if s.strip()]
         ejecutar_mixto(cal, deadline_total_s, t_start, seeds,
                        pop=args.mixto_pop, gen_max=args.mixto_gen_max,
-                       paciencia=args.mixto_paciencia, tag=args.mixto)
+                       paciencia=args.mixto_paciencia, tag=args.mixto, re=args.re)
         _log(f"FIN mixto. Tiempo total: {(time.time()-t_start)/60:.1f} min")
         return
 

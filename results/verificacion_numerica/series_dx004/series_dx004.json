@@ -1,0 +1,249 @@
+{
+  "n": 20,
+  "Re": 100000.0,
+  "alpha": 4.0,
+  "dx": 0.004,
+  "t_target": 12.0,
+  "dx004_vs_dx002": {
+    "comparacion": "dx=0.004 vs dx=0.002",
+    "spearman_rho": 0.9263,
+    "spearman_p": 4.64e-09,
+    "kendall_tau": 0.8316,
+    "rho_mitad_alta": 0.7455,
+    "top_k": 4,
+    "solape_top_k": 1.0
+  },
+  "ga_vs_dx002": {
+    "comparacion": "fitness GA original vs dx=0.002",
+    "spearman_rho": 0.7955,
+    "spearman_p": 2.75e-05,
+    "kendall_tau": 0.6421,
+    "rho_mitad_alta": 0.1515,
+    "top_k": 4,
+    "solape_top_k": 0.25
+  },
+  "sesgo_medio_pct": -44.91,
+  "sesgo_std_pct": 68.05,
+  "individuos": [
+    {
+      "id": 1265,
+      "ld_dx004": -1.2883,
+      "cl_dx004": -0.228234,
+      "cd_dx004": 0.177153,
+      "ld_ci95": 0.0872,
+      "ld_dx002": 0.5591,
+      "ld_ga": 0.068,
+      "serie": "results/verificacion_numerica/series_dx004/serie_1265.npz",
+      "wall_s": 920.7
+    },
+    {
+      "id": 1735,
+      "ld_dx004": 1.7156,
+      "cl_dx004": 0.068256,
+      "cd_dx004": 0.039786,
+      "ld_ci95": 0.0079,
+      "ld_dx002": 9.778,
+      "ld_ga": 4.6966,
+      "serie": "results/verificacion_numerica/series_dx004/serie_1735.npz",
+      "wall_s": 865.6
+    },
+    {
+      "id": 1540,
+      "ld_dx004": 7.4528,
+      "cl_dx004": 0.300401,
+      "cd_dx004": 0.040307,
+      "ld_ci95": 0.0103,
+      "ld_dx002": 11.2814,
+      "ld_ga": 5.4866,
+      "serie": "results/verificacion_numerica/series_dx004/serie_1540.npz",
+      "wall_s": 875.8
+    },
+    {
+      "id": 902,
+      "ld_dx004": 11.5477,
+      "cl_dx004": 0.43059,
+      "cd_dx004": 0.037288,
+      "ld_ci95": 0.0015,
+      "ld_dx002": 15.3618,
+      "ld_ga": 6.2614,
+      "serie": "results/verificacion_numerica/series_dx004/serie_902.npz",
+      "wall_s": 905.6
+    },
+    {
+      "id": 1311,
+      "ld_dx004": 7.3565,
+      "cl_dx004": 0.464475,
+      "cd_dx004": 0.063138,
+      "ld_ci95": 0.0803,
+      "ld_dx002": 11.4174,
+      "ld_ga": 6.9474,
+      "serie": "results/verificacion_numerica/series_dx004/serie_1311.npz",
+      "wall_s": 923.1
+    },
+    {
+      "id": 1559,
+      "ld_dx004": 10.9532,
+      "cl_dx004": 0.586189,
+      "cd_dx004": 0.053518,
+      "ld_ci95": 0.0656,
+      "ld_dx002": 15.8077,
+      "ld_ga": 7.5233,
+      "serie": "results/verificacion_numerica/series_dx004/serie_1559.npz",
+      "wall_s": 1036.4
+    },
+    {
+      "id": 1363,
+      "ld_dx004": 7.6374,
+      "cl_dx004": 0.364058,
+      "cd_dx004": 0.047668,
+      "ld_ci95": 0.0811,
+      "ld_dx002": 12.6963,
+      "ld_ga": 8.0634,
+      "serie": "results/verificacion_numerica/series_dx004/serie_1363.npz",
+      "wall_s": 920.8
+    },
+    {
+      "id": 2103,
+      "ld_dx004": 7.1022,
+      "cl_dx004": 0.319673,
+      "cd_dx004": 0.04501,
+      "ld_ci95": 0.0141,
+      "ld_dx002": 11.1347,
+      "ld_ga": 8.5211,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2103.npz",
+      "wall_s": 915.7
+    },
+    {
+      "id": 1375,
+      "ld_dx004": 8.1344,
+      "cl_dx004": 0.463953,
+      "cd_dx004": 0.057036,
+      "ld_ci95": 0.1227,
+      "ld_dx002": 13.6199,
+      "ld_ga": 9.0087,
+      "serie": "results/verificacion_numerica/series_dx004/serie_1375.npz",
+      "wall_s": 929.4
+    },
+    {
+      "id": 2140,
+      "ld_dx004": 9.9186,
+      "cl_dx004": 0.451675,
+      "cd_dx004": 0.045538,
+      "ld_ci95": 0.138,
+      "ld_dx002": 15.476,
+      "ld_ga": 9.7267,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2140.npz",
+      "wall_s": 935.2
+    },
+    {
+      "id": 2146,
+      "ld_dx004": 11.1606,
+      "cl_dx004": 0.59234,
+      "cd_dx004": 0.053074,
+      "ld_ci95": 0.1198,
+      "ld_dx002": 17.8498,
+      "ld_ga": 10.4644,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2146.npz",
+      "wall_s": 952.2
+    },
+    {
+      "id": 2159,
+      "ld_dx004": 11.8074,
+      "cl_dx004": 0.48552,
+      "cd_dx004": 0.04112,
+      "ld_ci95": 0.1419,
+      "ld_dx002": 20.0641,
+      "ld_ga": 11.0368,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2159.npz",
+      "wall_s": 981.3
+    },
+    {
+      "id": 2019,
+      "ld_dx004": 18.5922,
+      "cl_dx004": 0.624022,
+      "cd_dx004": 0.033564,
+      "ld_ci95": 0.0036,
+      "ld_dx002": 24.0614,
+      "ld_ga": 11.8148,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2019.npz",
+      "wall_s": 1115.0
+    },
+    {
+      "id": 3100,
+      "ld_dx004": 17.7548,
+      "cl_dx004": 0.614295,
+      "cd_dx004": 0.034599,
+      "ld_ci95": 0.1858,
+      "ld_dx002": 21.8437,
+      "ld_ga": 12.5476,
+      "serie": "results/verificacion_numerica/series_dx004/serie_3100.npz",
+      "wall_s": 1062.7
+    },
+    {
+      "id": 3097,
+      "ld_dx004": 19.2833,
+      "cl_dx004": 0.628783,
+      "cd_dx004": 0.032608,
+      "ld_ci95": 0.113,
+      "ld_dx002": 22.0378,
+      "ld_ga": 13.2612,
+      "serie": "results/verificacion_numerica/series_dx004/serie_3097.npz",
+      "wall_s": 1094.9
+    },
+    {
+      "id": 2317,
+      "ld_dx004": 15.7685,
+      "cl_dx004": 0.560347,
+      "cd_dx004": 0.035536,
+      "ld_ci95": 0.1207,
+      "ld_dx002": 20.642,
+      "ld_ga": 13.9193,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2317.npz",
+      "wall_s": 1073.9
+    },
+    {
+      "id": 1968,
+      "ld_dx004": 13.0242,
+      "cl_dx004": 0.658206,
+      "cd_dx004": 0.050537,
+      "ld_ci95": 0.0094,
+      "ld_dx002": 20.7822,
+      "ld_ga": 14.5904,
+      "serie": "results/verificacion_numerica/series_dx004/serie_1968.npz",
+      "wall_s": 1210.4
+    },
+    {
+      "id": 2312,
+      "ld_dx004": 16.878,
+      "cl_dx004": 0.496447,
+      "cd_dx004": 0.029414,
+      "ld_ci95": 0.0005,
+      "ld_dx002": 13.893,
+      "ld_ga": 15.4854,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2312.npz",
+      "wall_s": 1208.5
+    },
+    {
+      "id": 2681,
+      "ld_dx004": 16.4073,
+      "cl_dx004": 0.573933,
+      "cd_dx004": 0.03498,
+      "ld_ci95": 0.1736,
+      "ld_dx002": 20.6748,
+      "ld_ga": 16.3517,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2681.npz",
+      "wall_s": 1158.4
+    },
+    {
+      "id": 2958,
+      "ld_dx004": 19.4061,
+      "cl_dx004": 0.625302,
+      "cd_dx004": 0.032222,
+      "ld_ci95": 0.0054,
+      "ld_dx002": 22.9456,
+      "ld_ga": 18.4776,
+      "serie": "results/verificacion_numerica/series_dx004/serie_2958.npz",
+      "wall_s": 1141.0
+    }
+  ]
+}

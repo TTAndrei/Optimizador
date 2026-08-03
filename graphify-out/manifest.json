@@ -1,0 +1,367 @@
+{
+  ".claude/settings.local.json": {
+    "mtime": 1779298209.1146445,
+    "ast_hash": "597c460091b0567f360c7c30918ab3ae",
+    "semantic_hash": "597c460091b0567f360c7c30918ab3ae"
+  },
+  "Simulador2D.py": {
+    "mtime": 1785630359.4741375,
+    "ast_hash": "2ee835c754c53b51babbb404d14e65b6",
+    "semantic_hash": "2ee835c754c53b51babbb404d14e65b6"
+  },
+  "analizar_mesh.py": {
+    "mtime": 1782985291.0250602,
+    "ast_hash": "118797dec83eac0f03701e3cdd538bbd",
+    "semantic_hash": "118797dec83eac0f03701e3cdd538bbd"
+  },
+  "bl_correction.py": {
+    "mtime": 1780219559.4648476,
+    "ast_hash": "21f34a4cc959a2feee0ab1f5208ee82b",
+    "semantic_hash": "21f34a4cc959a2feee0ab1f5208ee82b"
+  },
+  "configs/barrido_modos_plan.json": {
+    "mtime": 1779298209.1207342,
+    "ast_hash": "00c074f751610afc75eefc5d65a676e6",
+    "semantic_hash": "00c074f751610afc75eefc5d65a676e6"
+  },
+  "configs/configuracion_ideal_mutacion.json": {
+    "mtime": 1779298209.1208737,
+    "ast_hash": "f3ae06387a1403f42b9631fa8fba216b",
+    "semantic_hash": "f3ae06387a1403f42b9631fa8fba216b"
+  },
+  "configs/gui_settings.json": {
+    "mtime": 1779298209.1209767,
+    "ast_hash": "9ad50245ac9baf754b156077256bf40b",
+    "semantic_hash": "9ad50245ac9baf754b156077256bf40b"
+  },
+  "configs/plan.json": {
+    "mtime": 1779298209.1210465,
+    "ast_hash": "1e94188c885bc2ef11b822b3ab8e909f",
+    "semantic_hash": "1e94188c885bc2ef11b822b3ab8e909f"
+  },
+  "polar_results.json": {
+    "mtime": 1785663438.6163964,
+    "ast_hash": "28b6e9da2d2d7c5b56fbb3ff7e28cb1d",
+    "semantic_hash": "28b6e9da2d2d7c5b56fbb3ff7e28cb1d"
+  },
+  "predecir_perfil.py": {
+    "mtime": 1779298209.4185147,
+    "ast_hash": "bb1a237000591a6b0ee0e18776d3abd8",
+    "semantic_hash": "bb1a237000591a6b0ee0e18776d3abd8"
+  },
+  "scripts/RunGA.py": {
+    "mtime": 1785630378.8764942,
+    "ast_hash": "78e328fe3ff4bc92ac7800e0f1dc5227",
+    "semantic_hash": "78e328fe3ff4bc92ac7800e0f1dc5227"
+  },
+  "scripts/Simulador2D_cartesiano.py": {
+    "mtime": 1779298209.479799,
+    "ast_hash": "69cdbb7a95fef98a6379c7c054f22748",
+    "semantic_hash": "69cdbb7a95fef98a6379c7c054f22748"
+  },
+  "scripts/agent_tests/aislado.sh": {
+    "mtime": 1783701183.2770555,
+    "ast_hash": "2e45c26449bf29af3f30a0510ac2994a",
+    "semantic_hash": "2e45c26449bf29af3f30a0510ac2994a"
+  },
+  "scripts/agent_tests/cola.sh": {
+    "mtime": 1784668771.654795,
+    "ast_hash": "fd3e1ccaf539063bb10ecc0ab06e143b",
+    "semantic_hash": "fd3e1ccaf539063bb10ecc0ab06e143b"
+  },
+  "scripts/agent_tests/cola_tfg.sh": {
+    "mtime": 1785630586.9460359,
+    "ast_hash": "b402aa4332630d8a963d2cec8723d90f",
+    "semantic_hash": "b402aa4332630d8a963d2cec8723d90f"
+  },
+  "scripts/agent_tests/metricas_ga.py": {
+    "mtime": 1785270466.577044,
+    "ast_hash": "a5072e77a4836f2ed2ee282d1d029dc3",
+    "semantic_hash": "a5072e77a4836f2ed2ee282d1d029dc3"
+  },
+  "scripts/agent_tests/mixto.sh": {
+    "mtime": 1784459080.2372596,
+    "ast_hash": "f0d07f0a66ca63eaa42c566a1e2e33c9",
+    "semantic_hash": "f0d07f0a66ca63eaa42c566a1e2e33c9"
+  },
+  "scripts/agent_tests/plot_comparacion_transicion.py": {
+    "mtime": 1784046290.3941655,
+    "ast_hash": "0667fad7ea6ae437a93fee0b3b9546a2",
+    "semantic_hash": "0667fad7ea6ae437a93fee0b3b9546a2"
+  },
+  "scripts/agent_tests/run_cfl_sweep.py": {
+    "mtime": 1783158652.022646,
+    "ast_hash": "1d71bdf6b43b00ed764a16370c28d2cf",
+    "semantic_hash": "1d71bdf6b43b00ed764a16370c28d2cf"
+  },
+  "scripts/agent_tests/run_convergence_study.py": {
+    "mtime": 1785640065.9875982,
+    "ast_hash": "984a2effcdfaf5a879f53b2201900227",
+    "semantic_hash": "984a2effcdfaf5a879f53b2201900227"
+  },
+  "scripts/agent_tests/run_kutta_tests.py": {
+    "mtime": 1783086058.5168557,
+    "ast_hash": "6ce381ddae92ac084642f86439684824",
+    "semantic_hash": "6ce381ddae92ac084642f86439684824"
+  },
+  "scripts/agent_tests/t1_ranking_dx.py": {
+    "mtime": 1783620411.082384,
+    "ast_hash": "ea4e084c6849c5aeb32d21af7a26b4d6",
+    "semantic_hash": "ea4e084c6849c5aeb32d21af7a26b4d6"
+  },
+  "scripts/agent_tests/validar_aislado_dx002.py": {
+    "mtime": 1784035345.4870255,
+    "ast_hash": "f565e969b62700faae118dd4b551084b",
+    "semantic_hash": "f565e969b62700faae118dd4b551084b"
+  },
+  "scripts/agent_tests/verificacion_numerica.py": {
+    "mtime": 1785640043.0475519,
+    "ast_hash": "10e2eb68e0c6fd659681eb0207fbe5aa",
+    "semantic_hash": "10e2eb68e0c6fd659681eb0207fbe5aa"
+  },
+  "scripts/agent_tests/video_ganador.py": {
+    "mtime": 1785088714.6869137,
+    "ast_hash": "639e6e3996cb797efd6ba65f75e4a726",
+    "semantic_hash": "639e6e3996cb797efd6ba65f75e4a726"
+  },
+  "scripts/barrido_resolucion.py": {
+    "mtime": 1780219924.2059453,
+    "ast_hash": "2aa07a4123a0a1d9b845b8e0a0a3d386",
+    "semantic_hash": "2aa07a4123a0a1d9b845b8e0a0a3d386"
+  },
+  "scripts/benchmark_mg_params.py": {
+    "mtime": 1780219938.5999486,
+    "ast_hash": "67c0b291036ac5650d42bdb9d08d63ab",
+    "semantic_hash": "67c0b291036ac5650d42bdb9d08d63ab"
+  },
+  "scripts/build_dataset.py": {
+    "mtime": 1779298209.4801817,
+    "ast_hash": "079a56717c27b577382ea988aeccb568",
+    "semantic_hash": "079a56717c27b577382ea988aeccb568"
+  },
+  "scripts/calibracion_factores_alpha.py": {
+    "mtime": 1780219612.7008667,
+    "ast_hash": "92daad81da615a5cdd5edff531f16c4c",
+    "semantic_hash": "92daad81da615a5cdd5edff531f16c4c"
+  },
+  "scripts/comparativa_barrido_completo.py": {
+    "mtime": 1783355614.563689,
+    "ast_hash": "1833be3474109d81a7c8b6fb9007d8d9",
+    "semantic_hash": "1833be3474109d81a7c8b6fb9007d8d9"
+  },
+  "scripts/comparativa_benchmark_vs_xfoil.py": {
+    "mtime": 1780219609.2948656,
+    "ast_hash": "d98c61af1151e644a380ea093d7cccef",
+    "semantic_hash": "d98c61af1151e644a380ea093d7cccef"
+  },
+  "scripts/comparativa_xfoil.py": {
+    "mtime": 1780219603.8558636,
+    "ast_hash": "4ca79d8af8ca90f709c015a946f315d6",
+    "semantic_hash": "4ca79d8af8ca90f709c015a946f315d6"
+  },
+  "scripts/control_simulacion.ps1": {
+    "mtime": 1779298209.4804935,
+    "ast_hash": "50cc90adc859a1d2db0b80db8b0a122d",
+    "semantic_hash": "50cc90adc859a1d2db0b80db8b0a122d"
+  },
+  "scripts/descargar_yt.ps1": {
+    "mtime": 1779298209.4805357,
+    "ast_hash": "af4743cd7296320da85177940f1603db",
+    "semantic_hash": "af4743cd7296320da85177940f1603db"
+  },
+  "scripts/diagnostico_codigo_lift_naca0012.py": {
+    "mtime": 1781642373.354286,
+    "ast_hash": "82635c0ff8ade7556c06c728980834bf",
+    "semantic_hash": "82635c0ff8ade7556c06c728980834bf"
+  },
+  "scripts/diagnostico_drag_presion_naca0012.py": {
+    "mtime": 1780219716.2938964,
+    "ast_hash": "93474a198818230f0eb2294134886bcc",
+    "semantic_hash": "93474a198818230f0eb2294134886bcc"
+  },
+  "scripts/diagnostico_lift_naca0012.py": {
+    "mtime": 1780219875.912934,
+    "ast_hash": "388084187c7c60d8af3eada03938f862",
+    "semantic_hash": "388084187c7c60d8af3eada03938f862"
+  },
+  "scripts/diagnostico_nocturno_boundary_layer_naca0012.py": {
+    "mtime": 1781217634.1292164,
+    "ast_hash": "6b98e4f7799389fdaa0171c9cd1c204d",
+    "semantic_hash": "6b98e4f7799389fdaa0171c9cd1c204d"
+  },
+  "scripts/diagnostico_presion_lift_naca0012.py": {
+    "mtime": 1780219907.0979414,
+    "ast_hash": "8c8ce60632bbb3c27fe69544f2b25533",
+    "semantic_hash": "8c8ce60632bbb3c27fe69544f2b25533"
+  },
+  "scripts/diagnostico_suite_desprendimiento_naca0012.py": {
+    "mtime": 1781549860.4553902,
+    "ast_hash": "ddbf2391266d0030144285bb65d42f42",
+    "semantic_hash": "ddbf2391266d0030144285bb65d42f42"
+  },
+  "scripts/editor_perfiles_interactivo.py": {
+    "mtime": 1779298209.4806287,
+    "ast_hash": "558be5e3d5457c9860df5552217f916e",
+    "semantic_hash": "558be5e3d5457c9860df5552217f916e"
+  },
+  "scripts/explorar_hijos_mutacion.py": {
+    "mtime": 1779298209.4807153,
+    "ast_hash": "cebc6ddd0fae6591def1af2c00cd5e81",
+    "semantic_hash": "cebc6ddd0fae6591def1af2c00cd5e81"
+  },
+  "scripts/graficar_comparativa_teorico_vs_simulado.py": {
+    "mtime": 1780219597.9098613,
+    "ast_hash": "b1cbfbb968f74d33d4ca65ef965cb27d",
+    "semantic_hash": "b1cbfbb968f74d33d4ca65ef965cb27d"
+  },
+  "scripts/mesh_multires.py": {
+    "mtime": 1779298209.4808881,
+    "ast_hash": "fcba47bc33416183fb90d59ae0072f7c",
+    "semantic_hash": "fcba47bc33416183fb90d59ae0072f7c"
+  },
+  "scripts/polar_a_cartesiano.py": {
+    "mtime": 1779298209.4809425,
+    "ast_hash": "81c25877a921074c69efd8542ab96e82",
+    "semantic_hash": "81c25877a921074c69efd8542ab96e82"
+  },
+  "scripts/reconstruir_perfil.py": {
+    "mtime": 1779298209.4810052,
+    "ast_hash": "e270ade81d08b35ac4b256b1b2aeffde",
+    "semantic_hash": "e270ade81d08b35ac4b256b1b2aeffde"
+  },
+  "scripts/script_barrido_alpha.py": {
+    "mtime": 1784046233.0114896,
+    "ast_hash": "925a69d1985f789873c0e2c3991876bf",
+    "semantic_hash": "925a69d1985f789873c0e2c3991876bf"
+  },
+  "scripts/script_barrido_conditions.py": {
+    "mtime": 1780180596.4805403,
+    "ast_hash": "92ac614068c65e3d7532f2516d820798",
+    "semantic_hash": "92ac614068c65e3d7532f2516d820798"
+  },
+  "scripts/script_barrido_modos.py": {
+    "mtime": 1780219930.8359468,
+    "ast_hash": "452273f9b87ebf3dcb3c2122bf112b78",
+    "semantic_hash": "452273f9b87ebf3dcb3c2122bf112b78"
+  },
+  "scripts/sim_defaults.py": {
+    "mtime": 1780222134.4168072,
+    "ast_hash": "9661f77c445c9ad5a5fb1693bd355899",
+    "semantic_hash": "9661f77c445c9ad5a5fb1693bd355899"
+  },
+  "scripts/simulacion_larga_video_naca0012_alpha0.py": {
+    "mtime": 1781626770.8578513,
+    "ast_hash": "5e859dbd541a2b24de50116b4352705c",
+    "semantic_hash": "5e859dbd541a2b24de50116b4352705c"
+  },
+  "scripts/simulator_gui.py": {
+    "mtime": 1779298209.4816241,
+    "ast_hash": "7c34f8ebdd301c7114f187b9a517cc93",
+    "semantic_hash": "7c34f8ebdd301c7114f187b9a517cc93"
+  },
+  "scripts/study_simulador.py": {
+    "mtime": 1780180906.2879004,
+    "ast_hash": "a4f5a599825ca5d52b1f9206c49be55f",
+    "semantic_hash": "a4f5a599825ca5d52b1f9206c49be55f"
+  },
+  "scripts/train_ia_perfiles.py": {
+    "mtime": 1779298209.4817584,
+    "ast_hash": "250bc9c9e0d61577d4db3fdab86846bb",
+    "semantic_hash": "250bc9c9e0d61577d4db3fdab86846bb"
+  },
+  "scripts/validar_lift_naca0012.py": {
+    "mtime": 1781642003.7873666,
+    "ast_hash": "cac8b9c4372da52cae5bde35df324b73",
+    "semantic_hash": "cac8b9c4372da52cae5bde35df324b73"
+  },
+  "scripts/viewer_live.py": {
+    "mtime": 1779298209.4818287,
+    "ast_hash": "12c99022b0f7718b9060f6bdcb26eeef",
+    "semantic_hash": "12c99022b0f7718b9060f6bdcb26eeef"
+  },
+  "scripts/visualize_pca_landscape.py": {
+    "mtime": 1779298209.481903,
+    "ast_hash": "aba93ebe9064c4057d7c6a17d6c963a4",
+    "semantic_hash": "aba93ebe9064c4057d7c6a17d6c963a4"
+  },
+  "tests/conftest.py": {
+    "mtime": 1783536816.462363,
+    "ast_hash": "87a78bb194f6b01a0c2e9308c8934a01",
+    "semantic_hash": "87a78bb194f6b01a0c2e9308c8934a01"
+  },
+  "tests/test_ancho_zona_fina.py": {
+    "mtime": 1779298209.4819582,
+    "ast_hash": "06c6dcb6d7cb58a51f13c764eccdf358",
+    "semantic_hash": "06c6dcb6d7cb58a51f13c764eccdf358"
+  },
+  "tests/test_generacion_geometrica_ga.py": {
+    "mtime": 1783537074.4276738,
+    "ast_hash": "b1aaf025665b694540144b87de59a300",
+    "semantic_hash": "b1aaf025665b694540144b87de59a300"
+  },
+  "tests/test_mg_simetria.py": {
+    "mtime": 1779298209.4821093,
+    "ast_hash": "ddc273dc7787b5de6b4a582a8d254c34",
+    "semantic_hash": "ddc273dc7787b5de6b4a582a8d254c34"
+  },
+  "tests/test_projection_compatible_flux.py": {
+    "mtime": 1780159912.608764,
+    "ast_hash": "c4e068f881b53ef322c36c14620a9fe0",
+    "semantic_hash": "c4e068f881b53ef322c36c14620a9fe0"
+  },
+  "tests/validacion_re_alpha10.py": {
+    "mtime": 1779298209.4821556,
+    "ast_hash": "a8eb976505b7f519e1838d4b08c16aa5",
+    "semantic_hash": "a8eb976505b7f519e1838d4b08c16aa5"
+  },
+  "tests/validacion_simetria.py": {
+    "mtime": 1779298209.482234,
+    "ast_hash": "e953d67792bdf5ae99fd9c4ceeed1e87",
+    "semantic_hash": "e953d67792bdf5ae99fd9c4ceeed1e87"
+  },
+  "Base Teorica.txt": {
+    "mtime": 1779298209.1151237,
+    "ast_hash": "2e030a04e1fda6c9cd4529e95ae001f9",
+    "semantic_hash": "2e030a04e1fda6c9cd4529e95ae001f9"
+  },
+  "RESUMEN.md": {
+    "mtime": 1785664405.7058861,
+    "ast_hash": "b388a4770a950ee1bcccd6ab972bf806",
+    "semantic_hash": "b388a4770a950ee1bcccd6ab972bf806"
+  },
+  "docs/CONTROLES_INTERACTIVOS.md": {
+    "mtime": 1779298209.1240082,
+    "ast_hash": "0a8189e05442a8634d7775c7ade8ed71",
+    "semantic_hash": "0a8189e05442a8634d7775c7ade8ed71"
+  },
+  "docs/PROMPT_project_multigrid.txt": {
+    "mtime": 1779298209.124066,
+    "ast_hash": "32c0955ff154b04e2398f5682799c1af",
+    "semantic_hash": "32c0955ff154b04e2398f5682799c1af"
+  },
+  "docs/RESUMEN_SIMULADOR.txt": {
+    "mtime": 1779298209.124265,
+    "ast_hash": "2bcb7b9b145400a6fe0c69680207c1ed",
+    "semantic_hash": "2bcb7b9b145400a6fe0c69680207c1ed"
+  },
+  "docs/analisis_configuracion_ideal.md": {
+    "mtime": 1779298209.12432,
+    "ast_hash": "73679562335f5e129103b4c4a0b25502",
+    "semantic_hash": "73679562335f5e129103b4c4a0b25502"
+  },
+  "docs/memoria_tecnica.md": {
+    "mtime": 1779298209.124488,
+    "ast_hash": "36ae0c588e6400fdcb828bfedd1ce5f9",
+    "semantic_hash": "36ae0c588e6400fdcb828bfedd1ce5f9"
+  },
+  "docs/verificacion_numerica.md": {
+    "mtime": 1785664352.455356,
+    "ast_hash": "14aa72cb908fddfa94b714ca59576029",
+    "semantic_hash": "14aa72cb908fddfa94b714ca59576029"
+  },
+  "requirements.txt": {
+    "mtime": 1780162796.1410804,
+    "ast_hash": "2d73515ceac780369e91eb25b40ad164",
+    "semantic_hash": "2d73515ceac780369e91eb25b40ad164"
+  }
+}

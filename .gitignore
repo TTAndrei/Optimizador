@@ -3,9 +3,19 @@ __pycache__/
 .pytest_cache/
 .venv/
 
-results/barridos/
-results/diagnosticos/
+# Salidas pesadas y reproducibles. Los patrones cubren la raíz de results/ y las
+# campañas archivadas: al mover results/barridos/ a results/1eraGranOptimizacion/
+# las reglas ancladas dejaron de aplicar y 5585 ficheros excluidos entraron al índice.
+**/barridos/
+**/diagnosticos/
+**/videos_ganadores/
 
-# npz >100MB (GitHub los rechaza; el hook pre-commit bloquea cualquier >95MB)
-results/agent_tests/wc_sa_a5_dx1.npz
-results/agent_tests/wc_mc_sa_a5_dx1.npz
+# Cache regenerable del grafo; el grafo en sí (graph.json, communities) sí se versiona.
+graphify-out/cache/
+
+# >100MB (GitHub los rechaza; el hook pre-commit bloquea cualquier >95MB).
+# Sin anclar a results/: al archivar la campaña en results/1eraGranOptimizacion/
+# las rutas exactas dejaron de aplicar.
+**/wc_sa_a5_dx1.npz
+**/wc_mc_sa_a5_dx1.npz
+**/cola_run.log

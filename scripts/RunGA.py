@@ -184,6 +184,14 @@ CONFIG = {
 PARADA_SOLICITADA = False
 
 
+def _round_or_none(v, n):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(f, n) if np.isfinite(f) else None
+
+
 def manejar_parada(signum, frame):
     """Captura Ctrl+C para parada segura"""
     global PARADA_SOLICITADA
@@ -1269,9 +1277,11 @@ def simular_perfil(filepath_temp, alpha_deg, config):
         if mesh_gruesa.cdvector is None or len(mesh_gruesa.cdvector) == 0:
             return None
 
-        # Promediar sobre la ventana del último 20% (estacionario)
+        # Promediar sobre la ventana del último 20% (estacionario). Con el
+        # early-stop activo la serie puede quedar corta, así que se garantiza un
+        # mínimo de muestras: con w=3 la desviación típica no es informativa.
         n_datos = len(mesh_gruesa.cdvector)
-        w = max(1, n_datos // 5)
+        w = min(n_datos, max(n_datos // 5, 10))
 
         cd_arr = mesh_gruesa.cdvector[-w:]
         cl_arr = mesh_gruesa.clvector[-w:]
@@ -1305,11 +1315,37 @@ def simular_perfil(filepath_temp, alpha_deg, config):
 
         ld = cl_force / cd_val if abs(cd_val) > 1e-6 else 0.0
 
+        # Volcado de las series completas: lo necesita el recalibrado offline del
+        # criterio de early-stop, que reproduce el criterio sobre la señal real.
+        dump = config.get('dump_series_path')
+        if dump:
+            os.makedirs(os.path.dirname(dump) or '.', exist_ok=True)
+            np.savez_compressed(
+                dump,
+                t=cp.asnumpy(mesh_gruesa.tvector),
+                cl=cp.asnumpy(mesh_gruesa.clvector),
+                cd=cp.asnumpy(mesh_gruesa.cdvector),
+                clcd=cp.asnumpy(mesh_gruesa.clcdvector),
+                res=cp.asnumpy(mesh_gruesa.resvector),
+                guardado=int(getattr(mesh_gruesa, 'guardado', 50)),
+            )
+
+        cl_ci95 = 1.96 * cl_std / np.sqrt(max(1, len(cd_arr)))
+        cd_ci95 = 1.96 * cd_std / np.sqrt(max(1, len(cd_arr)))
+
         return {
             'cl': round(cl_force, 6), 'cd': round(cd_val, 6), 'ld': round(ld, 4),
             'cl_raw': round(cl_val, 6),
             'cl_std': round(cl_std, 6), 'cd_std': round(cd_std, 6),
             'n_samples': int(len(cd_arr)),
+            'cl_ci95': round(float(cl_ci95), 6), 'cd_ci95': round(float(cd_ci95), 6),
+            'ld_ci95': round(float(abs(ld) * np.sqrt((cl_ci95 / cl_val) ** 2 + (cd_ci95 / cd_val) ** 2)), 4)
+            if abs(cl_val) > 1e-9 and abs(cd_val) > 1e-9 else None,
+            'converged_clcd': bool(getattr(mesh_gruesa, 'converged_clcd', False)),
+            't_conv_clcd': _round_or_none(getattr(mesh_gruesa, 't_conv_clcd', None), 4),
+            'iters_efectivas': int(n_datos * int(sim_params.get('guardado', 50))),
+            'cl_cp_discrepancy': _round_or_none(getattr(mesh_gruesa, 'cl_cp_discrepancy', None), 5),
+            'cl_cp_discrepancy_flag': bool(getattr(mesh_gruesa, 'cl_cp_discrepancy_flag', False)),
         }
 
     except Exception as e:
@@ -1448,10 +1484,16 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
             _cl_stds = [r['cl_std'] for r in resultados.values() if 'cl_std' in r]
             _cd_stds = [r['cd_std'] for r in resultados.values() if 'cd_std' in r]
             _ns = [r['n_samples'] for r in resultados.values() if 'n_samples' in r]
+            _convs = [bool(r.get('converged_clcd')) for r in resultados.values()]
+            _tconv = [r['t_conv_clcd'] for r in resultados.values() if r.get('t_conv_clcd') is not None]
+            _disc = [r['cl_cp_discrepancy'] for r in resultados.values() if r.get('cl_cp_discrepancy') is not None]
             _conv = {
                 'cl_std_mean': round(float(np.mean(_cl_stds)), 6) if _cl_stds else None,
                 'cd_std_mean': round(float(np.mean(_cd_stds)), 6) if _cd_stds else None,
                 'n_samples': int(np.mean(_ns)) if _ns else None,
+                'frac_converged_clcd': round(float(np.mean(_convs)), 3) if _convs else None,
+                't_conv_clcd_mean': round(float(np.mean(_tconv)), 4) if _tconv else None,
+                'cl_cp_discrepancy_mean': round(float(np.mean(_disc)), 5) if _disc else None,
             }
 
             # Resultados limpios (sin campos de convergencia inline)

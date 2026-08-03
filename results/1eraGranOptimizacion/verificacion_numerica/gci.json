@@ -1,0 +1,97 @@
+{
+  "perfil": "results/convergence_study/mixto_masgen/NACA_0012_sharp_Re100000_a4.0_LD18.18.dat",
+  "Re": 100000.0,
+  "alpha": 4.0,
+  "mallas_dx": [
+    0.001,
+    0.002,
+    0.004,
+    0.008
+  ],
+  "factor_refinamiento": [
+    2.0,
+    2.0
+  ],
+  "cl": {
+    "p_observado": 2.1803,
+    "f_fina": 0.740202,
+    "f_media": 0.710361,
+    "f_gruesa": 0.575107,
+    "f_extrapolado_richardson": 0.74865,
+    "error_aprox_ea21_pct": 4.0315,
+    "error_extrapolado_pct": 1.1284,
+    "GCI_fina_pct": 1.4266,
+    "GCI_gruesa_pct": 6.7375,
+    "convergencia_monotona": true
+  },
+  "cd": {
+    "p_observado": 3.1788,
+    "f_fina": 0.029272,
+    "f_media": 0.028769,
+    "f_gruesa": 0.033324,
+    "f_extrapolado_richardson": 0.029334,
+    "error_aprox_ea21_pct": 1.7184,
+    "error_extrapolado_pct": 0.2129,
+    "GCI_fina_pct": 0.2666,
+    "GCI_gruesa_pct": 2.4568,
+    "convergencia_monotona": false
+  },
+  "ld": {
+    "p_observado": 3.6424,
+    "f_fina": 25.2871,
+    "f_media": 24.6918,
+    "f_gruesa": 17.2578,
+    "f_extrapolado_richardson": 25.33892,
+    "error_aprox_ea21_pct": 2.3542,
+    "error_extrapolado_pct": 0.2045,
+    "GCI_fina_pct": 0.2562,
+    "GCI_gruesa_pct": 3.276,
+    "convergencia_monotona": true
+  },
+  "crudo": {
+    "dx0.001": {
+      "cl": 0.740202,
+      "cd": 0.029272,
+      "ld": 25.2871,
+      "cl_std": 0.04413,
+      "cd_std": 0.004655,
+      "n_samples": 104,
+      "converged_clcd": false,
+      "wall_s": 7471.8,
+      "iters_programadas": 26000
+    },
+    "dx0.002": {
+      "cl": 0.710361,
+      "cd": 0.028769,
+      "ld": 24.6918,
+      "cl_std": 0.016627,
+      "cd_std": 0.002354,
+      "n_samples": 52,
+      "converged_clcd": false,
+      "wall_s": 1742.8,
+      "iters_programadas": 13000
+    },
+    "dx0.004": {
+      "cl": 0.575107,
+      "cd": 0.033324,
+      "ld": 17.2578,
+      "cl_std": 0.012021,
+      "cd_std": 0.000717,
+      "n_samples": 28,
+      "converged_clcd": false,
+      "wall_s": 714.9,
+      "iters_programadas": 7000
+    },
+    "dx0.008": {
+      "cl": 0.4195,
+      "cd": 0.039999,
+      "ld": 10.4878,
+      "cl_std": 0.002516,
+      "cd_std": 5.3e-05,
+      "n_samples": 10,
+      "converged_clcd": false,
+      "wall_s": 232.9,
+      "iters_programadas": 4000
+    }
+  }
+}

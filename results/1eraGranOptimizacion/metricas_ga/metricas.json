@@ -1,0 +1,316 @@
+{
+  "estudios": {
+    "exprimir_re1e5": {
+      "generaciones": 28,
+      "ld_inicial": 17.0074,
+      "ld_final": 18.4776,
+      "mejora_pct": 8.64447240612909,
+      "completado": true,
+      "presion_selectiva_media": 0.3878,
+      "gpu_horas": 18.97,
+      "evaluaciones_cfd": 666,
+      "gpu_horas_por_eval": 0.0285,
+      "ld_ganado_por_gpu_hora": 0.0775,
+      "cribados_surrogate": 0,
+      "frac_cribado_surrogate": 0.0,
+      "descartes_geom_reproduccion": 225,
+      "reparados_parametrico": 241,
+      "fallback_legacy": 88
+    },
+    "masgen": {
+      "generaciones": 24,
+      "ld_inicial": 13.9744,
+      "ld_final": 18.177,
+      "mejora_pct": 30.07356308678728,
+      "completado": true,
+      "presion_selectiva_media": 0.4558,
+      "gpu_horas": 11.19,
+      "evaluaciones_cfd": 381,
+      "gpu_horas_por_eval": 0.0294,
+      "ld_ganado_por_gpu_hora": 0.3757,
+      "cribados_surrogate": 0,
+      "frac_cribado_surrogate": 0.0,
+      "descartes_geom_reproduccion": 335,
+      "reparados_parametrico": 167,
+      "fallback_legacy": 68
+    },
+    "masperfiles": {
+      "generaciones": 12,
+      "ld_inicial": 13.2448,
+      "ld_final": 16.1275,
+      "mejora_pct": 21.76476805991787,
+      "completado": true,
+      "presion_selectiva_media": 0.4249,
+      "gpu_horas": 7.9,
+      "evaluaciones_cfd": 281,
+      "gpu_horas_por_eval": 0.0281,
+      "ld_ganado_por_gpu_hora": 0.3651,
+      "cribados_surrogate": 0,
+      "frac_cribado_surrogate": 0.0,
+      "descartes_geom_reproduccion": 163,
+      "reparados_parametrico": 119,
+      "fallback_legacy": 31
+    },
+    "re1e3": {
+      "generaciones": 19,
+      "ld_inicial": 3.7151,
+      "ld_final": 5.013,
+      "mejora_pct": 34.93580253559796,
+      "completado": true,
+      "presion_selectiva_media": 0.3291,
+      "gpu_horas": 35.7,
+      "evaluaciones_cfd": 297,
+      "gpu_horas_por_eval": 0.1202,
+      "ld_ganado_por_gpu_hora": 0.0364,
+      "cribados_surrogate": 0,
+      "frac_cribado_surrogate": 0.0,
+      "descartes_geom_reproduccion": 152,
+      "reparados_parametrico": 148,
+      "fallback_legacy": 29
+    },
+    "re1e6": {
+      "generaciones": 16,
+      "ld_inicial": 8.6276,
+      "ld_final": 11.3104,
+      "mejora_pct": 31.095553804070654,
+      "completado": true,
+      "presion_selectiva_media": 0.3641,
+      "gpu_horas": 7.89,
+      "evaluaciones_cfd": 249,
+      "gpu_horas_por_eval": 0.0317,
+      "ld_ganado_por_gpu_hora": 0.34,
+      "cribados_surrogate": 0,
+      "frac_cribado_surrogate": 0.0,
+      "descartes_geom_reproduccion": 177,
+      "reparados_parametrico": 145,
+      "fallback_legacy": 28
+    },
+    "re1e7": {
+      "generaciones": 30,
+      "ld_inicial": 8.5407,
+      "ld_final": 11.714,
+      "mejora_pct": 37.155034130691874,
+      "completado": true,
+      "presion_selectiva_media": 0.4244,
+      "gpu_horas": 16.95,
+      "evaluaciones_cfd": 473,
+      "gpu_horas_por_eval": 0.0358,
+      "ld_ganado_por_gpu_hora": 0.1872,
+      "cribados_surrogate": 0,
+      "frac_cribado_surrogate": 0.0,
+      "descartes_geom_reproduccion": 300,
+      "reparados_parametrico": 228,
+      "fallback_legacy": 61
+    }
+  },
+  "diversidad": {
+    "corrida_0": {
+      "Re": 1000000.0,
+      "generaciones": 10,
+      "diversidad_geom_final_rel": 1.1966,
+      "cv_parametros_final": 0.3665
+    },
+    "corrida_1": {
+      "Re": 1000000.0,
+      "generaciones": 10,
+      "diversidad_geom_final_rel": 0.7283,
+      "cv_parametros_final": 0.0992
+    },
+    "corrida_2": {
+      "Re": 1000000.0,
+      "generaciones": 30,
+      "diversidad_geom_final_rel": 1.2012,
+      "cv_parametros_final": 0.5455
+    },
+    "corrida_3": {
+      "Re": 100000.0,
+      "generaciones": 30,
+      "diversidad_geom_final_rel": 4.5341,
+      "cv_parametros_final": 0.2672
+    },
+    "corrida_4": {
+      "Re": 100000.0,
+      "generaciones": 30,
+      "diversidad_geom_final_rel": 1.2099,
+      "cv_parametros_final": 0.2506
+    },
+    "corrida_30": {
+      "Re": 100000.0,
+      "generaciones": 25,
+      "diversidad_geom_final_rel": 0.0436,
+      "cv_parametros_final": 0.0971
+    },
+    "corrida_31": {
+      "Re": 100000.0,
+      "generaciones": 20,
+      "diversidad_geom_final_rel": 1.8842,
+      "cv_parametros_final": 0.2171
+    },
+    "corrida_32": {
+      "Re": 100000.0,
+      "generaciones": 7,
+      "diversidad_geom_final_rel": 2.9947,
+      "cv_parametros_final": 0.3294
+    },
+    "corrida_33": {
+      "Re": 100000.0,
+      "generaciones": 21,
+      "diversidad_geom_final_rel": 1.1099,
+      "cv_parametros_final": 0.0814
+    },
+    "corrida_50": {
+      "Re": 100000.0,
+      "generaciones": 24,
+      "diversidad_geom_final_rel": 0.5552,
+      "cv_parametros_final": 0.2174
+    },
+    "corrida_51": {
+      "Re": 100000.0,
+      "generaciones": 12,
+      "diversidad_geom_final_rel": 0.2304,
+      "cv_parametros_final": 0.2305
+    },
+    "corrida_52": {
+      "Re": 100000.0,
+      "generaciones": 28,
+      "diversidad_geom_final_rel": 0.2227,
+      "cv_parametros_final": 0.1753
+    },
+    "corrida_53": {
+      "Re": 1000.0,
+      "generaciones": 19,
+      "diversidad_geom_final_rel": 0.318,
+      "cv_parametros_final": 0.2859
+    },
+    "corrida_54": {
+      "Re": 1000000.0,
+      "generaciones": 16,
+      "diversidad_geom_final_rel": 0.2546,
+      "cv_parametros_final": 0.1093
+    },
+    "corrida_55": {
+      "Re": 10000000.0,
+      "generaciones": 30,
+      "diversidad_geom_final_rel": 0.2742,
+      "cv_parametros_final": 0.4019
+    }
+  },
+  "pca": {
+    "n_muestras": 3884,
+    "n_dim": 256,
+    "varianza_explicada": [
+      0.5978,
+      0.1576,
+      0.0981,
+      0.0347
+    ],
+    "varianza_acumulada_pc2": 0.7554
+  },
+  "optimos_por_re": {
+    "Re=1e3": {
+      "ld": 5.013,
+      "espesor_max": 0.07074,
+      "espesor_pos": 0.2125,
+      "camber_max": -0.07899,
+      "camber_pos": 1.0,
+      "le_radius": 0.00647,
+      "te_gap": 0.00038
+    },
+    "Re=1e5": {
+      "ld": 18.478,
+      "espesor_max": 0.05823,
+      "espesor_pos": 0.3875,
+      "camber_max": 0.03259,
+      "camber_pos": 0.4,
+      "le_radius": 0.00255,
+      "te_gap": 0.00105
+    },
+    "Re=1e6": {
+      "ld": 11.921,
+      "espesor_max": 0.05342,
+      "espesor_pos": 0.4125,
+      "camber_max": 0.01826,
+      "camber_pos": 0.875,
+      "le_radius": 0.01156,
+      "te_gap": 0.00984
+    },
+    "Re=1e7": {
+      "ld": 11.714,
+      "espesor_max": 0.06848,
+      "espesor_pos": 0.35,
+      "camber_max": 0.0649,
+      "camber_pos": 0.275,
+      "le_radius": 0.01383,
+      "te_gap": 0.0003
+    }
+  },
+  "pareto": {
+    "Re=1e3": {
+      "n_evaluaciones": 225,
+      "n_pareto": 51,
+      "cd_min": 0.139831,
+      "cl_max": 1.233351,
+      "ld_max": 5.013
+    },
+    "Re=1e5": {
+      "n_evaluaciones": 2793,
+      "n_pareto": 62,
+      "cd_min": 0.0188,
+      "cl_max": 2.746945,
+      "ld_max": 18.4776
+    },
+    "Re=1e6": {
+      "n_evaluaciones": 509,
+      "n_pareto": 63,
+      "cd_min": 0.025612,
+      "cl_max": 1.144298,
+      "ld_max": 11.9211
+    },
+    "Re=1e7": {
+      "n_evaluaciones": 357,
+      "n_pareto": 33,
+      "cd_min": 0.060718,
+      "cl_max": 1.226013,
+      "ld_max": 11.714
+    }
+  },
+  "ld_vs_re": {
+    "Re=1e3": {
+      "ld_exploracion": 5.013,
+      "ld_refinado": 5.013,
+      "delta_refinado_pct": 0.0
+    },
+    "Re=1e5": {
+      "ld_exploracion": 18.4776,
+      "ld_refinado": 15.1346,
+      "delta_refinado_pct": -18.09
+    },
+    "Re=1e6": {
+      "ld_exploracion": 11.3104,
+      "ld_refinado": 12.1849,
+      "delta_refinado_pct": 7.73
+    },
+    "Re=1e7": {
+      "ld_exploracion": 11.714,
+      "ld_refinado": 12.0847,
+      "delta_refinado_pct": 3.16
+    }
+  },
+  "estabilidad_cfd": {
+    "frac_std_cero_exacto": 0.8175,
+    "cl_disp_rel_mediana_pct": 4.9875,
+    "cd_disp_rel_mediana_pct": 10.4172
+  },
+  "surrogate_offline": {
+    "Re": 100000.0,
+    "n_muestras": 2793,
+    "r2_cv": 0.8497,
+    "mae_cv": 1.0747,
+    "usar_ia_en_estudios": false,
+    "punto_operacion": {
+      "cfd_evitado_pct": 69.0,
+      "elite_perdida_pct": 2.5,
+      "percentil_umbral": 70
+    }
+  }
+}
