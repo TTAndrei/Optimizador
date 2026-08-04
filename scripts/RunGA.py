@@ -182,6 +182,21 @@ CONFIG = {
 # 2. CONTROL DE PARADA SEGURA
 # ==========================================
 PARADA_SOLICITADA = False
+STOP_FILE = None  # ruta opcional; su existencia equivale a un Ctrl+C
+
+
+def parada_pedida():
+    """Ctrl+C o fichero centinela. El fichero permite pausar una corrida lanzada
+    en segundo plano sin localizar el PID, que es como se opera una campaña de
+    días. Se consulta entre evaluaciones, nunca dentro del solver."""
+    global PARADA_SOLICITADA
+    if not PARADA_SOLICITADA and STOP_FILE and os.path.exists(STOP_FILE):
+        print("\n\n" + "!" * 60)
+        print(f">>> PARADA SOLICITADA (fichero {STOP_FILE})")
+        print(">>> Terminando evaluación actual y guardando progreso...")
+        print("!" * 60 + "\n")
+        PARADA_SOLICITADA = True
+    return PARADA_SOLICITADA
 
 
 def _round_or_none(v, n):
@@ -305,6 +320,7 @@ class OraculoAerodinamico:
         self.datos_X = []   # Coordenadas Y del perfil (features compactas)
         self.datos_y = []   # Fitness L/D (target)
         self.conteo_descartes = 0
+        self.n_cargados = 0   # cuántas experiencias vinieron del disco
         self.cargar_memoria()
 
     def cargar_memoria(self):
@@ -317,6 +333,7 @@ class OraculoAerodinamico:
                     self.datos_X = memoria.get('X', [])
                     self.datos_y = memoria.get('y', [])
 
+                self.n_cargados = len(self.datos_X)
                 print(f" [IA] Memoria recuperada: {len(self.datos_X)} experiencias")
                 if len(self.datos_X) >= 20:
                     self.modelo.fit(self.datos_X, self.datos_y)
@@ -330,10 +347,32 @@ class OraculoAerodinamico:
             print(" [IA] Sin memoria previa. Aprendizaje desde cero.")
 
     def guardar_memoria(self):
-        """Persiste experiencia acumulada a disco"""
+        """Persiste la experiencia acumulada SIN pisar la del disco.
+
+        Se releen las experiencias del fichero y solo se añaden las nuevas de
+        esta corrida. Antes se volcaba `self.datos_X` tal cual, así que una
+        corrida que arrancase con la memoria vacía (fallo de carga, cwd distinto)
+        borraba todo el histórico: una prueba de humo de 10 individuos se llevó
+        por delante 2347 experiencias. Escritura atómica para que un kill a
+        mitad no deje un pickle truncado.
+        """
+        nuevas_X = self.datos_X[self.n_cargados:]
+        nuevas_y = self.datos_y[self.n_cargados:]
+        base_X, base_y = self.datos_X[:self.n_cargados], self.datos_y[:self.n_cargados]
+        if os.path.exists(self.archivo):
+            try:
+                with open(self.archivo, 'rb') as f:
+                    disco = pickle.load(f)
+                if len(disco.get('X', [])) >= len(base_X):
+                    base_X, base_y = disco['X'], disco['y']
+            except Exception as e:
+                print(f" [IA] Memoria en disco ilegible ({e}); se conserva la de RAM.")
+
         try:
-            with open(self.archivo, 'wb') as f:
-                pickle.dump({'X': self.datos_X, 'y': self.datos_y}, f)
+            tmp = self.archivo + '.tmp'
+            with open(tmp, 'wb') as f:
+                pickle.dump({'X': base_X + nuevas_X, 'y': base_y + nuevas_y}, f)
+            os.replace(tmp, self.archivo)
         except Exception as e:
             print(f" [IA] Error guardando memoria: {e}")
 
@@ -341,7 +380,7 @@ class OraculoAerodinamico:
         """Incorpora resultados de una generación para mejorar predicciones"""
         nuevos = [
             (ind.genes[:, 1].tolist(), ind.fitness)
-            for ind in poblacion_evaluada if ind.fitness > 0
+            for ind in poblacion_evaluada if ind.resultados
         ]
 
         if not nuevos:
@@ -1040,6 +1079,10 @@ class Individuo:
         self.header = header
         self.fitness = 0.0
         self.resultados = {}  # {"5.0": {"cl": float, "cd": float, "ld": float}}
+        # Centinela explícito. `fitness == 0` no vale: un perfil con L/D negativo
+        # es una evaluación legítima (el individuo 1265 da L/D=-1.29) y quedaría
+        # confundido con uno sin simular, re-evaluándose cada generación.
+        self.evaluado = False
 
     def __repr__(self):
         return f"Ind(fitness={self.fitness:.4f})"
@@ -1371,7 +1414,11 @@ def calcular_fitness(resultados, config):
     if not resultados:
         return 0.0
 
-    lds = {ang: res['ld'] for ang, res in resultados.items() if res['ld'] > 0}
+    # Sin filtro de signo: un L/D negativo (perfil que genera sustentación
+    # contraria) es un valor real y debe ordenarse por debajo de los positivos,
+    # no colapsar a 0.0 y empatar con las evaluaciones fallidas.
+    lds = {ang: res['ld'] for ang, res in resultados.items()
+           if np.isfinite(res['ld'])}
 
     if not lds:
         return 0.0
@@ -1409,7 +1456,7 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
       3. Cálculo de fitness combinado
       4. Registro de datos para ML
     """
-    n_total_pendiente = sum(1 for ind in poblacion if ind.fitness == 0)
+    n_total_pendiente = sum(1 for ind in poblacion if not ind.evaluado)
     n_angulos = len(angulos)
     ang_str = ', '.join(f"{a:.1f}°" for a in angulos)
 
@@ -1421,11 +1468,11 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
     n_descartados_geom = 0
 
     for i, ind in enumerate(poblacion):
-        if PARADA_SOLICITADA:
+        if parada_pedida():
             break
 
-        if ind.fitness != 0:
-            continue  # Ya evaluado (elite de generación anterior)
+        if ind.evaluado:
+            continue  # Elite de generación anterior, o restaurado del checkpoint
 
         # Filtro geométrico duro (previo a IA y CFD)
         if le_idx is not None and restricciones is not None:
@@ -1434,13 +1481,15 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
             )
             if not valido_geom:
                 ind.fitness = 0.0
+                ind.evaluado = True
                 n_descartados_geom += 1
                 continue
 
         # Filtro IA
         if oraculo.entrenado and config['usar_ia']:
             if not oraculo.predecir_si_vale_la_pena(ind.genes):
-                ind.fitness = 0.0  # Queda sin evaluar
+                ind.fitness = 0.0
+                ind.evaluado = True  # descartado sin CFD; no reintentarlo
                 n_descartados_ia += 1
                 continue
 
@@ -1471,12 +1520,17 @@ def evaluar_poblacion(poblacion, gen, angulos, config, oraculo, logger, condicio
             if os.path.exists(nombre_temp):
                 os.remove(nombre_temp)
 
+        if PARADA_SOLICITADA and len(resultados) < len(angulos):
+            break  # evaluación truncada: se deja sin marcar para rehacerla al reanudar
+
         ind.resultados = resultados
         ind.fitness = calcular_fitness(resultados, config)
+        ind.evaluado = True
         n_evaluados += 1
 
-        # Registrar para ML (solo evaluaciones exitosas)
-        if ind.fitness > 0 and resultados:
+        # Registrar para ML (toda evaluación con CFD, también las de L/D negativo:
+        # son justo los ejemplos que el oráculo necesita para aprender a descartar)
+        if resultados:
             # Parametrización geométrica compacta para IA
             _param = extraer_parametrizacion(ind.genes, le_idx) if le_idx is not None else {}
 
@@ -1536,7 +1590,7 @@ def guardar_top_perfiles(poblacion, coords_base, gen, directorio_base, n_top=2):
     os.makedirs(carpeta_gen, exist_ok=True)
 
     mejores = sorted(
-        [ind for ind in poblacion if ind.fitness > 0],
+        [ind for ind in poblacion if ind.resultados],
         key=lambda x: x.fitness, reverse=True
     )[:n_top]
 
@@ -1708,6 +1762,7 @@ def guardar_estado_ga(filepath, poblacion, mejor_global, gen, historial,
         'poblacion_resumen': [
             {
                 'fitness': ind.fitness,
+                'evaluado': ind.evaluado,
                 'resultados': ind.resultados,
                 'genes': ind.genes.tolist(),
                 'header': ind.header,
@@ -1732,10 +1787,11 @@ def guardar_estado_ga(filepath, poblacion, mejor_global, gen, historial,
 def main(config=None):
     """Ejecuta el GA. `config` (dict opcional) sobreescribe CONFIG para esta corrida
     (permite lanzar N corridas distintas en un mismo proceso). Devuelve un resumen."""
-    global PARADA_SOLICITADA
+    global PARADA_SOLICITADA, STOP_FILE
     PARADA_SOLICITADA = False
     if config:
         CONFIG.update(config)
+    STOP_FILE = CONFIG.get('stop_file')
     try:
         signal.signal(signal.SIGINT, manejar_parada)
     except ValueError:
@@ -1957,9 +2013,17 @@ def main(config=None):
                 _ck = json.load(_f)
             _pr = _ck.get('poblacion_resumen', [])
             if _pr and all('genes' in _p for _p in _pr):
-                poblacion = [Individuo(np.array(_p['genes']),
-                                       _p.get('header', header_base))
-                             for _p in _pr]
+                poblacion = []
+                for _p in _pr:
+                    _ind = Individuo(np.array(_p['genes']),
+                                     _p.get('header', header_base))
+                    # Restaurar el fitness ya pagado: sin esto la reanudación
+                    # re-simula la generación entera (~3 h a dx=0.004, pop 16).
+                    _ind.fitness = float(_p.get('fitness', 0.0))
+                    _ind.resultados = _p.get('resultados', {}) or {}
+                    _ind.evaluado = bool(_p.get('evaluado',
+                                                _ind.fitness != 0.0))
+                    poblacion.append(_ind)
                 _mg = _ck.get('mejor_global') or {}
                 if _mg.get('genes') is not None:
                     mejor_global = Individuo(np.array(_mg['genes']),
@@ -2021,7 +2085,7 @@ def main(config=None):
             print(f"   [S1] sigma_factor={_factor:.2f} "
                   f"(camber_std={CONFIG['camber_mut_std']:.4f})")
 
-        if PARADA_SOLICITADA:
+        if parada_pedida():
             print("\n Parada solicitada. Saliendo del bucle evolutivo...")
             break
 
@@ -2043,13 +2107,29 @@ def main(config=None):
             restricciones=restricciones_geom
         )
 
+        if PARADA_SOLICITADA:
+            # Generación a medias. Se guarda como `gen - 1` para que al reanudar
+            # se repita ESTA generación; los individuos ya simulados llevan
+            # evaluado=True y no se vuelven a pagar.
+            print(f"\n Pausa durante la gen {gen + 1}: "
+                  f"{sum(1 for i in poblacion if i.evaluado)}/{len(poblacion)} "
+                  f"evaluados se conservan en el checkpoint.")
+            guardar_estado_ga(
+                os.path.join(CONFIG['directorio_resultados'], "estado_ga.json"),
+                poblacion, mejor_global, gen - 1, historial_fitness,
+                estancamiento={'mejor_visto': _mejor_visto,
+                               'gens_sin_mejora': _gens_sin_mejora}
+            )
+            gen_actual = gen - 1
+            break
+
         # --- B. APRENDIZAJE IA ---
         oraculo.aprender(poblacion)
 
         # --- C. ESTADÍSTICAS ---
         poblacion.sort(key=lambda x: x.fitness, reverse=True)
         mejor_gen = poblacion[0]
-        fitness_validos = [ind.fitness for ind in poblacion if ind.fitness > 0]
+        fitness_validos = [ind.fitness for ind in poblacion if ind.resultados]
 
         t_gen = time.time() - t_gen_inicio
 
@@ -2163,7 +2243,9 @@ def main(config=None):
             nueva_poblacion.append(ind_elite)
 
         # Seleccionar pool de candidatos para reproducción
-        candidatos = [ind for ind in poblacion if ind.fitness > 0]
+        # Cualquiera que haya pasado por el CFD, aunque su L/D sea negativo: el
+        # torneo ya los ordena y excluirlos vaciaría el pool en generaciones malas.
+        candidatos = [ind for ind in poblacion if ind.resultados]
         if len(candidatos) < 2:
             candidatos = poblacion  # Fallback
 
@@ -2182,6 +2264,7 @@ def main(config=None):
                 clon = copy.deepcopy(poblacion[0])
                 clon.fitness = 0.0
                 clon.resultados = {}
+                clon.evaluado = False
                 nueva_poblacion.append(clon)
                 intentos_fallidos = 0
                 continue

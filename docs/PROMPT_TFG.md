@@ -94,9 +94,48 @@ donde el algoritmo selecciona, lo he demostrado con estadística de rangos, y he
 exactamente qué afirmaciones siguen siendo defendibles. Ese es el valor del trabajo y así debe
 estructurarse la narrativa.
 
+**Consecuencia directa: la campaña de optimización hay que rehacerla, y hasta entonces sus
+resultados no se escriben.** Lee la moratoria de §3.0 antes de tocar el capítulo 4.
+
 ---
 
 ## 3. Reglas de veracidad — LEER ANTES DE ESCRIBIR NADA
+
+### 3.0 Moratoria: qué NO se escribe todavía
+
+Hay partes del proyecto que aún no existen en estado citable. **No las redactes, ni siquiera como
+borrador provisional, ni las rellenes con los datos actuales del repositorio.**
+
+**Prohibido escribir por ahora:**
+
+1. **Resultados de optimización.** La campaña hay que rehacerla con presupuesto fijo y sin parada
+   anticipada. Nada de curvas de convergencia del fitness, mejoras porcentuales por estudio, ni
+   comparativas entre estudios.
+2. **El perfil ganador y sus coeficientes.** No hay ganador validado. No lo describas, no lo
+   dibujes, no des su geometría (espesor relativo, camber, posiciones) ni sus C_L, C_D o C_p como
+   resultado.
+3. **Cualquier tabla de L/D.** Los valores actuales salen de una función de fitness que no ordenaba
+   en la zona alta. Esto incluye polares con columna L/D, tablas por Reynolds, tablas por α y
+   cualquier L/D suelto citado en el cuerpo del texto.
+
+**Qué hacer en su lugar:** escribe la sección afectada hasta donde el método y la metodología lo
+permitan —cómo se mide, con qué configuración, con qué incertidumbre, qué figura irá ahí— y cierra
+con `[EN ESPERA: campaña por rehacer]`. Una sección con el método descrito y el hueco marcado es
+útil; una con números que habrá que borrar, no.
+
+**Qué sí se puede escribir ya:** todo el capítulo 1, todo el 2, todo el 3 (método e
+implementación, incluida la descripción del GA y del surrogate como *algoritmos*), la verificación
+del solver que no dependa de la optimización (simetría, DNS de referencia, orden observado del
+esquema, contraste con XFOIL sobre NACA 0012), el rendimiento computacional, el capítulo 6 y la
+parte de las conclusiones que se refiere al método y a la verificación.
+
+**Caso especial — la verificación de la función de fitness.** El estudio de supervivencia del
+ranking (Spearman, Kendall, solape de top-k) **sí se escribe**: no es un resultado de optimización,
+es la verificación que demuestra por qué hay que rehacer la campaña. Preséntalo con las estadísticas
+de rango y sin publicar los L/D absolutos de los individuos. Es el argumento que justifica la
+moratoria, así que tiene que estar.
+
+### 3.1 Reglas generales
 
 Estas reglas no son negociables. Un número mal citado aquí invalida un capítulo entero.
 
@@ -479,12 +518,19 @@ Estructúralo como una cadena de verificación, en este orden:
    y resultados. La cifra a defender es **p(C_L) = 2.18**, que coincide con el orden formal 2 del
    esquema, y **GCI(C_L) = ±1.43 %** en la malla fina.
    **Lectura crítica obligatoria**: C_D **no converge monótonamente** (0.03332 → 0.02877 → 0.02927),
-   así que su GCI de ±0.27 % está sobrevalorado y el de L/D lo hereda. Los órdenes observados de
-   3.18 y 3.64, por encima del orden formal, son otra señal de que ese triplete no está plenamente
-   en el rango asintótico. Y la consecuencia que arrastra todo el trabajo: **dx = 0.004 queda fuera
-   del rango asintótico, y el GA exploró ahí**.
-5. **Validación cruzada por tres vías independientes** del ganador Re=1e5: serie larga sin parada
-   24.81, GCI a dx=0.002 24.69, reevaluación con criterio calibrado 24.50.
+   así que su GCI de ±0.27 % está sobrevalorado. Los órdenes observados por encima del orden formal
+   son otra señal de que ese triplete no está plenamente en el rango asintótico. Y la consecuencia
+   que arrastra todo el trabajo: **dx = 0.004 queda fuera del rango asintótico, y el GA exploró ahí**.
+   **Restricción de la moratoria (§3.0)**: este estudio se corrió sobre una geometría procedente de
+   la campaña antigua. Preséntala como "el perfil empleado en el estudio de convergencia", **sin
+   identificarla como ganador ni presentar su rendimiento**, y da la tabla en C_L y C_D. **Sin
+   columna de L/D.** El resultado que interesa aquí es una propiedad del esquema numérico, no del
+   perfil.
+5. **Validación cruzada por tres vías independientes** (serie larga sin parada, GCI a dx=0.002, y
+   reevaluación con el criterio calibrado): describe el diseño del contraste y por qué tres rutas
+   independientes que coinciden acotan el error mejor que cualquiera de ellas por separado. Las tres
+   cifras son L/D del perfil ganador antiguo → `[EN ESPERA: campaña por rehacer]`. Si quieres cerrar
+   la sección con números, reexprésalo en C_L y avísame antes.
 6. **Contraste con XFOIL** (NACA 0012, Re = 1e5, Ncrit = 9): tabla completa de C_L y C_D. La
    pendiente de sustentación es el resultado sólido — 0.10211 /° frente a 0.11107 de XFOIL y 0.10966
    de la teoría de perfil delgado (2π), un 8 % por debajo, que es lo normal para espesor finito.
@@ -501,26 +547,42 @@ Campos de velocidad, presión y vorticidad. Estructura del flujo alrededor del p
 remanso, aceleración en extradós, pico de succión, recuperación de presión, estela. Evolución del
 transitorio en tiempos convectivos, desde el arranque impulsivo hasta el estacionario.
 
-Casos con desprendimiento: a Re=1e3 el flujo desprende y el L/D oscila; a Re≥1e5 con SA el flujo se
-estaciona. Muestra la burbuja de separación laminar y su reataque, y la posición del pico de succión
-(x/c ≈ 0.015–0.02 en la configuración correcta, frente a 0.14 cuando el modelo turbulento fallaba).
+Casos con desprendimiento: a Re=1e3 el flujo desprende y los coeficientes oscilan; a Re≥1e5 con SA
+el flujo se estaciona. Muestra la burbuja de separación laminar y su reataque, y la posición del
+pico de succión (x/c ≈ 0.015–0.02 en la configuración correcta, frente a 0.14 cuando el modelo
+turbulento fallaba).
 
-Material disponible: `results/1eraGranOptimizacion/videos_ganadores/` (800 frames por caso, campos
-de velocidad en dominio completo y en zona refinada, Re=1e3 y Re=1e5) y
-`results/1eraGranOptimizacion/diagnosticos/`.
+Material disponible: `results/1eraGranOptimizacion/diagnosticos/` (casos NACA 0012, es la fuente
+preferente) y `results/1eraGranOptimizacion/videos_ganadores/` (800 frames por caso, campos de
+velocidad en dominio completo y en zona refinada, Re=1e3 y Re=1e5).
+
+**Restricción de la moratoria (§3.0)**: prioriza los casos NACA 0012. Los frames de
+`videos_ganadores/` solo pueden usarse como ilustración de fenomenología del flujo, **sin
+identificar la geometría como perfil ganador y sin acompañarlos de coeficientes**. Si una figura
+necesita rotularse con el perfil que la generó, usa un caso de referencia en su lugar.
 
 #### 4.3 Resultados aerodinámicos
 
-Polar completa α = 0…10° a dx = 0.002 del perfil ganador Re=1e5 y del NACA 0012 de referencia
-(tabla en `verificacion_numerica.md` §5.1, datos en `results/.../polar.json`). Comenta:
+**Restricción de la moratoria (§3.0): esta sección se limita al perfil de referencia NACA 0012 y no
+lleva tabla de L/D.** Nada de polares del ganador ni de comparativas ganador-frente-a-semilla.
 
-- El máximo de L/D del ganador cae en α = 4°, que es exactamente su punto de diseño.
-- La ventaja sobre la semilla se mantiene en **todo** el rango, no solo en el punto de diseño → no
-  hay indicio de sobreajuste al ángulo de diseño; la mejora es de banda ancha.
+Lo que sí se escribe ahora:
+
+- Curva C_L(α) del NACA 0012 a Re = 1e5 y dx = 0.002, con su pendiente de sustentación y el
+  contraste frente a XFOIL y a la teoría de perfil delgado (§4.1). Es el resultado aerodinámico
+  sólido del trabajo.
+- Curva C_D(α) del mismo caso, **presentada explícitamente como magnitud no validada**, con la
+  discusión de su desviación creciente con α.
+- Distribuciones de C_p en extradós e intradós para varios α, y su relación con la curva de
+  sustentación: punto de remanso, pico de succión, recuperación de presión, y cómo se degrada al
+  aumentar α.
 - Sublinealidad a α altos y su interpretación física (pre-stall, separación creciente en el borde
   de salida).
 
-Distribuciones de C_p en extradós e intradós para varios α, y su relación con la polar.
+`[EN ESPERA: campaña por rehacer]` — polar del perfil optimizado, comparación con la semilla, y la
+comprobación de si la mejora es de banda ancha o está sobreajustada al ángulo de diseño. Deja el
+hueco planteado como pregunta abierta y la figura prevista descrita, para rellenarlo cuando exista
+la nueva campaña.
 
 #### 4.4 Rendimiento computacional
 
@@ -537,40 +599,71 @@ Distribuciones de C_p en extradós e intradós para varios α, y su relación co
 
 #### 4.5 Resultados de optimización
 
-Esta sección tiene cuatro partes y **las cuatro son necesarias**:
+**Esta es la sección más afectada por la moratoria (§3.0).** El grueso de lo que iría aquí —qué
+perfil ganó, cuánto mejoró, con qué coeficientes— no se escribe todavía. Lo que sí se escribe es la
+parte que explica **por qué** no se escribe: la verificación de la función de fitness. Esa parte no
+es un resultado de optimización, es el resultado de verificación que obliga a rehacer la campaña, y
+sin ella el hueco del capítulo no se entiende.
 
-1. **Lo que hizo el GA**: seis estudios, mejoras de fitness del +8.6 % al +37.2 % según estudio,
-   con sus generaciones, coste y presión selectiva. Óptimo geométrico por Reynolds (espesor
-   relativo, posición del espesor máximo, camber máximo y su posición). Figuras 01–15 en
-   `results/1eraGranOptimizacion/metricas_ga/`.
+Orden de la sección:
+
+1. **Diseño experimental de la campaña**, sin resultados: seis estudios a Re ∈ {1e3, 1e5, 1e6, 1e7},
+   población, generaciones, operadores, presupuesto y coste (3884 evaluaciones, 98.6 h de GPU). Es
+   descripción de lo hecho, no de lo obtenido, y sirve de referencia para dimensionar la campaña
+   nueva.
 2. **Estructura del espacio de diseño**: PCA sobre 3884 muestras de 256 coordenadas — PC1+PC2
    explican el **75.5 %** de la varianza geométrica. La dimensionalidad efectiva del problema es
    mucho menor que la nominal, y eso justifica que un GA con población pequeña pueda funcionar.
-3. **¿Converge el GA a un óptimo único?** Este es un experimento cerrado y con respuesta clara.
-   Cuatro semillas (AG24, GM15, NACA_0012_sharp, s1014) corridas **solas, sin migración**, hasta
-   estancamiento (7–25 generaciones, ~28 h de GPU): cada una mejora su L/D pero **acaban en
-   geometrías distintas** — distancia de forma media 0.0557, igual o peor que la de partida (0.0507).
-   Conclusión: **la convergencia que producen las islas la fuerza la migración, no una física de
-   óptimo único**. Hay varias cuencas locales.
-4. **¿Seleccionó bien el GA?** El resultado central del trabajo. Muestreo estratificado por deciles
-   del historial (n=20), re-simulado sin parada anticipada y con presupuesto fijo, comparado con el
-   fitness original: Spearman ρ = 0.7955 global, pero **ρ = 0.152 en la mitad superior** y solape
-   top-4 de **0.25**. Cambio mediano del L/D: +65 %. Dos casos ilustran el fallo: el individuo 2019
-   es el mejor real de la muestra (L/D 24.06), es de **generación 1**, y el GA lo rankeó octavo; el
-   2312 pasa del puesto 3 al 13. Explica por qué el cambio es sistemáticamente positivo (doble
-   infraestimación: malla fuera del rango asintótico y transitorio) pero **no es un factor de escala
-   común**, y por eso reordena.
+   Es una propiedad de la parametrización, no un resultado de rendimiento, así que entra. Advierte
+   igualmente de que la muestra procede de la campaña antigua y habrá que recalcularlo.
+3. **¿Converge el GA a un óptimo único?** Cuatro semillas (AG24, GM15, NACA_0012_sharp, s1014)
+   corridas **solas, sin migración**, hasta estancamiento (7–25 generaciones, ~28 h de GPU):
+   **acaban en geometrías distintas** — distancia de forma media 0.0557, igual o peor que la de
+   partida (0.0507). Conclusión: **la convergencia que producen las islas la fuerza la migración, no
+   una física de óptimo único**; hay varias cuencas locales.
+   Escríbelo en términos de **distancia de forma**, sin dar los L/D de cada semilla, y añade el
+   caveat honesto: el experimento usó la misma función de fitness defectuosa, así que la conclusión
+   es sólida sobre la *dinámica del algoritmo* pero debe reconfirmarse con la campaña nueva.
+4. **¿Seleccionó bien el GA?** El resultado central del trabajo, y el que justifica la moratoria.
+   Muestreo estratificado por deciles del historial (n=20), re-simulado sin parada anticipada y con
+   presupuesto fijo, comparado con el orden que vio el GA:
+
+   - Spearman ρ = 0.7955 global, Kendall τ = 0.6421.
+   - Separando por la mediana: ρ = 0.612 en la mitad inferior, **ρ = 0.152 en la mitad superior**.
+   - Solape del top-k: 1/3 con k=3, **1/4 con k=4**, y no se recupera hasta que k deja de ser
+     selectivo.
+   - Sesgo mediano del fitness antiguo: **+65 %** (IQR 47–104), con dispersión de −10 % a +145 %.
+
+   Preséntalo **con estadística de rangos y magnitudes de sesgo, sin publicar los L/D absolutos de
+   los individuos** (§3.0). Los dos casos ilustrativos se cuentan por su posición, no por su valor:
+   el mejor individuo real de la muestra era de **generación 1** y el GA lo rankeó octavo; otro
+   individuo pasó del puesto 3 al 13 porque la parada anticipada le regalaba resistencia baja.
+
+   Explica por qué el sesgo es sistemáticamente positivo (doble infraestimación: malla fuera del
+   rango asintótico y transitorio) pero **no es un factor de escala común**, y por eso reordena.
 
    Enuncia la conclusión en sus dos mitades, sin suavizarla: *a favor*, la búsqueda sí se movió
-   hacia una región de L/D real alto (4 de 5 individuos de generación ≥17 revalidan por encima de
-   20; correlación generación–L/D revalidado ρ = 0.41); *en contra*, el orden dentro de esa región
-   no era fiable. El GA encontró el barrio correcto con una señal que distingue órdenes de magnitud,
-   y eligió la casa con una señal que no distingue nada a esa escala.
+   hacia una región de rendimiento real alto (4 de 5 individuos de generación ≥17 revalidan en la
+   zona alta; correlación generación–rendimiento revalidado ρ = 0.41); *en contra*, el orden dentro
+   de esa región no era fiable. El GA encontró el barrio correcto con una señal que distingue
+   órdenes de magnitud, y eligió la casa con una señal que no distingue nada a esa escala.
 
-5. **Evaluación retrospectiva del surrogate**: `usar_ia=False` en los 6 estudios. Reentrenado
-   offline sobre 2793 muestras a Re=1e5: R² = 0.850 (validación cruzada 5-fold), MAE = 1.07. Punto
-   de operación viable: umbral en el percentil 70 evitaría el **69 % del CFD** perdiendo solo el
-   **2.5 % de la élite** — unas 68 horas de GPU desperdiciadas por no haberlo activado.
+   Cierra enlazando con la moratoria: por eso los resultados de optimización de este trabajo están
+   pendientes de una campaña nueva, y por eso esa campaña necesita presupuesto fijo.
+
+5. **Evaluación retrospectiva del surrogate**: `usar_ia=False` en los 6 estudios, el filtro nunca
+   cribó nada. Reentrenado offline sobre 2793 muestras a Re=1e5: R² = 0.850 (validación cruzada
+   5-fold), MAE = 1.07 en unidades de L/D. Punto de operación viable: umbral en el percentil 70
+   evitaría el **69 % del CFD** perdiendo solo el **2.5 % de la élite** — unas 68 horas de GPU
+   desperdiciadas por no haberlo activado.
+   Son métricas de calidad del modelo, no rendimiento de ningún perfil, así que entran. Pero
+   adviértelo: **está entrenado sobre las etiquetas defectuosas**, luego hay que reentrenarlo con la
+   campaña nueva y estas cifras son una cota optimista de lo que puede esperarse.
+
+6. `[EN ESPERA: campaña por rehacer]` — resultados de optimización propiamente dichos: convergencia
+   del fitness, mejora conseguida, perfil resultante, su geometría y sus coeficientes, y el óptimo
+   geométrico por Reynolds. Deja el esqueleto de la sección y las figuras previstas descritas
+   (`results/.../metricas_ga/` tiene los scripts que las regeneran), sin datos.
 
 ---
 
@@ -619,6 +712,9 @@ geometrías alejadas de su dominio de entrenamiento).
 Y por encima de todo: **la calidad de una optimización está acotada por la calidad de su función de
 fitness**, y aquí la fitness no discriminaba en la zona alta. Cualquier discusión sobre operadores
 genéticos es secundaria frente a eso.
+
+Esta sección se escribe entera ahora: es discusión metodológica y no necesita resultados. Mantenla
+en ese plano — **sin citar rendimiento de ningún perfil** (§3.0).
 
 #### 5.5 Posibles mejoras
 
@@ -672,8 +768,17 @@ ambiental es indirecta y potencial, no demostrada.
 #### Resumen del trabajo realizado / sumario de lo conseguido frente a los objetivos
 
 Recorre los cinco objetivos del capítulo 1 uno a uno y di, sin adornos, en qué grado se ha cumplido
-cada uno. Los objetivos 1–4 están cumplidos; el 5 se cumplió y su resultado obligó a rebajar las
-afirmaciones sobre los anteriores. Esa es la conclusión honesta.
+cada uno:
+
+- Objetivos 1 y 2 (solver y cálculo de fuerzas): **cumplidos y verificados**.
+- Objetivos 3 y 4 (acoplamiento con el GA y modelo sustituto): **construidos y funcionales, con
+  resultados pendientes de una campaña nueva**. Di exactamente eso, sin adornarlo ni ocultarlo.
+- Objetivo 5 (V&V): **cumplido**, y su resultado es el que obliga a rehacer la campaña de los
+  objetivos 3 y 4.
+
+Esa es la conclusión honesta, y encaja con la moratoria de §3.0: el trabajo entrega herramienta
+verificada más el diagnóstico de por qué los resultados anteriores no son publicables, no una
+optimización cerrada.
 
 Enuncia con precisión qué queda validado: **el solver sirve para comparar perfiles entre sí a igual
 ángulo de ataque y misma malla, con una incertidumbre de discretización acotada en ±1.4 % en C_L;
@@ -697,8 +802,10 @@ estrecha que la que se hacía antes del capítulo de verificación, y es la defe
   sobreviven.** Esta es la aportación principal, y hay que decirlo.
 - Evidencia experimental de que, en este problema, un GA sin migración no converge a un óptimo único
   — la convergencia observada en el modelo de islas es un artefacto del flujo de genes.
-- Dataset de 3884 evaluaciones CFD (geometría, condiciones, coeficientes) reutilizable para entrenar
-  modelos sustitutos.
+- Dataset de 3884 evaluaciones CFD (geometría, condiciones, coeficientes) e infraestructura de
+  registro reutilizable para entrenar modelos sustitutos. Declara que **las etiquetas de este
+  dataset están sesgadas** por el criterio de parada y que su valor actual es la geometría y el
+  pipeline, no los coeficientes.
 
 #### Trabajo a futuro
 
@@ -737,6 +844,11 @@ No me pidas las referencias: búscalas. Como suelo mínimo:
 
 - **No empieces a escribir hasta haber leído** `RESUMEN.md`, `docs/verificacion_numerica.md` y
   `docs/memoria_tecnica.md`. Luego propón plan y espera confirmación.
+- **Respeta la moratoria de §3.0 sin excepciones.** Antes de dar por cerrada cualquier sección,
+  releela buscando: tablas o valores de L/D, coeficientes de un perfil optimizado, descripción del
+  perfil ganador, y cifras de mejora del GA. Si aparece alguno, quítalo y sustitúyelo por
+  `[EN ESPERA: campaña por rehacer]`. Si crees que un dato concreto debería ser excepción, pregunta
+  antes de escribirlo.
 - **Trabaja capítulo a capítulo.** Escribe uno, lo reviso, seguimos. No generes el documento entero
   de golpe.
 - **Busca tú la información bibliográfica e histórica** en lugar de pedírmela.

@@ -19,3 +19,8 @@ graphify-out/cache/
 **/wc_sa_a5_dx1.npz
 **/wc_mc_sa_a5_dx1.npz
 **/cola_run.log
+
+# Volcado de depuración de la última simulación: 3 MB que cambian en cada
+# evaluación. Regenerable, no aporta historia.
+sim_last.npz
+_temp_gen*_ind*.dat

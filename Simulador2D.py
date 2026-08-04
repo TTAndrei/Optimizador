@@ -8034,7 +8034,12 @@ def main(
         # ============================================================
         # BUCLE PRINCIPAL: MALLA SIMPLE (SOLO GRUESA)
         # ============================================================
-        for it in tqdm(range(iteraciones)):
+        # Redirigido a fichero (campaña desatendida) la barra se refresca 10 veces
+        # por segundo y escribe ~700 kB por simulación: en 1456 evaluaciones son
+        # ~1 GB de log. Con TTY se mantiene fluida.
+        _barra_lenta = not sys.stdout.isatty()
+        for it in tqdm(range(iteraciones),
+                       mininterval=60.0 if _barra_lenta else 0.1):
             t_paso_inicio = time.time()
 
             # Recalcular dt cada iteración (CFL adaptativo + restricción viscosa)

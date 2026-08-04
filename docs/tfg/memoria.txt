@@ -1,0 +1,1408 @@
+// Fuente de la memoria del TFG. Generar con:  python3 build_tfg.py --pdf
+// Marcas: #1..#4 titulos, #0 titulo sin numerar, $$..$$ ecuacion, [FIG]/[TBL] pies,
+// |a|b| tablas, [TOC]/[TOF]/[TOT] indices, [PB] salto, [SECBODY] inicio del cuerpo.
+
+#0 Agradecimientos
+
+[PENDIENTE: texto de agradecimientos y dedicatoria. Según la maqueta debe ocupar la primera página del documento, alineado al margen superior derecho y con la misma tipografía que el resto del texto.]
+
+[PB]
+#0 Índice de contenidos
+
+[TOC]
+
+[PB]
+#0 Índice de figuras
+
+[TOF]
+
+[PB]
+#0 Índice de tablas
+
+[TOT]
+
+[PB]
+#0 Glosario
+
+#0b Acrónimos
+
+@ AMR | Refinamiento adaptativo de malla (*Adaptive Mesh Refinement*)
+@ ASME | *American Society of Mechanical Engineers*
+@ BL | Capa límite (*Boundary Layer*)
+@ CFD | Mecánica de fluidos computacional (*Computational Fluid Dynamics*)
+@ CFL | Condición de Courant-Friedrichs-Lewy
+@ CG | Gradiente conjugado (*Conjugate Gradient*)
+@ CI95 | Intervalo de confianza al 95 %
+@ CUDA | *Compute Unified Device Architecture*
+@ DNS | Simulación numérica directa (*Direct Numerical Simulation*)
+@ GA | Algoritmo genético (*Genetic Algorithm*)
+@ GCI | Índice de convergencia de malla (*Grid Convergence Index*)
+@ GPU | Unidad de procesamiento gráfico (*Graphics Processing Unit*)
+@ GS | Gauss-Seidel
+@ IBM | Método de frontera inmersa (*Immersed Boundary Method*)
+@ IQR | Rango intercuartílico (*Interquartile Range*)
+@ JIT | Compilación en tiempo de ejecución (*Just In Time*)
+@ LE | Borde de ataque (*Leading Edge*)
+@ LES | Simulación de grandes escalas (*Large Eddy Simulation*)
+@ LSB | Burbuja de separación laminar (*Laminar Separation Bubble*)
+@ MAE | Error absoluto medio (*Mean Absolute Error*)
+@ MG | Multigrid
+@ PCA | Análisis de componentes principales (*Principal Component Analysis*)
+@ PUE | Efectividad del uso de la energía (*Power Usage Effectiveness*)
+@ RANS | Ecuaciones de Navier-Stokes promediadas de Reynolds
+@ RB-SOR | Sobrerrelajación sucesiva rojo-negro (*Red-Black Successive Over-Relaxation*)
+@ RF | Bosque aleatorio (*Random Forest*)
+@ SA | Modelo de turbulencia de Spalart-Allmaras
+@ SA-BC | Modelo SA con la transición algebraica de Bas y Cakmakcioglu
+@ SGS | Submalla (*Sub-Grid Scale*)
+@ SL | Semi-Lagrangiano
+@ TDP | Potencia de diseño térmico (*Thermal Design Power*)
+@ TE | Borde de salida (*Trailing Edge*)
+@ V&V | Verificación y validación
+@ WALE | *Wall-Adapting Local Eddy-viscosity*
+
+#0b Símbolos
+
+@ $c$ | Cuerda del perfil [m]
+@ $C_D$ | Coeficiente de resistencia [-]
+@ $C_L$ | Coeficiente de sustentación [-]
+@ $C_p$ | Coeficiente de presión [-]
+@ $dx$ | Espaciado mínimo de malla, adimensionalizado con la cuerda [-]
+@ $L/D$ | Eficiencia aerodinámica, cociente entre sustentación y resistencia [-]
+@ $p$ | Presión [Pa]
+@ $Q_{lazo}$ | Flujo neto a través de un lazo cerrado que rodea al perfil [m2/s]
+@ $Re$ | Número de Reynolds basado en la cuerda [-]
+@ $t$ | Tiempo convectivo, adimensionalizado como $t U_{\infty} / c$ [-]
+@ $\mathbf{u}$ | Campo de velocidad [m/s]
+@ $U_{\infty}$ | Velocidad de la corriente libre [m/s]
+@ $y^{+}$ | Distancia a pared adimensional [-]
+@ $\alpha$ | Ángulo de ataque [grados]
+@ $\Gamma$ | Circulación [m2/s]
+@ $\nu$ | Viscosidad cinemática molecular [m2/s]
+@ $\nu_t$ | Viscosidad turbulenta [m2/s]
+@ $\rho$ | Densidad [kg/m3]
+@ $\rho_s$ | Coeficiente de correlación de rangos de Spearman [-]
+@ $\tau$ | Coeficiente de correlación de rangos de Kendall [-]
+
+
+[SECBODY]
+#1 Introducción
+
+Este capítulo sitúa el problema que motiva el trabajo, revisa las herramientas disponibles para resolverlo y las carencias de cada una, enuncia los objetivos y delimita el alcance. Se cierra justificando la división del documento en capítulos.
+
+#2 Motivación y planteamiento del problema
+
+El diseño aerodinámico preliminar de un perfil es, en la práctica, un problema de búsqueda: se dispone de un espacio de formas admisibles y se quiere localizar dentro de el la geometría que maximiza una figura de mérito, típicamente la eficiencia aerodinámica L/D en un punto de operación. Los algoritmos que resuelven ese problema —evolutivos, de gradiente, bayesianos— comparten una dependencia estructural: cada paso de la búsqueda exige evaluar el rendimiento de una geometría candidata, y el número de evaluaciones necesarias crece con la dimensión del espacio de diseño. El coste unitario de esa evaluación es, por tanto, el factor que limita todo el proceso.
+
+Existen tres vías establecidas para producir esa evaluación, y ninguna resuelve el problema por si sola.
+
+El **ensayo en túnel de viento** proporciona la referencia experimental. Su limitación no es la fidelidad sino el coste de acceso: exige fabricar un modelo físico por geometría, reservar horas de instalación y disponer de instrumentación. El ciclo de iteración se mide en días o semanas por geometría, lo que lo excluye como función de evaluación dentro de un bucle de optimización con cientos o miles de candidatos.
+
+La **CFD tridimensional de alta fidelidad** —RANS sobre mallas de decenas de millones de celdas, o LES— entrega campos completos y es la herramienta de referencia en fases avanzadas de diseño. Su coste, sin embargo, se cuenta en centenares o millares de horas de núcleo por punto de operación, lo que la ata a infraestructura de cálculo compartida y a tiempos de espera en cola. Tampoco es una función de evaluación viable para una búsqueda amplia.
+
+Los **métodos de paneles acoplados a capa límite integral**, cuyo exponente canónico es XFOIL [10], ocupan hoy el hueco práctico: resuelven un perfil en fracciones de segundo sobre un ordenador portátil y su precisión en régimen adherido es excelente. Su limitación es de modelo: la formulación potencial más capa límite integral deja de ser válida cuando la separación es extensa, que es precisamente el régimen donde se decide el comportamiento en pérdida y donde un optimizador agresivo tiende a empujar la geometría.
+
+El hueco que queda es el de una herramienta que resuelva las ecuaciones de Navier-Stokes completas —sin hipótesis de flujo adherido—, con un coste por evaluación de minutos y no de horas, y sobre hardware al alcance de un laboratorio docente o de un equipo pequeño. Las tarjetas gráficas de consumo ofrecen hoy un ancho de banda de memoria y una capacidad aritmética que hace una década requerían un nodo de cálculo completo, y bibliotecas como CuPy permiten programarlas desde Python sin renunciar a escribir núcleos CUDA propios. La hipótesis de este trabajo es que una GPU de consumo con un solver 2D bien construido puede cerrar ese hueco para la fase de exploración de formas.
+
+#2 Contexto: optimización de forma aerodinámica
+
+La optimización de forma aerodinámica es una disciplina madura con una taxonomía bien establecida [18]. Los **métodos adjuntos**, introducidos en aerodinámica por Jameson [14], calculan el gradiente de la función objetivo respecto de todas las variables de diseño con un coste independiente del número de esas variables: una resolución del problema directo más una del adjunto. Son la herramienta de elección cuando se dispone de un solver con adjunto implementado y la geometría admite parametrización ajustada al cuerpo. Su debilidad es que convergen a un óptimo local y que el desarrollo del adjunto es una inversión de ingeniería considerable, especialmente si el solver evoluciona.
+
+Los **algoritmos evolutivos** [15], [16] no necesitan gradiente, exploran el espacio de forma global y toleran objetivos no diferenciables o ruidosos —todo ello relevante cuando la evaluación procede de una simulación transitoria. El precio es el número de evaluaciones: una población de decenas de individuos durante decenas de generaciones se traduce en cientos o miles de llamadas al solver.
+
+Los **modelos sustitutos** [17] atacan ese precio directamente: se entrena un regresor sobre las evaluaciones ya realizadas y se usa para predecir el rendimiento de candidatos nuevos, reservando el cálculo caro para los que superan un umbral. Es la estrategia estándar para hacer viable un algoritmo evolutivo acoplado a CFD.
+
+El denominador común de las tres familias es que el número de evaluaciones es el recurso escaso. Por eso el objeto central de este trabajo no es el algoritmo de búsqueda sino la función que lo alimenta: un solver barato por evaluación y, sobre todo, un solver cuya señal sea fiable para lo que el optimizador va a hacer con ella.
+
+#2 Objetivos del trabajo
+
+1. Desarrollar un solver CFD 2D incompresible transitorio completo, acelerado por GPU, capaz de evaluar un perfil aerodinámico en minutos sobre hardware de consumo.
+2. Implementar el cálculo de fuerzas aerodinámicas por integración de esfuerzos en superficie sobre geometría embebida, con precisión suficiente para comparar perfiles entre si.
+3. Acoplar el solver a un algoritmo genético que optimice la geometría del perfil, con una parametrización y unas restricciones físicamente motivadas.
+4. Reducir el coste de la búsqueda mediante un modelo sustituto entrenado con las propias evaluaciones acumuladas.
+5. Verificar y validar el conjunto: cuantificar el error de discretización, contrastar contra referencias externas independientes y determinar si la función de fitness empleada era apta para seleccionar.
+
+Conviene anticipar aquí algo que estructura el resto del documento: **el objetivo 5 acabo siendo el de mayor peso**. La verificación no confirmo el trabajo previo, sino que localizó un defecto propio en el criterio con el que se decidía cuando dejar de simular, demostró que ese defecto invalidaba los valores absolutos de toda la campaña de optimización y, mediante estadística de rangos, acotó exactamente que afirmaciones seguían siendo defendibles y cuales no. La consecuencia práctica es que los resultados de optimización quedan pendientes de una campaña nueva y no se presentan en esta memoria; el capítulo 4 explica por que, y esa explicación es el resultado principal del trabajo.
+
+#2 Alcance y limitaciones
+
+El trabajo se acota deliberadamente. Las limitaciones que siguen no son defectos sobrevenidos: son decisiones de alcance tomadas al inicio, y sus consecuencias se discuten en el capítulo 5.
+
+* **Flujo bidimensional e incompresible.** No se modelan efectos tridimensionales —estiramiento de vorticidad, vórtices de punta, tridimensionalidad del desprendimiento— ni efectos de compresibilidad, lo que restringe la validez al régimen de número de Mach inferior a 0,3.
+* **Régimen transitorio.** El bucle temporal avanza paso a paso sin hipótesis de estacionariedad. El estado estacionario, cuando existe, se alcanza por integración; esto tiene una consecuencia central en el capítulo 4, porque obliga a decidir cuando se ha alcanzado.
+* **Rango de Reynolds explorado**: de 1e3 a 1e7, con el grueso del trabajo en Re = 1e5.
+* **Punto de diseño único**: alpha = 4 grados. El modo multipunto está implementado pero se descartó por coste.
+* **Hardware**: una única GPU NVIDIA RTX 3070 Ti con 8 GB de memoria. Es una limitación dura y no un detalle de implementación: la malla de dx = 0,0005 no cabe en memoria, de modo que el estudio de convergencia se detiene en dx = 0,001.
+* **Sin validación experimental propia.** La validación externa se apoya en una DNS publicada [23] y en XFOIL [10].
+
+#2 Estructura del documento
+
+El capítulo 2 recoge la base teórica: ecuaciones de gobierno, restricción de incompresibilidad, turbulencia y modelos empleados, y los conceptos de aerodinámica de perfiles y de optimización necesarios para leer el resto. El capítulo 3 es el núcleo de ingeniería: describe el método numérico y su implementación en GPU, y el acoplamiento con el algoritmo genético y el modelo sustituto. El capítulo 4 presenta los resultados, organizados como una cadena de verificación que va de la simetría exacta al contraste con referencias externas y termina en la verificación de la propia función de fitness. El capítulo 5 discute las limitaciones físicas, numéricas y metodológicas, y ordena las mejoras posibles por relación beneficio-coste. El capítulo 6 analiza la sostenibilidad del trabajo desde las perspectivas ambiental, económica y social. El capítulo 7 recorre los objetivos uno a uno y enuncia con precisión que queda validado.
+
+La división sigue la secuencia lógica del trabajo realizado —teoría, método, resultados, discusión— con una particularidad: los capítulos 4 y 5 están escritos alrededor de un hallazgo negativo, y su orden interno reproduce el orden en que se produjo el diagnóstico, porque esa secuencia es en si misma parte del resultado.
+
+[PB]
+#1 Teoría
+
+Este capítulo reúne la base física y matemática sobre la que se construye el solver. Se parte de las ecuaciones de gobierno, se examina el papel singular de la restricción de incompresibilidad, se revisan los enfoques de modelado de turbulencia y los dos modelos efectivamente implementados, y se cierra con los conceptos de aerodinámica de perfiles y de optimización necesarios para interpretar los capítulos siguientes.
+
+#2 Ecuaciones de Navier-Stokes
+
+El movimiento de un fluido newtoniano incompresible queda descrito por la conservación de cantidad de movimiento y la conservación de masa. En forma no conservativa:
+
+$$ \frac{\partial \mathbf{u}}{\partial t} + (\mathbf{u} \cdot \nabla)\mathbf{u} = -\frac{1}{\rho}\nabla p + \nabla \cdot (\nu_{ef} \nabla \mathbf{u}) $$
+
+$$ \nabla \cdot \mathbf{u} = 0 $$
+
+donde $\mathbf{u} = (u,v)$ es el campo de velocidad [m/s], $p$ la presión [Pa], $\rho$ la densidad [kg/m3] y $\nu_{ef}$ la viscosidad cinemática efectiva [m2/s], suma de la molecular y de la turbulenta cuando hay modelo de turbulencia activo. La forma con $\nu_{ef}$ dentro de la divergencia es la correcta cuando la viscosidad varia en el espacio, que es el caso en cuanto se activa un modelo de turbulencia.
+
+Cada término tiene una lectura física directa:
+
+* El término advectivo $(\mathbf{u} \cdot \nabla)\mathbf{u}$ transporta cantidad de movimiento con el propio flujo. Es el único término no lineal y el responsable del acoplamiento entre escalas que da lugar a la turbulencia.
+* El término difusivo $\nabla \cdot (\nu_{ef} \nabla \mathbf{u})$ redistribuye cantidad de movimiento por fricción y tiende a homogeneizar los gradientes de velocidad. Es el que impone la condición de no deslizamiento en la pared y, por tanto, el que genera la capa límite.
+* El gradiente de presión $-\rho^{-1}\nabla p$ acelera el fluido de las zonas de alta a las de baja presión. Su papel bajo la restricción de incompresibilidad es especial y se trata en la sección siguiente.
+
+Adimensionalizando con la velocidad de la corriente libre $U_{\infty}$ y la cuerda $c$, las ecuaciones quedan gobernadas por un único parámetro:
+
+$$ Re = \frac{U_{\infty} c}{\nu} $$
+
+El número de Reynolds mide la razón entre transporte advectivo y difusivo de cantidad de movimiento. Que sea el único parámetro tiene una consecuencia práctica que se usa a lo largo del trabajo: dos configuraciones con el mismo $Re$ y la misma geometría adimensional son el mismo problema, de modo que el solver puede trabajar internamente con $U_{\infty} = 1$ y $c = 1$ y ajustar $\nu$ para fijar el régimen.
+
+#2 La restricción de incompresibilidad
+
+La condición $\nabla \cdot \mathbf{u} = 0$ expresa conservación exacta de masa para densidad constante. A diferencia del caso compresible, no es una ecuación de evolución: es una **restricción** que el campo de velocidad debe satisfacer en todo instante.
+
+La consecuencia es que la presión pierde dinámica propia. No existe una ecuación de transporte para $p$; la presión aparece como el multiplicador de Lagrange asociado a la restricción. Su valor en cada instante es el que hace que el campo resultante sea solenoidal. Tomando la divergencia de la ecuación de cantidad de movimiento e imponiendo $\nabla \cdot \mathbf{u} = 0$ se obtiene una ecuación elíptica:
+
+$$ \nabla^2 p = -\rho \nabla \cdot \left[ (\mathbf{u} \cdot \nabla)\mathbf{u} \right] $$
+
+Ser elíptica significa que el valor de la presión en cualquier punto depende instantáneamente de todo el dominio: no hay velocidad de propagación finita, no hay dirección privilegiada de avance y no se puede resolver marchando. Cada paso temporal exige resolver un sistema lineal global.
+
+Esto explica el reparto de coste que se documenta en el capítulo 4: la proyección de presión consume entre el 60 y el 80 % del tiempo de cada iteración, mientras que advección y difusión —locales, con dependencia solo de celdas vecinas— son comparativamente baratas. Cualquier esfuerzo de optimización del solver que no ataque la proyección tiene un techo bajo.
+
+#2 Turbulencia
+
+El régimen turbulento se caracteriza por fluctuaciones de velocidad y presión en un espectro amplio de escalas espaciales y temporales, con transferencia neta de energía entre ellas. En tres dimensiones esa transferencia es, en promedio, de las escalas grandes —donde la energía se inyecta— hacia las pequeñas, donde la viscosidad la disipa. La escala más pequeña presente en el flujo es la de Kolmogorov, cuyo tamaño relativo escala como:
+
+$$ \frac{\eta}{L} \sim Re^{-3/4} $$
+
+Esta relación es la que hace inviable resolver todas las escalas a $Re$ alto: el número de grados de libertad necesarios crece como $Re^{9/4}$ en dos dimensiones y $Re^{3}$ en tres.
+
+#3 La particularidad bidimensional
+
+Hay una diferencia de fondo entre turbulencia 2D y 3D que conviene enunciar explícitamente, porque es una limitación estructural de este trabajo y no un detalle de implementación.
+
+En tres dimensiones, el mecanismo que alimenta la cascada directa de energía es el **estiramiento de vorticidad**: el término $(\omega \cdot \nabla)\mathbf{u}$ de la ecuación de vorticidad intensifica la vorticidad al alargar los tubos de vórtice, transfiriendo energía a escalas cada vez menores. En dos dimensiones ese término es idénticamente nulo, porque la vorticidad es perpendicular al plano del movimiento y el gradiente de velocidad en esa dirección no existe.
+
+La consecuencia es que la turbulencia 2D tiene una fenomenología distinta: se conserva la enstrofia además de la energía, y aparece una **cascada inversa** en la que la energía se transfiere hacia escalas mayores, formando estructuras coherentes de gran tamaño. La turbulencia bidimensional no es una versión simplificada de la tridimensional; es otro fenómeno.
+
+Para este trabajo esto significa que la física de pequeña escala del desprendimiento —que a $Re = 1e5$ es tridimensional en el flujo real— no puede reproducirse. El capítulo 4 muestra que la discrepancia con XFOIL en resistencia crece precisamente al aumentar el ángulo de ataque, es decir, en el régimen donde la tridimensionalidad del desprendimiento es más importante.
+
+#3 DNS, RANS y LES
+
+Los enfoques numéricos se clasifican por que escalas resuelven directamente y cuales modelan.
+
+* **DNS**: resuelve todas las escalas hasta la de Kolmogorov. No introduce modelo y por tanto no introduce error de modelado, pero su coste escala con $Re^{3}$ y queda restringido a números de Reynolds bajos o a geometrías simples. En este trabajo se usa una DNS publicada a $Re = 1000$ [23] como referencia de validación.
+* **RANS**: promedia las ecuaciones en el tiempo y modela íntegramente el efecto de las fluctuaciones mediante un tensor de esfuerzos de Reynolds. Es el enfoque más barato y el estándar industrial, pero su calidad depende por completo del modelo de cierre, y los modelos calibrados sobre flujos adheridos pierden fiabilidad en separación extensa.
+* **LES**: resuelve explícitamente las escalas mayores que el filtro de malla y modela solo las escalas submalla, que son más universales y menos dependientes de la geometría. Su coste se sitúa entre los dos anteriores, pero exige resolución suficiente para que la parte modelada sea efectivamente una fracción pequeña de la energía.
+
+El solver implementa un modelo de cada una de las dos ultimas familias. La elección entre ambos no fue de partida sino resultado del trabajo, y se documenta en la sección siguiente.
+
+#2 Modelos de turbulencia implementados
+
+#3 El modelo submalla WALE
+
+El modelo WALE (*Wall-Adapting Local Eddy-viscosity*) [4] calcula la viscosidad turbulenta submalla a partir del tensor de gradientes de velocidad $g_{ij} = \partial u_i / \partial x_j$. Se define su parte simétrica:
+
+$$ S_{ij} = \frac{1}{2}\left( g_{ij} + g_{ji} \right) $$
+
+y la parte simétrica desviatórica del cuadrado del tensor de gradientes:
+
+$$ S^{d}_{ij} = \frac{1}{2}\left( g^{2}_{ij} + g^{2}_{ji} \right) - \frac{1}{3}\delta_{ij} g^{2}_{kk} $$
+
+con lo que la viscosidad turbulenta resulta:
+
+$$ \nu_t = C_w^{2} \Delta^{2} \frac{ \left( S^{d}_{ij} S^{d}_{ij} \right)^{3/2} }{ \left( S_{ij} S_{ij} \right)^{5/2} + \left( S^{d}_{ij} S^{d}_{ij} \right)^{5/4} } $$
+
+donde $\Delta$ es el tamaño local del filtro, tomado como la raíz cuadrada del área de celda, y $C_w$ el coeficiente del modelo.
+
+WALE presenta dos ventajas frente al modelo clásico de Smagorinsky, ambas relevantes para perfiles:
+
+* **Comportamiento asintótico correcto en pared.** El numerador se anula con la potencia adecuada al acercarse a la pared, de modo que $\nu_t \to 0$ sin necesidad de funciones de amortiguamiento artificiales dependientes de la distancia a pared.
+* **Anulación natural en flujo laminar de cortadura pura.** Si el campo es un cortante puro, $S^{d}_{ij} = 0$ y por tanto $\nu_t = 0$. Esto es esencial a bajo Reynolds, donde buena parte de la cuerda está en régimen laminar y un modelo que produjese viscosidad turbulenta ahí contaminaría la solución.
+
+#3 Por que WALE no basto: el paso a Spalart-Allmaras
+
+Esta segunda propiedad, que es una virtud sobre el papel, resultó ser el problema en la práctica. **A los números de Reynolds de trabajo el modelo WALE resultó inerte**: no producía viscosidad turbulenta significativa en la región donde hacia falta. El diagnóstico completo se recoge en la sección 4.1 y en la discusión del capítulo 5; en síntesis, el flujo desarrollaba una burbuja de separación laminar que no reatacaba y acababa colapsando, y el modelo submalla no intervenía porque el campo previo al desprendimiento es esencialmente laminar.
+
+La configuración de referencia del optimizador acabo empleando **Spalart-Allmaras** [5], un modelo RANS de una ecuación de transporte para una viscosidad turbulenta modificada $\tilde{\nu}$:
+
+$$ \frac{D\tilde{\nu}}{Dt} = c_{b1}\tilde{S}\tilde{\nu} - c_{w1} f_w \left( \frac{\tilde{\nu}}{d} \right)^{2} + \frac{1}{\sigma}\left[ \nabla \cdot \left( (\nu + \tilde{\nu})\nabla\tilde{\nu} \right) + c_{b2}(\nabla\tilde{\nu})^{2} \right] $$
+
+Los tres bloques del segundo miembro son, por orden, producción, destrucción y difusión. La producción es proporcional a una medida modificada de la vorticidad $\tilde{S}$; la destrucción incorpora explícitamente la **distancia a pared** $d$, que es el ingrediente que hace del modelo un modelo de capa límite; y la difusión incluye un término no conservativo con el cuadrado del gradiente. La viscosidad turbulenta se recupera mediante una función de amortiguamiento:
+
+$$ \nu_t = \tilde{\nu} f_{v1}, \qquad f_{v1} = \frac{\chi^{3}}{\chi^{3} + c_{v1}^{3}}, \qquad \chi = \frac{\tilde{\nu}}{\nu} $$
+
+Se emplean las constantes estándar del modelo. El cambio de WALE a SA no fue un cambio de opinión sino un resultado experimental del trabajo: es la primera de las cuatro capas del diagnóstico que se describe en la sección 3.7 y se resume en la sección 4.1.
+
+#3 Transición: el modelo algebraico SA-BC
+
+Spalart-Allmaras, en su formulación original, es un modelo completamente turbulento: produce viscosidad turbulenta desde el borde de ataque. A $Re = 1e5$ eso no es físico, porque el flujo real es laminar sobre una fracción apreciable de la cuerda. El intento directo de retrasar la transición reduciendo la semilla de $\tilde{\nu}$ en la corriente libre **empeoró** el resultado, al reactivar la burbuja de separación laminar (sección 5.1).
+
+La solución adoptada es el modelo de transición algebraico de Cakmakcioglu, Bas y Kaynak [6], conocido como SA-BC. Su idea es no añadir ecuaciones de transporte sino modular la producción del modelo SA mediante una función de intermitencia calculada con información local:
+
+$$ \gamma_{BC} = 1 - \exp\left( -\sqrt{T_1} - \sqrt{T_2} \right) $$
+
+donde $T_1$ y $T_2$ son términos de activación construidos con el número de Reynolds de espesor de cantidad de movimiento y su valor crítico, este último obtenido de la correlación de Menter en función de la intensidad turbulenta de la corriente libre. La intermitencia multiplica **únicamente** el término de producción, de modo que el modelo permanece laminar hasta que se cumplen las condiciones de inicio de transición.
+
+#3 Resolución de pared alcanzable
+
+La calidad de lo que un modelo RANS de capa límite puede predecir está acotada por la resolución en pared, medida por la distancia adimensional $y^{+}$. Spalart-Allmaras, sin función de pared, requiere que la primera celda caiga en $y^{+} \lesssim 1$ para resolver la subcapa viscosa.
+
+Con la malla cartesiana empleada y el tratamiento de frontera inmersa, la primera celda de fluido junto al perfil queda en torno a $y^{+} \approx 10$ para $dx = 0,002$ a $Re = 1e5$: dentro de la capa de amortiguamiento, no de la subcapa viscosa. La consecuencia es directa: el gradiente de velocidad en pared —y por tanto la resistencia de fricción— se obtiene de una interpolación sobre celdas que no resuelven el perfil de velocidad real. Es la primera de las hipótesis que explican la desviación sistemática de la resistencia documentada en la sección 4.1.
+
+#2 Aerodinámica de perfiles
+
+#3 Geometría
+
+Un perfil aerodinámico es la sección transversal de un ala. Su geometría se describe mediante:
+
+* La **cuerda** $c$, segmento que une el borde de ataque con el borde de salida, y que se toma como longitud de referencia.
+* El **extradós** e **intradós**, superficies superior e inferior.
+* La **línea de curvatura media** o *camber*, lugar geométrico de los puntos equidistantes de extradós e intradós, que mide la asimetría del perfil.
+* La **distribución de espesor**, diferencia entre extradós e intradós medida perpendicularmente a la cuerda.
+
+Un perfil queda determinado por la superposición de una línea de curvatura media y una distribución de espesor. Esta descomposición no es solo una convención descriptiva: es la parametrización sobre la que ópera el algoritmo genético (sección 3.10.2), y la razón es que ambas funciones tienen significado aerodinámico separado.
+
+#3 Fuerzas y coeficientes
+
+La resultante de las fuerzas de presión y de fricción sobre el perfil se descompone en **sustentación** $L$, perpendicular a la corriente libre, y **resistencia** $D$, paralela. Adimensionalizadas:
+
+$$ C_L = \frac{2L}{\rho U_{\infty}^{2} c}, \qquad C_D = \frac{2D}{\rho U_{\infty}^{2} c} $$
+
+La distribución de presión sobre la superficie se describe mediante el coeficiente de presión:
+
+$$ C_p = \frac{p - p_{\infty}}{\tfrac{1}{2}\rho U_{\infty}^{2}} $$
+
+La **eficiencia aerodinámica** es el cociente $L/D = C_L / C_D$, y es la figura de mérito que emplea el optimizador. La curva $C_D(C_L)$ recorrida al variar el ángulo de ataque constituye la **polar** del perfil.
+
+Conviene subrayar una asimetría que resulta central en el capítulo 4: $C_L$ es una magnitud dominada por la distribución de presión, integrable con precisión razonable incluso en mallas moderadas, mientras que $C_D$ recibe una contribución de fricción que depende del gradiente de velocidad en la pared. Como $L/D$ tiene $C_D$ en el denominador, **la eficiencia hereda el peor de los dos errores**.
+
+#3 Capa límite, separación y pérdida
+
+En la región próxima a la pared la viscosidad domina y la velocidad pasa de cero a la del flujo exterior: es la capa límite. Su espesor crece a lo largo de la cuerda y su estado —laminar o turbulento— determina tanto la fricción como la resistencia a la separación.
+
+Aguas abajo del punto de espesor máximo el flujo exterior desacelera y aparece un **gradiente adverso de presión**. El fluido próximo a la pared, que ya ha perdido cantidad de movimiento por fricción, puede no tener energía suficiente para avanzar contra el, invertir su sentido y provocar la **separación** de la capa límite.
+
+A números de Reynolds del orden de $1e5$ aparece un fenómeno característico: la capa límite laminar separa, la capa de cortadura desprendida transiciona a turbulenta y, gracias al mayor intercambio de cantidad de movimiento, **reataca** formando una **burbuja de separación laminar**. La posición y la extensión de esa burbuja condicionan fuertemente la resistencia. Es el fenómeno que domina el régimen de trabajo de este proyecto y el que provocó el fracasó de la configuración inicial con WALE.
+
+Al aumentar el ángulo de ataque el pico de succión en el extradós se intensifica, el gradiente adverso se agrava y el punto de separación se desplaza hacia el borde de ataque, hasta que la separación es tan extensa que la sustentación deja de crecer y cae: es la **entrada en pérdida**.
+
+En el borde de salida se impone la **condición de Kutta**: en un perfil con borde de salida afilado el flujo abandona el perfil de forma suave, lo que fija de manera única la circulación y, con ella, la sustentación. En una formulación que resuelve las ecuaciones completas la condición de Kutta no se impone: emerge sola de la viscosidad. Que emerja correctamente es, por tanto, un indicador de calidad del solver, y se monitoriza mediante el salto de $C_p$ entre extradós e intradós en el borde de salida.
+
+#3 Dependencia del rendimiento con la geometría y con el Reynolds
+
+* El **camber** desplaza la curva $C_L(\alpha)$ hacia arriba: aumenta la sustentación a igual ángulo de ataque y hace que la sustentación nula ocurra a ángulo negativo. Aumenta también la resistencia inducida por presión y adelanta la entrada en pérdida.
+* El **espesor** relativo aumenta la resistencia de presión pero suaviza la entrada en pérdida, al reducir el pico de succión y por tanto el gradiente adverso.
+* La **posición del espesor máximo** controla la extensión de la región de gradiente favorable. Retrasarla mantiene la capa límite laminar más tiempo —lo que reduce la fricción— a costa de un gradiente adverso más severo después.
+
+La dependencia con el número de Reynolds no es un simple desplazamiento. A $Re = 1e5$ la capa límite es laminar sobre buena parte de la cuerda y el problema de diseño consiste en gestionar la burbuja de separación; a $Re = 1e7$ la transición ocurre muy cerca del borde de ataque, la capa límite es turbulenta casi en su totalidad y el problema pasa a ser minimizar la fricción. **Un perfil óptimo a $Re = 1e5$ no lo es a $Re = 1e7$**, y no por un factor de escala sino porque el mecanismo físico dominante es otro.
+
+#3 Dependencia del resultado con el tipo de cálculo
+
+El mismo perfil, al mismo ángulo de ataque y número de Reynolds, produce coeficientes distintos según la herramienta empleada. La razón no es la precisión numérica sino el modelo:
+
+* Un método de paneles con capa límite integral (XFOIL) resuelve un flujo potencial exterior acoplado a ecuaciones integrales de capa límite con un criterio de transición semiempírico. Es muy preciso mientras la capa límite permanece adherida y delgada, y pierde validez cuando la separación es extensa.
+* Un cálculo RANS resuelve las ecuaciones completas promediadas, de modo que capta la separación, pero su resistencia depende del modelo de turbulencia y de la resolución de pared.
+* Un cálculo LES resuelve las estructuras grandes del desprendimiento, con un coste muy superior y una sensibilidad fuerte a la resolución.
+
+En particular, **la resolución de malla cerca de la pared cambia directamente la resistencia de fricción**, porque esta se obtiene del gradiente de velocidad en la superficie. Esta observación es la que da sentido al estudio de convergencia de malla de la sección 4.1 y al contraste con XFOIL que le sigue.
+
+#2 Fundamentos de optimización
+
+#3 Planteamiento
+
+Un problema de optimización de forma queda definido por un **espacio de diseño** —el conjunto de geometrías admisibles y su parametrización—, una **función objetivo** que asigna a cada geometría una figura de mérito, y un conjunto de **restricciones** que delimitan lo admisible. En este trabajo el espacio de diseño son las perturbaciones de camber y espesor de un perfil semilla, la función objetivo es $L/D$ obtenido de una simulación CFD y las restricciones son geométricas y de fabricabilidad.
+
+La distinción entre **óptimo local y global** es esencial: un espacio de diseño de dimensión alta con una función objetivo no convexa presenta múltiples cuencas de atracción, y el resultado de una búsqueda depende del punto de partida. La tensión entre **exploración** —muestrear regiones nuevas— y **explotación** —refinar alrededor de lo mejor conocido— es el compromiso que todo algoritmo de búsqueda debe gestionar.
+
+#3 Algoritmos genéticos
+
+Un algoritmo genético [15], [16] mantiene una población de soluciones candidatas y la hace evolucionar mediante operadores inspirados en la selección natural:
+
+* **Evaluación de fitness**: se calcula la figura de mérito de cada individuo.
+* **Selección**: los individuos con mejor fitness tienen mayor probabilidad de generar descendencia. En este trabajo se emplea selección por torneo.
+* **Elitismo**: un subconjunto de los mejores pasa intacto a la generación siguiente, garantizando que la calidad no retrocede.
+* **Cruce**: se combinan dos progenitores para producir descendencia.
+* **Mutación**: se perturban aleatoriamente los genes, lo que aporta la exploración.
+
+La ventaja del enfoque para este problema es que no requiere gradiente, tolera ruido en la función objetivo y explora globalmente. Su inconveniente es el número de evaluaciones, que es exactamente el recurso escaso.
+
+#3 Modelos sustitutos
+
+Un modelo sustituto o *surrogate* [17] es un regresor entrenado sobre las evaluaciones ya realizadas que predice la figura de mérito de un candidato nuevo con coste despreciable. Su uso típico dentro de un algoritmo evolutivo es como filtro: se predice el fitness de cada candidato y solo se simulan los que superan un umbral. El compromiso es evidente: un umbral agresivo ahorra mucho cálculo pero corre el riesgo de descartar buenas geometrías que caigan lejos del dominio de entrenamiento del modelo.
+
+#3 Por que no se emplea un método adjunto
+
+La alternativa natural para optimización de forma con muchas variables de diseño es el método adjunto [14], que obtiene todo el vector gradiente con el coste de una resolución adicional. No se ha utilizado aquí por dos razones concretas:
+
+1. **El solver no tiene adjunto implementado.** Desarrollarlo para un solver transitorio con proyección multigrid, frontera inmersa y modelo de turbulencia es un proyecto en si mismo, y además el adjunto de un problema transitorio requiere almacenar o recomputar toda la historia temporal del flujo directo.
+2. **La geometría es embebida, no ajustada al cuerpo.** El adjunto de forma necesita relacionar la deformación de la superficie con la deformación de la malla. Con una malla cartesiana fija y el sólido representado por una máscara, esa relación es discontinua: un desplazamiento infinitesimal de la superficie no cambia la máscara hasta que cruza el centro de una celda. La sensibilidad geométrica no está bien definida.
+
+Estas dos razones son las que hacen del algoritmo evolutivo la elección adecuada aquí, y no una preferencia estilística.
+
+[PB]
+#1 Método
+
+Este capítulo describe el método numérico implementado y su realización en GPU. Se sigue el orden lógico del bucle temporal: arquitectura general, esquema de separación de operadores, discretización, y a continuación cada uno de los tres subproblemas —advección, difusión y proyección—, seguidos del tratamiento de sólidos, el cálculo de fuerzas, la implementación en GPU y el acoplamiento con el optimizador.
+
+Las funciones y clases se referencian por nombre y no por número de línea, ya que estas ultimas se desplazan con cada modificación del código. La configuración de referencia vigente del optimizador es `wall_treatment="consistent"`, `turb_model="sa"`, `transition_model="sa_bc"` y `advection_scheme="maccormack"`; cuando en el texto se citen resultados obtenidos con otra configuración se indicara explícitamente.
+
+#2 Arquitectura general del simulador
+
+El solver reside íntegramente en `Simulador2D.py`, organizado en torno a una clase `Mesh` y una función `main()`. La clase `Mesh` actúa como contenedor de todo el estado del problema: geometría del dominio, campos de velocidad y presión residentes en GPU, métricas de malla precomputadas, mascaras de sólido y núcleos CUDA compilados. La función `main()` recibe la configuración completa como argumentos, construye la malla, carga y rasteriza la geometría, aplica condiciones de frontera, ejecuta el bucle temporal y devuelve un diccionario de resultados, lo que permite invocarla como función de evaluación desde el optimizador sin pasar por disco.
+
+La secuencia de ejecución es:
+
+1. **Construcción de la malla**: generación de los vectores de posiciones de nodo con estiramiento geométrico y cálculo de las métricas de diferenciación.
+2. **Carga y rasterización de la geometría**: lectura del perfil, escalado, rotación por el ángulo de ataque y conversión a máscara de celdas solidas.
+3. **Condiciones de frontera**: entrada con velocidad impuesta, salida convectiva, contornos laterales, y precómputo de la estructura de celdas fantasma del método de frontera inmersa.
+4. **Bucle temporal**: en cada iteración, cálculo del paso temporal adaptativo, advección, difusión, proyección de presión, reimposición de condiciones de contorno y, cada `guardado` iteraciones, muestreo de fuerzas y diagnósticos.
+5. **Postproceso**: cálculo de estadísticos sobre las series temporales, generación de gráficos y volcado de resultados.
+
+Los scripts auxiliares se organizan en `scripts/RunGA.py` —optimizador genético y modelo sustituto— y `scripts/agent_tests/`, que contiene los orquestadores de los estudios de verificación.
+
+[FIG] Diagrama de bloques del simulador: construcción de malla, rasterización de la geometría, bucle temporal con los tres subproblemas del *splitting*, y postproceso. Se indican los puntos en los que se reimponen las condiciones de frontera inmersa.
+
+#2 El método de separación de Chorin
+
+El acoplamiento entre velocidad y presión se resuelve mediante el método de proyección de Chorin [1], que separa cada paso temporal en tres subproblemas resueltos en secuencia:
+
+$$ \mathbf{u}^{*} = \mathcal{A}(\mathbf{u}^{n}) $$
+
+$$ \mathbf{u}^{**} = \mathcal{D}(\mathbf{u}^{*}) $$
+
+$$ \nabla^{2}\phi = \frac{\rho}{\Delta t}\nabla \cdot \mathbf{u}^{**}, \qquad \mathbf{u}^{n+1} = \mathbf{u}^{**} - \frac{\Delta t}{\rho}\nabla\phi $$
+
+La ventaja del enfoque no es solo que cada subproblema sea más sencillo que el sistema acoplado: es que cada uno admite un método especializado distinto. La advección se resuelve con un esquema semi-Lagrangiano incondicionalmente estable, la difusión con un esquema explícito con subdivisión de paso, y la proyección con un método multimalla. Ninguno de los tres sería adecuado para los otros dos.
+
+El precio es el **error de separación**. Resolver los operadores en secuencia en lugar de simultáneamente introduce un error de truncamiento temporal de primer orden en $\Delta t$ en la versión básica del esquema, asociado a que la condición de contorno para la presión en la etapa de proyección no es la física. Dado que el objetivo del solver es alcanzar estados estacionarios o estadísticamente estacionarios y no seguir con precisión la historia transitoria, este error no condiciona los resultados: el estado final es independiente del camino temporal seguido para llegar a el. Si se quisiera resolver dinámica transitoria con precisión sería necesario un esquema de separación incremental de segundo orden.
+
+#2 Discretización espacial y temporal
+
+#3 Malla cartesiana estirada
+
+El dominio se discretiza con una malla cartesiana **estirada**: los espaciados $\Delta x$ y $\Delta y$ no son constantes, sino que valen `dx_min` en una zona fina que rodea al perfil y crecen geométricamente con un factor `factor_expansion` hacia los bordes del dominio, con un tope `ratio_max_malla` sobre el espaciado máximo. Esto concentra los grados de libertad donde están los gradientes —capa límite, borde de ataque, estela cercana— sin pagar el coste de resolver el campo lejano con la misma finura.
+
+Como la malla no es uniforme, los operadores de derivación no pueden usar los coeficientes clásicos de diferencias centradas. Los pesos de los *stencils* de tres puntos se obtienen por **interpolación de Lagrange sobre nodos no equiespaciados**:
+
+$$ \frac{\partial u}{\partial x}\bigg|_{j} \approx a_W u_{j-1} + a_C u_{j} + a_E u_{j+1} $$
+
+$$ \frac{\partial^{2} u}{\partial x^{2}}\bigg|_{j} \approx b_W u_{j-1} + b_C u_{j} + b_E u_{j+1} $$
+
+Estos coeficientes se calculan una sola vez, en la inicialización, y en **doble precisión**. La razón no es la precisión de la derivada sino la **preservación exacta de la simetría**: cuando el dominio es simétrico respecto de su eje central, la mitad de los nodos se genera reflejando la otra mitad, de modo que los pesos de un lado son exactamente los del lado opuesto hasta el último bit. Esto permite verificar el solver completo con un caso de simetría: un perfil simétrico a ángulo de ataque nulo debe dar sustentación nula a precisión de máquina, y cualquier desviación delata un error en la cadena que va de las métricas de malla a la rasterización y al multimalla (sección 4.1).
+
+Los campos de velocidad y presión se almacenan en GPU en **precisión simple**. La combinación —métricas en doble precisión, campos en simple— es deliberada: el coste de memoria y de ancho de banda lo imponen los campos, mientras que la simetría la determinan las métricas.
+
+#3 Paso temporal adaptativo
+
+El paso temporal se recalcula en cada iteración como el mínimo de dos restricciones. La restricción advectiva de Courant-Friedrichs-Lewy:
+
+$$ \Delta t_{adv} \leq CFL \frac{\Delta x_{mín}}{u_{máx}} $$
+
+y la restricción de estabilidad del esquema explícito de difusión:
+
+$$ \Delta t_{visc} \leq C_{visc}\frac{\Delta x_{mín}^{2}}{\nu_{ef,máx}} $$
+
+con $C_{visc} = 0{,}25$ y $CFL = 0{,}25$ en la configuración de referencia. El paso efectivo se limita además a un máximo de dos veces el paso nominal, para evitar que una caída transitoria de la velocidad máxima produzca saltos bruscos.
+
+Que el paso sea adaptativo tiene una consecuencia práctica que resultó importante durante la verificación: **el tiempo físico no se puede reconstruir a posteriori a partir del índice de iteración**. Multiplicar el número de iteraciones por un paso nominal da un valor incorrecto. Por ello se añadió al simulador un vector `tvector` que almacena el tiempo físico acumulado de cada muestra. Sin ese eje temporal no es posible ningún análisis de convergencia temporal, y su ausencia fue una de las razones por las que el defecto del criterio de parada tardó en detectarse.
+
+#3 El tiempo convectivo como unidad de referencia
+
+A lo largo del documento el tiempo se expresa en **tiempos convectivos**:
+
+$$ t^{*} = \frac{t\, U_{\infty}}{c} $$
+
+Un tiempo convectivo es el que tarda una partícula del flujo libre en recorrer una longitud de cuerda. Es la unidad natural para juzgar si un transitorio ha terminado: la capa límite necesita del orden de uno a dos tiempos convectivos para establecerse, la estela varios más, y una burbuja de separación puede tardar entre cinco y diez en alcanzar una posición estable de reataque. Está escala es la que se emplea en el capítulo 4 para cuantificar el error del criterio de parada, y su uso sistemático —en lugar del número de iteraciones— es lo que hace comparables entre si simulaciones con mallas distintas.
+
+#2 Advección semi-Lagrangiana y corrección de MacCormack
+
+#3 El esquema base
+
+La advección se resuelve mediante el método semi-Lagrangiano [2]: para cada celda se retrocede la trayectoria característica un paso temporal y se interpola el campo en el punto de partida.
+
+$$ \mathbf{u}^{*}(\mathbf{x}) = \mathbf{u}^{n}\left( \mathbf{x} - \mathbf{u}^{n}(\mathbf{x})\Delta t \right) $$
+
+La localización del punto de partida sobre la malla no uniforme se realiza mediante búsqueda binaria sobre los vectores de posiciones de nodo, y la interpolación es bilineal. Los indices se acotan al dominio, lo que implementa de forma natural las condiciones de contorno.
+
+Sus dos virtudes son decisivas para este solver: es **incondicionalmente estable**, lo que desacopla el paso temporal del número de Courant advectivo, y es **trivialmente paralelizable**, ya que cada celda se calcula de forma independiente sin necesidad de comunicación entre hilos.
+
+#3 El problema: difusión numérica
+
+La interpolación bilineal actúa como un filtro paso bajo. El resultado es una **difusión numérica de primer orden** cuya viscosidad equivalente escala como:
+
+$$ \nu_{núm} \approx \frac{u\,\Delta x}{2} $$
+
+Esta expresión es independiente del paso temporal: refinar el paso no la reduce. Solo el refinado de malla la disminuye, y lo hace linealmente.
+
+La magnitud del efecto depende críticamente del régimen. A $Re = 1000$ la viscosidad numérica supone en torno al 10 % de la molecular, lo que explica que el caso de validación contra DNS diese resultados excelentes. A $Re = 1e5$, en cambio, cerca de la pared alcanza entre cinco y diez veces la viscosidad molecular: la capa límite calculada resultaba unas tres veces más gruesa de lo físico y el coeficiente de sustentación se hundía desde el valor esperado de 0,55 hasta 0,32.
+
+#3 La solución: corrección de MacCormack
+
+Se implementó la variante incondicionalmente estable del esquema de MacCormack propuesta por Selle et al. [3]. La idea es estimar el error del transporte semi-Lagrangiano transportando hacia atrás el resultado ya transportado hacia delante:
+
+$$ \phi^{**} = \mathcal{A}^{-1}\left( \mathcal{A}(\phi^{n}) \right), \qquad \phi^{n+1} = \phi^{*} + \frac{\phi^{n} - \phi^{**}}{2} $$
+
+La diferencia entre el campo original y el transportado en ida y vuelta es una estimación del error de interpolación, que se resta. El esquema resultante es de segundo orden en el espacio. Para preservar la estabilidad se aplica un **limitador** que acota el valor corregido al intervalo definido por el máximo y el mínimo del *stencil* de interpolación original; sin el, la corrección puede generar extremos espurios.
+
+Hay un detalle de implementación que resultó imprescindible y que no es obvio: **se mantiene una banda de dos celdas junto al sólido en semi-Lagrangiano puro**. Sobre el contorno escalonado que produce la rasterización del perfil en una malla cartesiana, la corrección de MacCormack introducía un pico espurio de coeficiente de presión de en torno a $-11$ en el borde de salida. La causa es que el limitador ópera sobre un *stencil* que incluye celdas solidas, donde el campo no tiene significado físico. Restringiendo la corrección a la región alejada de la pared el artefacto desaparece y la simetría a ángulo de ataque nulo se conserva.
+
+El coste computacional de la corrección es de aproximadamente un 4 % sobre el tiempo de iteración, ya que requiere una segunda pasada de transporte. El beneficio, medido sobre el caso de referencia a $Re = 1e5$, es la recuperación del coeficiente de sustentación desde 0,32 hasta 0,452 con $dx = 0{,}002$ y hasta 0,496 con $dx = 0{,}001$; la extrapolación de Richardson de esos dos valores da 0,54, frente al valor físico esperado de 0,55. La corrección de MacCormack constituye la cuarta y última capa del diagnóstico descrito en la sección 3.7.
+
+#2 Difusión viscosa
+
+La difusión se íntegra con un esquema explícito de Euler hacia delante, subdividiendo el paso temporal cuando la restricción de estabilidad viscosa lo exige:
+
+$$ \mathbf{u}^{**} = \mathbf{u}^{*} + \Delta t_{sub}\, \nabla \cdot \left( \nu_{ef}(x,y) \nabla \mathbf{u}^{*} \right) $$
+
+El número de subpasos se determina automáticamente como el mínimo entero que garantiza $\Delta t_{sub} \leq \Delta t_{visc}$. La viscosidad efectiva es un campo espacialmente variable, suma de la molecular y de la turbulenta suministrada por el modelo activo, y el laplaciano se evalúa con los *stencils* no uniformes precomputados. Tras cada subpaso se reimponen la máscara de sólido y las condiciones de frontera inmersa, ya que la difusión tiende a propagar cantidad de movimiento hacia el interior del sólido.
+
+La elección de un esquema explícito frente a uno implícito responde a un balance concreto. Un esquema implícito eliminaría la restricción de estabilidad, pero exigiría resolver un sistema lineal adicional por paso temporal y por componente de velocidad, con una matriz que cambia cada iteración porque la viscosidad turbulenta es variable. El coste de esa resolución es comparable al de la proyección de presión, es decir, duplicaría aproximadamente el coste del paso. El esquema explícito con subdivisión solo paga cuando la viscosidad efectiva es grande, y en la práctica el número de subpasos se mantiene bajo salvo en regiones muy localizadas.
+
+#2 Proyección de presión
+
+Es la etapa dominante en coste y la que más ingeniería numérica concentra.
+
+#3 Bucle de corrección del defecto
+
+La proyección se organiza como un bucle externo de **corrección del defecto**: en cada iteración externa se recalcula la divergencia del campo actual, se resuelve el sistema de Poisson para la corrección incremental de presión y se corrige la velocidad. El criterio de parada se aplica sobre la divergencia media normalizada:
+
+$$ \frac{1}{N_{fluido}} \sum_{i,j \notin \Omega_{sólido}} \left| \nabla \cdot \mathbf{u} \right|_{ij} < tol_{div}\, \frac{U_{\infty}}{L_{x}} $$
+
+La normalización por $U_{\infty}/L_x$ hace la tolerancia adimensional e independiente de la escala del problema, lo que permite emplear el mismo valor en mallas y regímenes distintos.
+
+#3 Ciclo en V multimalla
+
+Cada iteración externa aplica uno o varios ciclos en V de un multimalla geométrico [25], [26], cuya secuencia es:
+
+1. **Presuavizado** mediante Gauss-Seidel rojo-negro con sobrerrelajación sucesiva sobre la malla fina.
+2. **Restricción** del residuo a la malla gruesa con un operador de ponderación completa, de núcleo $\tfrac{1}{16}(1,2,1)\otimes(1,2,1)$.
+3. **Resolución aproximada** en el nivel grueso mediante barridos adicionales del mismo suavizador.
+4. **Prolongación** de la corrección al nivel fino por interpolación bilineal centrada en vértice, con pesos precomputados a partir de las posiciones reales de los nodos, no de indices.
+5. **Postsuavizado** en la malla fina.
+
+La elección del suavizador rojo-negro no es casual: **es lo que hace paralelizable el Gauss-Seidel**. En su forma clásica, la actualización de una celda depende de los valores ya actualizados de sus vecinas, lo que impone un orden secuencial incompatible con la GPU. Separando las celdas por la paridad de $i+j$ se obtienen dos conjuntos tales que, dentro de cada uno, ninguna celda es vecina de otra: cada lanzamiento del núcleo actualiza un conjunto completo en paralelo, leyendo solo valores del otro, sin conflictos de escritura y sin necesidad de un campo auxiliar.
+
+El engrosamiento de la máscara de sólidos hacia los niveles gruesos se realiza con un *stencil* de 3x3 centrado en vértice combinado mediante disyunción lógica: una celda gruesa se marca como sólida si alguna de las celdas finas de su entorno lo es. Los desplazamientos del engrosamiento se eligen automáticamente de modo que los vértices gruesos se alineen con el eje de simetría del dominio cuando este existe, lo que preserva la simetría también en la jerarquía de mallas.
+
+#3 Protección frente a divergencia del ciclo
+
+Un ciclo en V sobre un dominio con geometría embebida no tiene convergencia garantizada: la máscara de sólidos rompe la regularidad del operador y en configuraciones desfavorables el ciclo puede amplificar el residuo en lugar de reducirlo. Se implementa por ello una protección explícita: si la norma del residuo tras el ciclo supera 1,5 veces la norma previa, **se descarta la corrección** y se aplican en su lugar barridos de Gauss-Seidel puro sobre la malla fina, que son más lentos pero incondicionalmente estables para este operador. Esta salvaguarda convierte un modo de fallo silencioso —una simulación que diverge lentamente— en una degradación de rendimiento observable.
+
+#3 Ruta alternativa por gradiente conjugado
+
+Existe una ruta alternativa mediante gradiente conjugado precondicionado. Para que sea aplicable, el operador debe ser simétrico y definido positivo, lo que no se cumple automáticamente cuando la geometría embebida modifica los *stencils* de divergencia y gradiente de forma independiente. Por ello los dos operadores se diseñan como **adjuntos discretos exactos**: el núcleo de gradiente implementa la transpuesta exacta del núcleo de divergencia, de modo que el operador compuesto es simétrico y definido positivo por construcción. Esta propiedad no solo habilita el gradiente conjugado; también garantiza que la proyección sea una proyección ortogonal genuina, es decir, que no inyecte ni extraiga energía del campo.
+
+#3 Modos de configuración
+
+El compromiso entre velocidad y calidad de la proyección se expone mediante tres modos preconfigurados. Sus cifras de rendimiento se detallan en la sección 4.4.
+
+| Modo | Iteraciones externas | Ciclos por externa | Niveles | Tolerancia de divergencia |
+| turbo | 4 | 5 | 0 | 0,10 |
+| turbo_hd | 4 | 5 | 1 | 0,05 |
+| turbo_ultra | 4 | 5 | 2 | 0,05 |
+[TBL] Modos de configuración del solver de presión. El número de niveles índica la profundidad de la jerarquía multimalla. La tolerancia de divergencia esta normalizada por $U_{\infty}/L_x$ y es por tanto adimensional.
+
+#2 Tratamiento de sólidos
+
+#3 Carga y rasterización de la geometría
+
+El perfil se lee en formato Selig —lista de coordenadas que recorre el contorno desde el borde de salida por el extradós hasta el borde de ataque y de vuelta por el intradós—, se escala a la cuerda deseada, se rota el ángulo de ataque alrededor del cuarto de cuerda según la convención aeronáutica y se traslada a su posición en el dominio.
+
+La conversión a máscara de celdas solidas se realiza mediante un test de punto en polígono sobre los centros de celda, ejecutado en doble precisión. La precisión importa aquí por la misma razón que en las métricas: si el test se hiciera en precisión simple, un perfil simétrico a ángulo de ataque nulo podría producir una máscara asimétrica por redondeo, y la verificación de simetría dejaría de ser concluyente.
+
+Cuando el borde de salida es más delgado que dos veces el espaciado mínimo, se recorta automáticamente. Un borde de salida de menos de dos celdas de espesor no puede sostener celdas fantasma a ambos lados y produce inestabilidades locales; el recorte modifica ligeramente la geometría, pero de forma controlada y registrada, en lugar de dejar que el solver falle de manera impredecible.
+
+#3 Frontera inmersa con celdas fantasma
+
+La condición de no deslizamiento sobre el contorno del perfil se impone mediante el método de frontera inmersa con celdas fantasma [8], [9]. El procedimiento, precomputado una sola vez en la inicialización, es:
+
+1. Identificar las **celdas fantasma**: celdas solidas con al menos una vecina de fluido.
+2. Para cada una, calcular su **punto imagen**, reflejo de su centro respecto de la superficie del perfil, que cae en el fluido.
+3. Precomputar los indices y pesos de la interpolación bilineal en ese punto imagen.
+
+En cada iteración, el núcleo correspondiente interpola la velocidad en el punto imagen y asigna a la celda fantasma el valor opuesto:
+
+$$ \mathbf{u}_{fantasma} = -\mathbf{u}_{imagen} $$
+
+de modo que la interpolación lineal entre ambos puntos se anula exactamente sobre la superficie. La condición de no deslizamiento queda así impuesta con la precisión de la interpolación bilineal, sin necesidad de que la malla se ajuste al contorno.
+
+#3 El hallazgo: inconsistencia entre la frontera inmersa y la proyección
+
+El tratamiento descrito hasta aquí es el estándar y funcionaba de manera aparentemente correcta. Sin embargo, la sustentación obtenida a $Re = 1e5$ era muy superior a la física, con un factor de sobrecirculación de aproximadamente 2,2. El diagnóstico de esa anomalía es uno de los resultados de ingeniería del trabajo.
+
+La métrica que permitió localizar el problema es el **flujo neto a través de lazos cerrados que rodean al perfil**:
+
+$$ Q_{lazo} = \oint \mathbf{u}\cdot\mathbf{n}\,dl $$
+
+Por conservación de masa, esta integral debe ser nula sobre cualquier lazo que encierre un cuerpo sólido impermeable. El valor medido era $Q_{lazo} \approx -0{,}06\,U_{\infty}c$: el sistema **absorbía masa** en la pared. Un sumidero de masa en el interior de un lazo cerrado genera circulación espuria, y de ahí la sobrecirculación.
+
+El origen resultó ser una inconsistencia entre el operador de divergencia empleado por la proyección y el tratamiento de la pared por la frontera inmersa: la proyección anulaba la componente entera de velocidad en las celdas adyacentes al sólido, quedando efectivamente ciega en la pared. El tratamiento corregido, activado mediante `wall_treatment="consistent"`, tiene tres componentes:
+
+1. **Divergencia por flujo de caras.** La divergencia se calcula como balance de flujos a través de las caras de la celda, imponiendo flujo exactamente nulo en las caras que separan fluido de sólido. Así la ecuación de Poisson ve la impermeabilidad de la pared como condición de contorno, en lugar de ignorarla.
+2. **Gradiente de presión unilateral en celdas de pared.** En las celdas adyacentes al sólido, el gradiente de presión se evalúa con un *stencil* que no cruza la interfaz.
+3. **Eliminación del refuerzo de impermeabilidad.** El código original aplicaba, tras la proyección, una corrección que anulaba la componente normal de la velocidad en la capa de fluido junto al sólido. Esa corrección —una cirugía sobre el campo ya proyectado— era precisamente la que destruía masa.
+
+Con estos tres cambios, $Q_{lazo}$ pasa a valores del orden de $0{,}005\,U_{\infty}c$, es decir, se anula dentro de la precisión del cálculo.
+
+**El desenlace honesto es que llevar $Q_{lazo}$ a cero no recuperó la sustentación.** La hipótesis de trabajo era que la sobrecirculación procedía íntegramente del sumidero de masa; se cuantificó que una variación $\Delta Q = 0{,}020$ debería producir un incremento de sustentación de aproximadamente 0,4, y lo medido fue 0,04. La hipótesis quedo falsada por un factor diez. La proyección quedo exonerada, y fue esa falsación la que obligó a buscar la cuarta capa del diagnóstico —la difusión numérica del esquema semi-Lagrangiano de la sección 3.4—, que resultó ser la causa dominante.
+
+Se documenta esta secuencia porque el resultado útil no es solo la corrección implementada, sino la constatación de que una métrica de conservación puede estar mal y ser, aun así, una causa secundaria del síntoma observado.
+
+#2 Cálculo de fuerzas aerodinámicas
+
+Las fuerzas se obtienen por integración de los esfuerzos sobre la superficie del perfil. Sobre geometría embebida esto requiere reconstruir magnitudes en una superficie que no coincide con ninguna cara de la malla, lo que introduce varias decisiones no triviales.
+
+#3 Extrapolación de la presión a la pared
+
+En lugar de interpolar la presión en un único punto próximo a la superficie, se muestrea en varias capas de fluido situadas a distancias crecientes y se extrapola a la pared mediante **regresión lineal por mínimos cuadrados**. La justificación es la robustez: en el borde de salida los gradientes de presión son intensos y una interpolación de un solo punto es muy sensible a la posición exacta de la celda muestreada, mientras que un ajuste sobre varias capas promedia ese ruido.
+
+#3 Corrección de presión de fondo
+
+En un problema incompresible la presión esta definida salvo una constante, y en la práctica el campo numérico presenta además un gradiente residual de campo lejano asociado al bloqueo del dominio finito. Ambos efectos se corrigen ajustando un plano afín $p_{fondo} = a + bx + cy$ a los valores de presión en las celdas del contorno exterior del dominio y restándolo del campo de presión en la pared, seguido de la eliminación del desplazamiento residual promediado sobre el contorno del perfil.
+
+Esta corrección no es cosmética. Si el contorno discreto del perfil no cierra exactamente —y no lo hace, porque es una poligonal sobre una malla cartesiana—, la integral de una presión con desplazamiento constante no se anula: produce una fuerza neta espuria proporcional a ese desplazamiento y al defecto de cierre. Sin la corrección aparece un sesgo de sustentación sin significado físico.
+
+#3 Esfuerzo viscoso e integración
+
+La contribución viscosa se obtiene del tensor de velocidad de deformación evaluado en la superficie con los *stencils* no uniformes, multiplicado por la viscosidad efectiva local:
+
+$$ \mathbf{T}_{v} = 2\,\rho\,\nu_{ef}\,\mathbf{S}\cdot\mathbf{n} $$
+
+Las fuerzas resultan de integrar sobre el contorno del sólido:
+
+$$ F_x = \oint \left( -p\,n_x + T_{v,x} \right) dl, \qquad F_y = \oint \left( -p\,n_y + T_{v,y} \right) dl $$
+
+donde el elemento de arco se calcula con las métricas locales de la malla. Finalmente, las componentes se rotan el ángulo de ataque para pasar al sistema aerodinámico y se adimensionalizan.
+
+#3 Tres estimadores independientes de la sustentación
+
+El solver calcula la sustentación por tres vías distintas:
+
+* **Integral de superficie** de los esfuerzos, tal como se ha descrito. Es el estimador de referencia y el que alimenta la señal `ld_raw`.
+* **Integral del salto de presión**, $\oint \Delta C_p$, que emplea únicamente la contribución de presión.
+* **Circulación**, obtenida integrando la velocidad sobre lazos cerrados alrededor del perfil, y convertida en sustentación mediante el teorema de Kutta-Yukovski.
+
+Los tres deben coincidir si el campo es correcto, y no coinciden si no lo es. **La discrepancia mutua entre estimadores es el diagnóstico de calidad más útil del solver**, porque no requiere ninguna referencia externa: es una condición de consistencia interna.
+
+Su utilidad quedo demostrada durante la verificación. La discrepancia entre el estimador de presión y el de fuerza pasaba de valores en el rango 0,31 a 0,83 a valores en el rango 0,02 a 0,14 sin más cambio que dejar de medir durante el transitorio. Es decir, buena parte de lo que se estaba atribuyendo a sobrecirculación residual era simplemente la consecuencia de medir un flujo que no había terminado de desarrollarse. Queda un residuo real, mucho menor, que crece con el número de Reynolds.
+
+Conviene distinguir en todo momento las dos definiciones que aparecen en los ficheros de resultados: `ld` emplea la sustentación reconstruida de forma consistente con el campo de presión, mientras que `ld_raw` emplea la integral de superficie directa, que es la señal sobre la que ópera el criterio de parada. No son intercambiables y no deben mezclarse en una misma tabla sin indicarlo.
+
+#2 Implementación en GPU
+
+#3 Tipos de núcleo
+
+Toda la computación intensiva se realiza en GPU mediante CuPy [27]. Se emplean dos mecanismos distintos según la naturaleza de la operación.
+
+Los **núcleos elementales** de CuPy se usan para operaciones en las que cada celda se calcula a partir de un patrón fijo de vecinas y la lógica es expresable como una única expresión: actualización de Jacobi enmascarada, laplaciano enmascarado, precondicionador diagonal. CuPy genera y compila el código CUDA a partir de la expresión, lo que reduce el código a mantener.
+
+Los **núcleos CUDA propios** se emplean cuando se necesita control más fino sobre el flujo de ejecución, sobre la indexación o sobre la sincronización. Los principales son:
+
+* `rb_gs_sor`: suavizador Gauss-Seidel rojo-negro con sobrerrelajación, con filtrado por paridad para permitir actualización en el mismo array.
+* `restrict_2d` y `prolongate_add_2d`: transferencia entre niveles de la jerarquía multimalla.
+* `divergence_masked`: divergencia con *stencil* adaptativo que excluye las direcciones bloqueadas por sólido.
+* `velocity_correction_kernel` y `adjoint_gradient_kernel`: corrección de velocidad y gradiente adjunto exacto, con la misma lógica de vecinos que la divergencia para garantizar la consistencia discreta de los operadores.
+* `ghost_cell_bc_kernel`: imposición de la condición de frontera inmersa.
+* `zero_solid_kernel`: anulación de la velocidad en el interior del sólido.
+* Núcleo de distribución de fuerzas con función delta de Peskin [8] y acumulación atómica, empleado por la ruta alternativa de frontera inmersa por fuerzas.
+
+#3 Minimización de transferencias
+
+La transferencia entre memoria de sistema y memoria de la GPU es, con diferencia, la operación más cara del sistema. La estrategia es sencilla y estricta: **los campos nunca vuelven a la CPU durante el bucle**. Las métricas de malla se transfieren una única vez en la inicialización. Durante la simulación solo se transfieren escalares —coeficientes de fuerza, divergencia media y máxima, residuos— y solo cada `guardado` iteraciones.
+
+Antes de entrar en el bucle principal se fuerza la compilación en tiempo de ejecución de todos los núcleos ejecutándolos sobre datos ficticios. Sin este calentamiento, la primera iteración incorporaría entre 30 y 90 segundos de compilación, lo que distorsionaría cualquier medida de rendimiento y, en el contexto del optimizador, supondría un recargo apreciable sobre evaluaciones de pocos minutos.
+
+#3 El cuello de botella es el ancho de banda
+
+El rendimiento del solver no está limitado por la capacidad aritmética de la GPU sino por su **ancho de banda de memoria**. La razón es estructural: los operadores del solver son *stencils* de bajo orden, con muy pocas operaciones aritméticas por cada valor leído de memoria. Además, en una matriz almacenada por filas, los accesos a los vecinos en la dirección vertical saltan `nx` elementos, de modo que las lecturas de hilos consecutivos no caen en la misma línea de memoria y no se agrupan en una única transacción.
+
+La consecuencia práctica es que la aceleración frente a una implementación en CPU está acotada por la relación de anchos de banda entre ambas, no por la relación de capacidad de cálculo. Y, de cara a la escalabilidad, implica que una GPU con mayor ancho de banda rendiría proporcionalmente mejor, mientras que una con más unidades de cálculo pero igual ancho de banda no aportaría prácticamente nada.
+
+#3 Visualización en tiempo real
+
+Para inspección interactiva se dispone de un visor independiente que accede a los campos mediante un bloque de memoria compartida entre el proceso del solver y el del visor. Esto permite observar la evolución del flujo sin detener la simulación ni escribir a disco, lo que resultó útil durante el diagnóstico de los modos de fallo descritos en las secciones anteriores.
+
+#2 Optimización geométrica
+
+#3 Algoritmo genético
+
+El optimizador reside en `scripts/RunGA.py` y sigue el ciclo evolutivo clásico. La configuración base emplea una población de 12 individuos, de los cuales 4 pasan intactos por elitismo, y selección por torneo de tamaño 4. Por generación:
+
+1. Se evalúa el fitness de todos los individuos mediante simulación CFD.
+2. Se preservan los 4 mejores.
+3. Para el resto se seleccionan progenitores por torneo, se cruzan promediando sus coordenadas y se aplica mutación paramétrica.
+4. Se registran los resultados y se avanza de generación.
+
+La amplitud de la mutación sigue una **sigma adaptativa** que decrece con las generaciones, desplazando el comportamiento desde la exploración inicial hacia el refinamiento final. La ejecución termina por estancamiento cuando no se registra mejora superior a `tol_mejora_fitness` durante `paciencia_generaciones` generaciones consecutivas.
+
+El **modelo de islas** mantiene varias poblaciones con semillas distintas que evolucionan de forma independiente e intercambian individuos cada cierto número de generaciones. El propósito declarado es preservar diversidad y evitar que toda la búsqueda quede atrapada en una única cuenca de atracción. La sección 4.5 mide si cumple ese propósito, y el resultado no es el esperado.
+
+Dado que una corrida completa puede prolongarse decenas de horas, el estado genético de toda la población se guarda en `estado_ga.json` tras cada generación, lo que permite interrumpir y reanudar sin perder trabajo.
+
+#3 Parametrización del perfil
+
+La mutación no ópera sobre las coordenadas del contorno sino sobre la descomposición en línea de curvatura media y distribución de espesor:
+
+$$ c(x) = \frac{y_{sup}(x) + y_{inf}(x)}{2}, \qquad t(x) = y_{sup}(x) - y_{inf}(x) $$
+
+Hay dos razones para ello. La primera es de significado: como se expuso en la sección 2.5, camber y espesor tienen efectos aerodinámicos separables, de modo que perturbarlos por separado produce un espacio de búsqueda mejor condicionado. La segunda es de validez: perturbando las coordenadas directamente es fácil generar geometrías en las que el extradós cruza al intradós, que no corresponden a ningún perfil físico; en el espacio camber-espesor basta con exigir espesor positivo.
+
+Las perturbaciones se aplican mediante 7 nodos de control interpolados suavemente sobre toda la cuerda, con desviaciones típicas calibradas por barrido: 0,0035 para el camber y 0,0045 para el espesor, ambas en unidades de cuerda.
+
+Las **restricciones geométricas** y su motivación física son:
+
+* **Radio mínimo de borde de ataque**: un borde de ataque excesivamente afilado produce un pico de succión muy intenso, gradiente adverso severo y separación inmediata fuera del punto de diseño. Se limita a una fracción del radio del perfil de partida.
+* **Espesor mínimo en el borde de salida**, absoluto y relativo al perfil base: garantiza que el borde de salida siga siendo representable en la malla y evita geometrías no fabricables.
+* **Espesor mínimo global**: evita perfiles que se estrangulan en algún punto de la cuerda.
+* **Atenuación de la mutación en la zona del borde de ataque**, en el primer 6 % de la cuerda, donde la sensibilidad del flujo a la geometría es máxima y una perturbación del mismo tamaño que en el resto de la cuerda produce cambios desproporcionados.
+
+Si una geometría generada viola alguna restricción se reintenta la mutación, hasta un máximo de 120 intentos, con un mecanismo de reserva más conservador si se agotan. En la campaña realizada, el número de descartes por restricción geométrica durante la reproducción fue del orden de varios centenares por estudio, lo que índica que las restricciones son activas y no meramente decorativas.
+
+Para permitir el cruce entre perfiles procedentes de ficheros con distinto número de puntos, todas las geometrías se remuestrean previamente sobre una rejilla común de abscisas.
+
+#3 La evaluación CFD como función de fitness
+
+Cada individuo se evalúa invocando el solver con la configuración de referencia. El fitness es la eficiencia aerodinámica media sobre la parte final de la serie temporal, descartando el transitorio inicial.
+
+**El elemento crítico de todo el sistema es el criterio que decide cuando dejar de simular.** Como el estado estacionario se alcanza por integración temporal, el coste de una evaluación es directamente proporcional al tiempo físico simulado, y detener antes ahorra tiempo. El criterio original comparaba la serie de coeficientes con la media de su propio último 15 % y la declaraba convergida cuando la diferencia entraba en tolerancia.
+
+Ese criterio es el defecto central del trabajo, y su análisis ocupa la sección 4.5. Se adelanta aquí solo su mecanismo, porque es necesario para entender el diseño experimental: **la pregunta que hace el test no es si la señal ha dejado de cambiar, sino si se parece a su propio pasado reciente**. Una señal que deriva de forma lenta y monótona satisface trivialmente la segunda condición sin satisfacer la primera.
+
+El **coste por evaluación** condiciona todo el diseño experimental. Con el criterio original y malla de exploración $dx = 0{,}004$, una evaluación costaba del orden de 100 segundos. Con presupuesto fijo honesto y malla $dx = 0{,}002$ cuesta unos 1740 segundos. Ese factor de aproximadamente 17 entre la evaluación barata y la fiable es la restricción que gobierna el tamaño alcanzable de cualquier campaña de optimización.
+
+El **modo multipunto**, que evalúa cada individuo a tres ángulos de ataque y combina los resultados por media, mínimo o media ponderada, está implementado y verificado, pero se descartó en la campaña realizada por triplicar el coste por individuo.
+
+#3 Filtro predictivo mediante modelo sustituto
+
+La clase `OraculoAerodinamico` implementa un regresor de bosque aleatorio [28], [29] con 100 arboles y profundidad máxima 15, que predice el fitness a partir de la geometría del perfil. El umbral de descarte es dinámico: se fija como un percentil sobre el máximo histórico observado, de modo que se endurece a medida que la población mejora. El modelo persiste en disco entre ejecuciones, acumulando experiencia a lo largo de múltiples sesiones.
+
+Un detalle de diseño relevante para la calidad del entrenamiento: `DataLoggerML` registra en un fichero de líneas JSON **todas** las evaluaciones realizadas, incluidas las de individuos que el filtro habría descartado. Registrar solo los aprobados produciría un conjunto de entrenamiento censurado en la parte baja de la distribución, y el modelo perdería progresivamente la capacidad de reconocer geometrías malas —exactamente la capacidad para la que se le usa.
+
+El sistema de aprendizaje contempla además otros dos componentes, documentados y parcialmente implementados: un **sustituto directo** que predice los coeficientes aerodinámicos a partir de la geometría y las condiciones, y un **predictor inverso** que propondría una geometría a partir de unos objetivos de rendimiento. Este último plantea un problema estructural que conviene enunciar: la correspondencia entre objetivos y geometría es de uno a muchos, ya que múltiples perfiles distintos pueden alcanzar la misma pareja de coeficientes en un punto de operación. Un regresor entrenado con error cuadrático medio sobre ese problema converge al promedio de las soluciones validas, que en general no es una solución valida. Abordarlo requiere modelos generativos condicionados, no regresión.
+
+**Y hay que decir la verdad sobre su uso en la campaña realizada: el filtro estuvo desactivado en los seis estudios.** No cribo ni un solo individuo. Su evaluación, por tanto, es necesariamente retrospectiva y fuera de línea, y así se presenta en la sección 4.5.
+
+[PB]
+#1 Resultados
+
+Este capítulo presenta los resultados obtenidos, organizados como una cadena de verificación que va de lo más elemental a lo más comprometido: primero la consistencia interna del solver, después el contraste con referencias externas independientes, a continuación la fenomenología del flujo y el rendimiento computacional, y finalmente la verificación de la propia función de fitness empleada por el optimizador.
+
+Antes de entrar en materia conviene declarar una restricción que afecta a la mitad del capítulo. La verificación identificó un defecto en el criterio de parada de las simulaciones que inválida los **valores absolutos** de toda la campaña de optimización realizada. En consecuencia, **los resultados de optimización propiamente dichos —perfil obtenido, mejora conseguida, coeficientes del perfil resultante— no se presentan en esta memoria**, y quedan pendientes de una campaña nueva. Lo que si se presenta, y con detalle, es la verificación que obliga a rehacerla: esa verificación no es un resultado de optimización sino el resultado principal del trabajo. Las secciones afectadas se marcan explícitamente.
+
+Todos los valores de este capítulo proceden de los ficheros de resultados de la verificación numérica y se han contrastado contra ellos.
+
+#2 Validación del solver
+
+La validación se estructura como una cadena en la que cada eslabón verifica una propiedad distinta y cada uno se apoya en que el anterior se cumpla.
+
+#3 Simetría exacta
+
+La primera comprobación es la más barata y la más exigente en un sentido concreto. Un perfil simétrico a ángulo de ataque nulo en un dominio simétrico debe producir sustentación idénticamente nula. El resultado obtenido es $C_L = 3\cdot 10^{-4}$, sin aparición de valores no numéricos y con simetría del campo preservada.
+
+El valor de esta prueba es que verifica **la cadena completa** en un solo test: las métricas de malla, la generación de la malla estirada, la rasterización de la geometría, el engrosamiento de la máscara en la jerarquía multimalla, los operadores de restricción y prolongación, el suavizador rojo-negro y la integración de fuerzas. Un error de redondeo sistemático en cualquiera de esas etapas rompe la simetría y aparece como sustentación espuria. Que el residuo se mantenga en el orden de $10^{-4}$ y no crezca con las iteraciones es lo que justifica el uso de doble precisión en las métricas y de la rasterización en doble precisión descritos en las secciones 3.3 y 3.7.
+
+#3 Contraste con una DNS publicada
+
+El segundo eslabón compara el solver con una simulación numérica directa publicada para el flujo alrededor del NACA 0012 a $Re = 1000$ [23], un caso deliberadamente elegido: a ese número de Reynolds la difusión numérica del esquema semi-Lagrangiano supone en torno al 10 % de la viscosidad molecular, de modo que la comparación mide la calidad del solver y no la de su esquema de advección.
+
+| Fuente | $C_L$ | $C_D$ |
+| DNS de referencia [23] | 0,22 | 0,146 |
+| Solver, advección semi-Lagrangiana | 0,211 ± 0,0004 | 0,148 |
+| Solver, corrección de MacCormack | 0,245 | 0,155 |
+[TBL] Contraste con la DNS publicada de Kurtulus [23] para el NACA 0012 a $Re = 1000$ y $\alpha = 5$ grados. La incertidumbre indicada es la desviación típica de la serie temporal una vez alcanzado el régimen establecido.
+
+Con advección semi-Lagrangiana el acuerdo es excelente en ambos coeficientes. Con la corrección de MacCormack activada aparece una ligera sobreestimación, coherente con la reducción de difusión numérica sobre una malla que a este Reynolds ya era suficientemente fina: al retirar un mecanismo disipativo espurio sobre un caso que no lo necesitaba, el resultado se desplaza ligeramente. La física se mantiene intacta y el caso sigue reproduciendo el comportamiento inestacionario de referencia.
+
+Conviene registrar la implicación metodológica: **este caso, por si solo, habría dado por bueno el solver**. Fue precisamente su éxito lo que retrasó la detección de que a $Re = 1e5$ el esquema de advección introducía un error de primer orden dominante. Un único caso de validación, por bien que salga, no acota el dominio de validez.
+
+#3 Divergencia residual
+
+La calidad de la proyección se monitoriza mediante la divergencia media y máxima del campo de velocidad, normalizadas por $U_{\infty}/L_x$. Los umbrales operativos empleados son: por debajo de 0,01 el campo se considera bien resuelto; entre 0,01 y 0,10 la calidad es aceptable para estudios comparativos de diseño; por encima de 0,10 la proyección es insuficiente y los coeficientes no son utilizables.
+
+La estabilidad se refuerza además con limitación de velocidad y presión a múltiplos de sus valores de referencia, detección de valores no numéricos y la protección frente a amplificación del residuo del ciclo en V descrita en la sección 3.6.
+
+#3 Convergencia de malla: el índice GCI
+
+El error de discretización espacial se acota mediante el índice de convergencia de malla de Roache [11], en la formulación estandarizada por Celik et al. [12] y recogida en la norma ASME V&V 20 [13]. Con tres mallas de razón de refinamiento constante $r$ se despejan simultáneamente el orden observado del esquema y la solución de malla infinitamente fina, sin conocer ninguno de los dos de antemano:
+
+$$ p = \frac{\ln\left| \varepsilon_{32} / \varepsilon_{21} \right|}{\ln r} $$
+
+$$ f_{ext} = \frac{r^{p} f_{1} - f_{2}}{r^{p} - 1} $$
+
+$$ GCI = F_{s}\frac{\left| (f_1 - f_2)/f_1 \right|}{r^{p} - 1} $$
+
+El factor de seguridad $F_s = 1{,}25$ es empírico, calibrado por Roache sobre un conjunto amplio de casos, y permite interpretar el GCI como una banda de confianza aproximada del 95 %.
+
+Un detalle metodológico imprescindible: **el estudio se ejecuta con la parada anticipada desactivada**. Si unas mallas se detuvieran antes que otras, el tiempo físico simulado dejaría de ser común y el orden observado mediría esa diferencia temporal en lugar del error de discretización espacial.
+
+| $dx$ | $C_L$ | $C_D$ | Iteraciones | Muestras | Tiempo de cálculo [s] |
+| 0,008 | 0,4195 | 0,04000 | 4 000 | 10 | 233 |
+| 0,004 | 0,5751 | 0,03332 | 7 000 | 28 | 715 |
+| 0,002 | 0,7104 | 0,02877 | 13 000 | 52 | 1 743 |
+| 0,001 | 0,7402 | 0,02927 | 26 000 | 104 | 7 472 |
+[TBL] Datos crudos del estudio de convergencia de malla, a $Re = 1e5$ y $\alpha = 4$ grados, con razón de refinamiento 2 y sin parada anticipada. El perfil empleado procede de la campaña anterior y se usa aquí únicamente como geometría de trabajo; el resultado que interesa es una propiedad del esquema numérico, no del perfil, por lo que no se incluye columna de eficiencia aerodinámica.
+
+| Magnitud | Orden observado $p$ | Malla fina | Richardson $h \to 0$ | GCI malla fina | GCI malla gruesa | Monótona |
+| $C_L$ | 2,18 | 0,7402 | 0,7487 | ±1,43 % | ±6,74 % | si |
+| $C_D$ | 3,18 | 0,02927 | 0,02933 | ±0,27 % | ±2,46 % | **no** |
+[TBL] Resultados del índice de convergencia de malla sobre el triplete fino ($dx$ = 0,001 / 0,002 / 0,004).
+
+La lectura crítica de estos números es más importante que los números mismos.
+
+* **El orden observado en la sustentación, $p = 2{,}18$, es el resultado limpio.** Coincide con el orden formal 2 del esquema espacial. Es la cifra que confirma que la implementación hace lo que la teoría dice que debería hacer, y es la que debe citarse.
+* **La resistencia no converge de forma monótona**: la secuencia 0,03332 → 0,02877 → 0,02927 baja y rebota. Con no monotonía el GCI deja de ser fiable, como el propio Celik advierte. El valor de ±0,27 % está por tanto **sobreestimado en cuanto a confianza**; la incertidumbre real de la resistencia es al menos el error aproximado entre las dos mallas finas, es decir, del orden de ±1,7 %.
+* Los órdenes observados por encima del orden formal —3,18 en la resistencia— son una señal adicional de que el triplete no está plenamente dentro del rango asintótico.
+* **La cifra de incertidumbre de malla defendible es ±1,4 %**, la correspondiente a la sustentación.
+* Y la consecuencia que arrastra todo el trabajo: las mallas de $dx = 0{,}008$ y $dx = 0{,}004$ quedan **fuera del rango asintótico**, con GCI grueso entre 3,3 y 6,7 %. El salto de $dx = 0{,}004$ a $dx = 0{,}002$ es cinco veces mayor que el de $dx = 0{,}002$ a $dx = 0{,}001$: el régimen asintótico empieza entre esas dos mallas. **La campaña de optimización exploro a $dx = 0{,}004$**, de modo que sus valores absolutos no son utilizables. La malla de $dx = 0{,}002$ si lo es, con aproximadamente un 2,4 % de error de discretización frente al valor extrapolado.
+
+[FIG] Convergencia de malla: coeficientes de sustentación y resistencia frente al espaciado, con la extrapolación de Richardson y las bandas del GCI. Se aprecia la no monotonía de la resistencia entre las dos mallas más finas.
+
+#3 Validación cruzada por tres vías independientes
+
+El valor obtenido para el caso de referencia se comprobó por tres caminos que no comparten hipótesis: una serie larga sin parada anticipada llevada hasta 30 000 iteraciones, la solución de $dx = 0{,}002$ del estudio GCI, y una reevaluación independiente con el criterio de parada calibrado.
+
+El interés del contraste no es que las tres cifras coincidan —coinciden dentro de aproximadamente el 1,3 %— sino **por que su coincidencia acota el error mejor que cualquiera de ellas por separado**. Las tres vías comparten el solver, pero difieren en el presupuesto temporal, en la malla y en el mecanismo de terminación. Un error en el criterio de parada afectaría solo a la tercera; un error de discretización afectaría de forma distinta a la primera y a la segunda. Que las tres converjan al mismo valor descarta simultáneamente varias familias de error, cosa que ninguna comprobación individual puede hacer.
+
+Los tres valores concretos corresponden a la eficiencia aerodinámica del perfil procedente de la campaña antigua, y por la restricción enunciada al inicio del capítulo no se reproducen aquí. **[EN ESPERA: campaña por rehacer]**
+
+#3 Contraste con XFOIL
+
+La última referencia externa es XFOIL [10] sobre el NACA 0012 a $Re = 1e5$ con parámetro de amplificación de transición $N_{crit} = 9$.
+
+| $\alpha$ [grados] | $C_L$ solver | $C_L$ XFOIL | $C_D$ solver | $C_D$ XFOIL | Error en $C_D$ |
+| 0 | 0,0002 | 0,0000 | 0,01653 | 0,01693 | −2,4 % |
+| 2 | 0,1659 | 0,3737 | 0,02199 | 0,01444 | +52,3 % |
+| 4 | 0,4754 | 0,5365 | 0,03437 | 0,01520 | +126,1 % |
+| 6 | 0,5777 | 0,6862 | 0,04667 | 0,01958 | +138,4 % |
+| 8 | 0,7065 | 0,8471 | 0,08684 | 0,02869 | +202,7 % |
+| 10 | 0,9954 | 0,9661 | 0,14937 | 0,04582 | +226,0 % |
+[TBL] Contraste con XFOIL para el NACA 0012 a $Re = 1e5$, $N_{crit} = 9$. Error absoluto medio en sustentación 0,0912; error absoluto medio en resistencia 0,03598; error relativo medio en resistencia +123,8 %.
+
+**La sustentación es buena; la resistencia no.** El resultado sólido es la pendiente de sustentación:
+
+| Fuente | $dC_L/d\alpha$ [1/grado] |
+| Solver | 0,10211 |
+| XFOIL | 0,11107 |
+| Teoría de perfil delgado ($2\pi$) | 0,10966 |
+[TBL] Pendiente de la curva de sustentación. El solver queda un 8 % por debajo de la teoría potencial de perfil delgado, desviación normal para un perfil de espesor finito.
+
+La resistencia, en cambio, se desvía de forma **monótona creciente con el ángulo de ataque**: desde un −2,4 % a incidencia nula hasta un +226 % a 10 grados. Está estructura del error es informativa. Un sesgo aproximadamente constante apuntaría a un problema de calibración o de normalización, corregible mediante un factor. **Un sesgo que crece con la carga aerodinámica apunta a un mecanismo físico**, y no es divisible.
+
+Las causas plausibles, por orden de verosimilitud:
+
+1. **Resolución de capa límite.** Con $dx = 0{,}002$ y frontera inmersa, entre 5 y 10 celdas caen dentro de la capa límite a $Re = 1e5$, y la primera celda queda en $y^{+} \approx 10$. El gradiente de velocidad en pared sale suavizado y la fricción sobreestimada. El efecto empeora al aumentar el ángulo de ataque porque la capa límite se engrosa.
+2. **Separación prematura.** Si la burbuja de separación laminar no reataca donde debería, la resistencia de presión se dispara. Es coherente con que la degradación se acelere a partir de 6 grados.
+3. **Bidimensionalidad.** XFOIL es bidimensional con corrección integral de capa límite; el solver resuelve las ecuaciones completas en dos dimensiones. A $Re = 1e5$ el desprendimiento real es tridimensional, de modo que ninguna de las dos herramientas es la verdad, pero divergen justo donde eso importa.
+
+La sección 7.3 propone el experimento que discriminaría entre las hipótesis 1 y 2.
+
+#3 Enunciado de lo validado
+
+Cerrando la cadena, el enunciado preciso de lo que queda validado es el siguiente:
+
+**El solver sirve para comparar perfiles entre si a igual ángulo de ataque y misma malla, con una incertidumbre de discretización acotada en ±1,4 % en el coeficiente de sustentación. No sirve para predecir coeficientes absolutos comparables con la literatura o con datos experimentales.**
+
+Es una afirmación más estrecha que la que se podía hacer antes de la verificación, y es la defendible. Conviene notar que la comparación perfil contra perfil a igual ángulo de ataque y misma malla es exactamente la única operación que necesita el algoritmo genético, de modo que la limitación no inválida el uso previsto de la herramienta: lo acota.
+
+#2 Resultados fluidodinámicos
+
+Esta sección documenta la fenomenología del flujo obtenida con la configuración de referencia. Los casos mostrados corresponden al perfil NACA 0012, empleado como geometría de referencia.
+
+La estructura del campo alrededor del perfil reproduce los elementos esperados: punto de remanso en el borde de ataque, aceleración sobre el extradós con el correspondiente pico de succión, recuperación de presión aguas abajo del espesor máximo, y estela viscosa. La posición del pico de succión es un indicador diagnóstico sensible: con la configuración correcta cae en $x/c \approx 0{,}015$–$0{,}02$, valor físicamente coherente con la proximidad al borde de ataque, mientras que cuando el modelo de turbulencia fallaba aparecía desplazado hasta $x/c \approx 0{,}14$, señal inequívoca de una burbuja de separación laminar extensa que no reatacaba.
+
+[FIG] Campo de magnitud de velocidad alrededor del NACA 0012 a $Re = 1e5$ y $\alpha = 5$ grados con la configuración de referencia. Se aprecian el punto de remanso, la aceleración en el extradós y la estela.
+
+[FIG] Campo de presión y líneas de corriente para el mismo caso, con detalle de la zona del borde de ataque donde se localiza el pico de succión.
+
+El comportamiento transitorio depende fuertemente del régimen:
+
+* A $Re = 1000$ el flujo desprende de forma organizada y los coeficientes oscilan de manera sostenida. No existe estado estacionario: el promediado debe extenderse sobre varios periodos de desprendimiento, y por eso el horizonte temporal necesario a este Reynolds es notablemente mayor —del orden de 15 tiempos convectivos— que a Reynolds altos.
+* A $Re \geq 1e5$ con el modelo de Spalart-Allmaras el flujo alcanza un estado estacionario. Con la configuración de referencia la serie de sustentación se estabiliza a partir de aproximadamente 4 o 5 tiempos convectivos, con una desviación típica residual del orden de $10^{-5}$.
+
+La evolución desde el arranque impulsivo hasta el estado final atraviesa fases bien diferenciadas que resultan visibles en las series temporales: un pico inicial de sustentación asociado al vórtice de arranque, un mínimo posterior cuando la capa límite termina de desarrollarse y la circulación se reajusta, y finalmente la estabilización. Este comportamiento no monótono es directamente relevante para el capítulo siguiente: **una señal que sube, baja y vuelve a subir ofrece múltiples instantes en los que parece haberse estabilizado sin haberlo hecho**.
+
+[FIG] Evolución temporal del coeficiente de sustentación en tiempos convectivos, desde el arranque impulsivo hasta el estado estacionario, con indicación de las fases del transitorio. Se marca el instante en que el criterio de parada original habría detenido la simulación.
+
+Se dispone además de secuencias completas de campos de velocidad en dominio completo y en zona refinada para regímenes de $Re = 1000$ y $Re = 1e5$, utilizables como ilustración de la fenomenología del flujo.
+
+#2 Resultados aerodinámicos
+
+Esta sección se limita al perfil de referencia NACA 0012. Los resultados aerodinámicos del perfil optimizado quedan pendientes de la campaña nueva.
+
+El resultado aerodinámico sólido del trabajo es la **curva de sustentación** del NACA 0012 a $Re = 1e5$ y $dx = 0{,}002$, cuyos valores figuran en la tabla de contraste con XFOIL de la sección 4.1. La pendiente medida, 0,10211 por grado, queda un 8 % por debajo de la predicción de la teoría de perfil delgado, desviación que es la esperada para un perfil de espesor finito y que constituye una verificación cuantitativa independiente del cálculo de fuerzas.
+
+La curva presenta **sublinealidad a ángulos altos**: el incremento de sustentación por grado disminuye a partir de aproximadamente 6 grados. La interpretación física es la esperada en régimen previo a la perdida, con separación creciente desde el borde de salida que reduce progresivamente la circulación efectiva y desplaza el centro de presiones.
+
+La **curva de resistencia** del mismo caso se presenta explícitamente como **magnitud no validada**. Su desviación creciente respecto de XFOIL, discutida en la sección 4.1, significa que la resistencia calculada no es utilizable como predicción absoluta. Se incluye porque su estructura —el hecho de que el error crezca con el ángulo de ataque en lugar de mantenerse constante— es en si misma información sobre el mecanismo responsable.
+
+[FIG] Curvas de sustentación y resistencia del NACA 0012 a $Re = 1e5$ y $dx = 0{,}002$, con la predicción de XFOIL y la pendiente teórica de perfil delgado superpuestas. La curva de resistencia se marca como no validada.
+
+Las **distribuciones del coeficiente de presión** en extradós e intradós para varios ángulos de ataque muestran la relación entre la forma de la distribución y la sustentación resultante: el punto de remanso se desplaza hacia el intradós al aumentar la incidencia, el pico de succión se intensifica y se acerca al borde de ataque, y la recuperación de presión en el extradós se hace más severa hasta que la separación aplana la distribución en la parte posterior de la cuerda. Ese aplanamiento es la firma de la separación y explica la sublinealidad de la curva de sustentación.
+
+[FIG] Distribuciones del coeficiente de presión sobre extradós e intradós del NACA 0012 a $Re = 1e5$ para varios ángulos de ataque, con indicación del punto de remanso y del pico de succión.
+
+**[EN ESPERA: campaña por rehacer]** Quedan pendientes de la nueva campaña la polar del perfil optimizado, su comparación con el perfil semilla y la comprobación de si la mejora obtenida es de banda ancha o esta sobreajustada al ángulo de diseño. La pregunta está bien planteada y la figura prevista es una superposición de las polares del perfil optimizado y de su semilla sobre el rango de ángulos de ataque explorado, con el punto de diseño marcado: si la ventaja se concentra en el entorno del punto de diseño se tratara de sobreajuste, y si se mantiene en todo el rango sera una mejora genuina de la geometría. No se anticipa aquí ninguna respuesta.
+
+#2 Rendimiento computacional
+
+#3 Velocidad de iteración
+
+El rendimiento se mide en iteraciones por segundo sobre la GPU RTX 3070 Ti.
+
+| Configuración | Malla | Iteraciones por segundo |
+| turbo | ~600 x 400 | 4,9 |
+| turbo_hd | ~600 x 400 | 2,1 |
+| turbo_ultra | ~600 x 400 | 1,4 |
+| turbo_hd, $dx = 0{,}001$ | 3 243 x 1 203 | ~2 |
+[TBL] Velocidad de iteración según el modo de configuración del solver de presión y la resolución de malla.
+
+El escalado no es proporcional al número de celdas. Pasar de la malla de trabajo a la de $dx = 0{,}001$ multiplica el número de celdas por un factor cercano a 16 y la velocidad solo cae a la mitad, porque el trabajo por celda es reducido y la GPU esta infrautilizada en las mallas pequeñas: el coste está dominado por la latencia de lanzamiento de núcleos y no por el volumen de datos.
+
+#3 Reparto del tiempo por etapa
+
+* **Proyección de presión**: entre el 60 y el 80 % del tiempo de iteración. Es consecuencia directa del carácter elíptico de la ecuación de la presión discutido en la sección 2.2, y no de una implementación deficiente: cada ciclo en V implica decenas de lanzamientos de núcleo con barreras de sincronización entre ellos.
+* **Advección**: segunda en coste. La corrección de MacCormack ánade aproximadamente un 4 % sobre el esquema semi-Lagrangiano base.
+* **Difusión**: la más barata, al ser un único *stencil* local sin iteración.
+* **Modelo de turbulencia**: el modelo WALE supone entre un 10 y un 15 % de sobrecoste, ya que exige evaluar los cuatro gradientes de velocidad y varias contracciones tensoriales por celda.
+
+La implicación práctica es inmediata: cualquier esfuerzo de optimización que no ataque la proyección tiene un techo del 20 al 40 % de mejora, mientras que reducir el número de ciclos multimalla afecta directamente al 60-80 % restante.
+
+#3 Coste por evaluación CFD
+
+| Configuración | Coste aproximado por evaluación [s] |
+| $dx = 0{,}004$, criterio de parada original | ~100 |
+| $dx = 0{,}004$, presupuesto fijo (10 000 iteraciones) | ~1 150 |
+| $dx = 0{,}004$, criterio de parada nuevo | ~700 |
+| $dx = 0{,}002$, presupuesto fijo (13 000 iteraciones) | 1 743 |
+| $dx = 0{,}001$, presupuesto fijo (26 000 iteraciones) | 7 472 |
+[TBL] Coste por evaluación CFD según malla y criterio de terminación, medido sobre la GPU RTX 3070 Ti.
+
+El factor entre la evaluación barata que se empleo en la campaña y la evaluación fiable a $dx = 0{,}002$ con presupuesto fijo es de aproximadamente **17**. Ese factor es la restricción que gobierna todo el diseño experimental: determina cuantos individuos y cuantas generaciones caben en un presupuesto dado de horas de GPU, y por tanto acota lo que una campaña puede explorar.
+
+#3 Coste de la campaña realizada y una inconsistencia de contabilidad
+
+La campaña de optimización consumió **98,60 horas de GPU** repartidas en seis estudios.
+
+| Estudio | Generaciones | Evaluaciones CFD | Horas de GPU |
+| Re = 1e5 (a) | 28 | 666 | 18,97 |
+| Re = 1e5 (b) | 24 | 381 | 11,19 |
+| Re = 1e5 (c) | 12 | 281 | 7,90 |
+| Re = 1e3 | 19 | 297 | 35,70 |
+| Re = 1e6 | 16 | 249 | 7,89 |
+| Re = 1e7 | 30 | 473 | 16,95 |
+| **Total** | — | **2 347** | **98,60** |
+[TBL] Coste computacional de los seis estudios de optimización. Los identificadores de los tres estudios a $Re = 1e5$ se han abreviado.
+
+Al verificar estas cifras contra los ficheros de resultados aparece una **inconsistencia de contabilidad** que conviene dejar registrada. La cifra que se ha venido citando en la documentación del proyecto es "3 884 evaluaciones y 98,6 horas de GPU". Sin embargo, 3 884 es el número de registros del historial completo de aprendizaje, que incluye además de los seis estudios las corridas de islas, el ensayo aislado sin migración, los refinados y las calibraciones. Las 98,60 horas corresponden **únicamente a los seis estudios**, que suman 2 347 evaluaciones. Emparejar ambas cifras da un coste medio de 91 segundos por evaluación, mientras que el coste medio real de los seis estudios es de 151 segundos.
+
+Se adopta en esta memoria la contabilidad separada: **2 347 evaluaciones CFD en 98,60 horas de GPU para los seis estudios**, y **3 884 registros en el conjunto de datos acumulado**, que incluye trabajo adicional cuyo coste no está desglosado. Cualquier magnitud derivada del cociente entre ambas cifras —incluida la estimación de ahorro del modelo sustituto de la sección 4.5— arrastra esta imprecisión y debe leerse como orden de magnitud.
+
+Se observa además que el coste por evaluación a $Re = 1000$ es unas cuatro veces mayor que a $Re = 1e5$. La razón es física y no numérica: a bajo Reynolds el flujo desprende y no alcanza estado estacionario, de modo que se requiere un horizonte temporal mucho mayor para promediar sobre varios periodos de desprendimiento.
+
+#3 Escalabilidad
+
+Como se argumento en la sección 3.9, el cuello de botella es el ancho de banda de memoria. De ello se derivan tres consecuencias practicas para la escalabilidad:
+
+* Una GPU con mayor ancho de banda rendiría de forma aproximadamente proporcional a esa mejora. Una GPU con más unidades de cálculo pero igual ancho de banda no aportaría una mejora apreciable.
+* La memoria disponible es una restricción dura y no negociable: la malla de $dx = 0{,}0005$ no cabe en los 8 GB de la tarjeta empleada, razón por la cual el estudio de convergencia se detiene en $dx = 0{,}001$ y no puede confirmarse el rango asintótico con una cuarta malla.
+* La paralelización sobre varias GPU es viable pero no trivial, porque la etapa dominante es la proyección, que es global: la descomposición de dominio exigiría comunicación en cada ciclo multimalla, y la latencia de esa comunicación competiría con el propio cálculo. La vía más rentable para un algoritmo genético no es paralelizar una simulación sino **ejecutar varias simulaciones independientes en paralelo**, que es un problema embarazosamente paralelo y no requiere comunicación.
+
+#2 Verificación de la función de fitness
+
+Esta sección contiene el resultado principal del trabajo. Es también la más afectada por la restricción enunciada al inicio del capítulo: **el grueso de lo que iría aquí —que perfil resultó, cuanto mejoro, con que coeficientes— no se presenta**. Lo que si se presenta es la verificación que explica por que no se presenta, que no es un resultado de optimización sino el resultado de verificación que obliga a rehacer la campaña.
+
+#3 Diseño experimental de la campaña
+
+Se ejecutaron seis estudios de optimización a números de Reynolds de 1e3, 1e5, 1e6 y 1e7, con población de 12 individuos, 4 élites, selección por torneo de tamaño 4, mutación paramétrica sobre camber y espesor con sigma adaptativa, y terminación por estancamiento. La duración osciló entre 12 y 30 generaciones según el estudio. El coste agregado figura en la sección 4.4.
+
+Se describe el diseño y no sus resultados, con dos propósitos: documentar lo efectivamente realizado, y disponer de una referencia dimensional para planificar la campaña nueva.
+
+#3 Estructura del espacio de diseño
+
+Un análisis de componentes principales sobre las 3 884 geometrías registradas, cada una descrita por 256 coordenadas, muestra que **las dos primeras componentes explican el 75,5 % de la varianza geométrica**.
+
+Este es un resultado sobre la parametrización, no sobre el rendimiento de ningún perfil, y por tanto no está afectado por el defecto del criterio de parada. Su lectura es relevante para el diseño del optimizador: aunque el espacio de diseño nominal tiene 256 dimensiones, su **dimensionalidad efectiva es muy inferior**. Las restricciones geométricas, el mecanismo de perturbación suave por 7 nodos de control y la propia estructura de un perfil aerodinámico confinan las geometrías admisibles a una variedad de baja dimensión. Esto justifica que un algoritmo genético con población de solo 12 individuos pueda explorar el espacio de forma no trivial: la población no tiene que cubrir 256 dimensiones sino esencialmente dos o tres direcciones dominantes.
+
+La muestra procede de la campaña anterior, de modo que el análisis habrá de recalcularse con las geometrías de la campaña nueva. No se espera que el resultado cambie cualitativamente, ya que depende de la parametrización y no de la función objetivo, pero conviene confirmarlo.
+
+[FIG] Proyección de las 3 884 geometrías evaluadas sobre las dos primeras componentes principales, con la varianza explicada acumulada por número de componentes.
+
+#3 Converge el algoritmo genético a un óptimo único
+
+Para responder a esta pregunta se ejecutaron cuatro corridas **aisladas, sin migración entre islas**, partiendo de cuatro perfiles semilla distintos y dejándolas evolucionar hasta estancamiento. El ensayo consumió del orden de 28 horas de GPU y las corridas se prolongaron entre 7 y 25 generaciones.
+
+El resultado, expresado en distancia de forma entre geometrías, es que **las cuatro corridas terminan en geometrías distintas**: la distancia de forma media entre los cuatro resultados finales es 0,0557, igual o ligeramente superior a la distancia media entre los cuatro perfiles de partida, que era 0,0507. Es decir, la búsqueda no acercó entre si a las cuatro poblaciones; si acaso las separó.
+
+La conclusión es directa y tiene consecuencias sobre la interpretación de toda la campaña: **la convergencia que se observa cuando se activa el modelo de islas la fuerza la migración, no una física de óptimo único**. El intercambio periódico de individuos entre islas homogeneiza las poblaciones y produce un consenso que puede confundirse con la identificación de un óptimo global. El espacio de diseño tiene varias cuencas de atracción locales, y cual de ellas gana depende del punto de partida y del flujo de genes.
+
+Este experimento empleo la misma función de fitness defectuosa que el resto de la campaña. La conclusión es sólida en lo que respecta a la **dinámica del algoritmo** —que la migración homogeneiza y que las corridas aisladas divergen es un hecho geométrico, independiente de si el fitness ordenaba bien—, pero conviene reconfirmarla con la campaña nueva.
+
+#3 Seleccionó bien el algoritmo genético
+
+Está es la pregunta central, y la respuesta obliga a rehacer la campaña.
+
+El procedimiento fue el siguiente. Se tomo una **muestra estratificada por deciles** de 20 individuos del historial de evaluaciones, se re-simularon **sin parada anticipada y con presupuesto fijo** sobre la malla validada de $dx = 0{,}002$, y se comparó el orden resultante con el orden que había visto el algoritmo genético durante la búsqueda.
+
+Dos decisiones de diseño merecen justificación. Se estratifica por deciles en lugar de muestrear al azar porque una muestra aleatoria se concentraría en el grueso de la distribución, mientras que el ranking importa precisamente en los extremos. Y la muestra se filtra a los registros obtenidos con la malla de exploración, porque el historial mezcla dos poblaciones evaluadas en mallas distintas y con medianas muy diferentes; mezclarlas introduciría la diferencia de malla dentro de la correlación de rangos y la contaminaría.
+
+| Métrica | Valor |
+| Correlación de rangos de Spearman, global | 0,7955 (p = 2,75e-05) |
+| Correlación de rangos de Kendall, global | 0,6421 (p = 2,51e-05) |
+| Correlación de Pearson | 0,8341 |
+| Solape del conjunto de los 4 mejores | 0,25 |
+| Cambio mediano del valor medido | +65,3 % (IQR 47–104 %) |
+[TBL] Estadísticos de correlación entre el orden que vio el algoritmo genético y el orden obtenido al re-simular la muestra estratificada sin parada anticipada (n = 20).
+
+**La correlación global de 0,80 es engañosa: procede casi íntegramente de la mitad inferior de la muestra.** Separando por la mediana:
+
+| Mitad de la muestra | Spearman |
+| 10 peores | 0,612 |
+| **10 mejores** | **0,152** |
+[TBL] Correlación de rangos separada por mitades de la muestra. La zona alta, que es donde decide la selección, prácticamente no conserva el orden.
+
+Y el solape del conjunto de los $k$ mejores solo se recupera cuando $k$ deja de ser selectivo:
+
+| $k$ | 3 | 4 | 5 | 6 | 8 | 10 |
+| Solape | 1/3 | 1/4 | 2/5 | 4/6 | 7/8 | 9/10 |
+[TBL] Fracción de individuos comunes entre el conjunto de los $k$ mejores según el fitness original y según la medida corregida.
+
+**El fitness que vio el algoritmo separa bien lo bueno de lo malo, pero no ordena entre lo bueno** —que es exactamente donde la selección decide. Dos casos lo ilustran, y se refieren por su posición en el ranking y no por su valor:
+
+* El **mejor individuo real de la muestra** pertenece a la **generación 1**. El algoritmo lo situó en octava posición y lo descartó. También el cuarto mejor de la muestra es de la generación 1.
+* Otro individuo, de la generación 17, es el único cuya medida empeora al corregirla: su resistencia sube al medirla bien, mientras que la del resto baja. La parada anticipada le estaba regalando resistencia baja. **Pasa de la tercera a la decimotercera posición.**
+
+El cambio es sistemáticamente positivo —mediana +65 %— porque la medida original infraestimaba por partida doble: malla fuera del rango asintótico y transitorio no terminado. Pero la dispersión del cambio, desde −10 % hasta +145 % descontando un caso extremo, **no es un factor de escala común**, y por eso reordena. Un sesgo multiplicativo uniforme desplazaría todos los valores sin alterar su orden; un sesgo disperso lo destruye.
+
+Un aviso metodológico que merece registro. Con una muestra parcial de 12 individuos la lectura era la contraria: los cuatro de mayor fitness conservaban el orden exacto y el factor de corrección crecía de forma monótona. Parecía que la zona alta se salvaba. **Los 8 individuos que faltaban eran precisamente la zona alta.** Una muestra estratificada truncada a mitad de ejecución no es una muestra estratificada, y la conclusión que se extrae de ella no es una versión preliminar de la correcta: es la contraria.
+
+La conclusión tiene dos mitades y ninguna debe suavizarse:
+
+*A favor:* la búsqueda **si se movió hacia una región de rendimiento real alto**. De los cinco individuos de generación 17 o posterior presentes en la muestra, cuatro revalidan en la zona alta del ranking corregido. La correlación entre generación y rendimiento revalidado es de 0,41, positiva aunque no significativa con n = 20 (p = 0,073).
+
+*En contra:* el orden **dentro** de esa región no era fiable, y el mejor individuo de toda la muestra ya estaba presente en la primera generación.
+
+Formulado de manera compacta: **el algoritmo encontró el barrio correcto guiado por una señal que distingue órdenes de magnitud, y eligió la casa con una señal que no distingue nada a esa escala.**
+
+De ahí se sigue la restricción enunciada al principio del capítulo. Los perfiles resultantes de la campaña no pueden presentarse como óptimos, porque son óptimos de una función de fitness que no discriminaba a la escala en la que se estaba decidiendo. La campaña debe rehacerse con una medida verificada.
+
+[FIG] Correlación entre el fitness que vio el algoritmo genético y el rendimiento re-simulado sin parada anticipada, para la muestra estratificada de 20 individuos. Se destacan los dos casos que ilustran la ruptura del orden en la zona alta.
+
+#3 Evaluación retrospectiva del modelo sustituto
+
+El filtro predictivo estuvo **desactivado en los seis estudios**: no cribo ningún individuo. Su evaluación es por tanto retrospectiva.
+
+Reentrenado fuera de línea sobre las 2 793 muestras disponibles a $Re = 1e5$, el modelo alcanza un coeficiente de determinación de **0,850** en validación cruzada de 5 pliegues, con un error absoluto medio de **1,07** en unidades de eficiencia aerodinámica. Explorando el compromiso entre ahorro y pérdida, un umbral situado en el percentil 70 de la predicción habría evitado el **69 % de las simulaciones CFD** perdiendo únicamente el **2,5 % de la élite**.
+
+Trasladado a coste, ese punto de operación equivale a del orden de 68 horas de GPU que podrían no haberse gastado. La cifra hereda la imprecisión de contabilidad señalada en la sección 4.4 y debe leerse como orden de magnitud.
+
+Estas son métricas de calidad del modelo y no rendimiento de ningún perfil, por lo que no están afectadas por la restricción del capítulo. Pero hay que añadir una advertencia importante: **el modelo está entrenado sobre las etiquetas defectuosas**. Su coeficiente de determinación de 0,850 mide su capacidad de reproducir una señal sesgada, no de predecir el rendimiento real. Habrá que reentrenarlo con las medidas de la campaña nueva, y estas cifras deben tomarse como una **cota optimista** de lo que cabe esperar.
+
+[FIG] Rendimiento del modelo sustituto reentrenado fuera de línea: predicción frente a valor observado en validación cruzada, y curva de compromiso entre fracción de CFD evitado y fracción de élite perdida en función del umbral.
+
+#3 Resultados de optimización
+
+**[EN ESPERA: campaña por rehacer]**
+
+Corresponden a esta sección los resultados de optimización propiamente dichos: curvas de convergencia del fitness por estudio, mejora relativa conseguida, geometría del perfil resultante con sus parámetros descriptivos, sus coeficientes aerodinámicos y el óptimo geométrico en función del número de Reynolds. Ninguno de ellos se presenta, porque todos proceden de una función de fitness que la sección anterior demuestra que no ordenaba en la zona en la que el algoritmo seleccionaba.
+
+Las figuras previstas, cuyos guiones de generación existen y son reutilizables, son: evolución del mejor fitness y del fitness medio por generación para cada estudio; comparativa geométrica entre el perfil resultante y su semilla; distribución de presión de ambos en el punto de diseño; y variación de los parámetros geométricos del óptimo con el número de Reynolds.
+
+La campaña nueva deberá ejecutarse con presupuesto verificado y con una medida cuya fiabilidad se haya establecido previamente sobre un conjunto de series retenidas. La sección 5.2 discute como debe plantearse esa medida, y la sección 7.3 la sitúa como la primera de las líneas de trabajo futuro.
+
+[PB]
+#1 Discusión
+
+Este capítulo examina las limitaciones del trabajo, agrupadas en físicas, numéricas y metodológicas, discute el coste computacional como restricción de diseño y ordena las mejoras posibles por relación entre beneficio y coste. Se mantiene en el plano metodológico y no cita rendimiento de ningún perfil.
+
+#2 Limitaciones físicas
+
+**Bidimensionalidad.** Es la limitación de fondo. La ausencia del mecanismo de estiramiento de vorticidad, discutida en la sección 2.3, implica que la dinámica de pequeña escala del desprendimiento no puede reproducirse. A $Re = 1e5$ el desprendimiento real sobre un perfil es tridimensional, con estructuras de longitud finita en envergadura, y esa tridimensionalidad afecta directamente al balance de cantidad de movimiento en la región separada. Es exactamente el régimen en el que el solver y XFOIL divergen (sección 4.1). Tampoco se representan los efectos de borde marginal, lo que restringe la validez a secciones de ala de alargamiento elevado.
+
+**Incompresibilidad.** La hipótesis limita la validez a números de Mach inferiores a aproximadamente 0,3. Por encima, la variación de densidad modifica la distribución de presión y, más allá del Mach crítico, aparecen ondas de choque que cambian por completo el problema. Para el rango de aplicación previsto —vehículos aéreos no tripulados, aerogeneradores, aplicaciones a bajo Reynolds— la hipótesis es adecuada.
+
+**Modelo de turbulencia.** Spalart-Allmaras es un modelo RANS de una ecuación calibrado sobre capas límite adheridas. Dos consecuencias:
+
+* En su forma original es completamente turbulento desde el borde de ataque, mientras que el flujo real a $Re = 1e5$ es laminar sobre buena parte de la cuerda. El intento de corregirlo reduciendo la semilla de viscosidad turbulenta en la corriente libre **empeoró el resultado**: retrasar la transición reactivó la burbuja de separación laminar, que es un modo de fallo peor que el exceso de viscosidad turbulenta. La solución adecuada resultó ser el modelo de transición algebraico descrito en la sección 2.4.3, que modula la producción en lugar de la condición inicial.
+* En regiones ampliamente separadas el modelo ópera fuera de su rango de calibración, y su predicción de resistencia deja de ser fiable con independencia de la resolución.
+
+**El modelo WALE resultó inerte** a los números de Reynolds de trabajo. La propiedad que lo hace atractivo —anularse en cortadura pura— es la que lo desactiva en un flujo mayoritariamente laminar previo al desprendimiento. La lección generalizable es que la elección de modelo submalla debe hacerse en función del régimen y no de las propiedades formales del modelo aislado.
+
+#2 Limitaciones numéricas
+
+**Difusión numérica residual.** La corrección de MacCormack reduce el error de advección de primer a segundo orden, pero **no del todo**: subsiste la banda de dos celdas junto al sólido donde se mantiene el esquema semi-Lagrangiano puro (sección 3.4). Esa banda está situada justo donde el gradiente de velocidad es máximo y donde se calcula la fricción, es decir, en la región que más contribuye al error de resistencia. Es una limitación conocida y localizada, y su eliminación figura entre las mejoras propuestas.
+
+**Resolución de capa límite.** Con $dx = 0{,}002$ la primera celda de fluido queda en $y^{+} \approx 10$, mientras que Spalart-Allmaras sin función de pared requiere $y^{+} \lesssim 1$. La malla no resuelve la subcapa viscosa, y el gradiente de velocidad en pared —del que sale la fricción— se obtiene por interpolación sobre celdas que no capturan el perfil real. Es la primera hipótesis para explicar el exceso de resistencia observado.
+
+**Escalonado de la frontera inmersa.** Representar un contorno curvo mediante una máscara sobre malla cartesiana produce un contorno escalonado. El método de celdas fantasma mitiga el efecto imponiendo la condición de contorno en la superficie real y no en el escalón, pero la geometría discreta sigue introduciendo rugosidad artificial de escala $\Delta x$, y es también lo que obligó a excluir la corrección de MacCormack de las celdas próximas al sólido.
+
+**Error de discretización acotado.** El estudio de convergencia lo cifra en ±1,4 % en sustentación con $dx = 0{,}001$, en torno al 2,4 % con $dx = 0{,}002$, y **fuera del rango asintótico** con $dx = 0{,}004$. La imposibilidad de añadir una quinta malla más fina por limitación de memoria impide confirmar el rango asintótico con un triplete adicional.
+
+#2 La limitación metodológica: el criterio de terminación
+
+Está es la limitación más importante del trabajo, y es de naturaleza distinta a las anteriores: no es una aproximación asumida conscientemente sino un defecto de diseño del procedimiento de medida.
+
+El criterio original comparaba cada serie de coeficientes con la media de su propio último 15 % y declaraba convergencia cuando la diferencia entraba en tolerancia. **La pregunta que hace ese test no es si la señal ha dejado de cambiar, sino si la señal se parece a su propio pasado reciente.** Son preguntas distintas: una señal que deriva de forma lenta y monótona se parece mucho a donde estaba hace poco en todo instante, aunque lleve camino de duplicarse. El test la declara convergida.
+
+Con los valores por defecto, el criterio disparaba entre uno y tres tiempos convectivos. A un tiempo convectivo el flujo lleva poco más de una longitud de cuerda desarrollándose: la capa límite no está formada, la burbuja de recirculación no ha reatacado y la estela es un transitorio. **No se trata de una medida imprecisa de la eficiencia: es la medida de otro flujo.** El error así introducido alcanza el 47 % respecto del valor asintótico.
+
+Un segundo defecto encadenado lo enmascaraba. Al salir por parada anticipada, el código rellenaba el resto de los vectores de coeficientes con el último valor calculado. La desviación típica sobre la parte final de la serie caía entonces íntegramente sobre datos constantes y salia **exactamente cero**. Un cero exacto en una desviación típica se lee como convergencia perfecta cuando en realidad significa lo contrario: ausencia de datos. El 81,8 % de los registros del historial presentan esta firma. Se corrigió sustituyendo el relleno por un contador de muestras validas y truncado real de los vectores.
+
+Merece subrayarse que **el presupuesto de iteraciones no era el problema**: 13 000 iteraciones con $dx = 0{,}002$ alcanzan aproximadamente 9,4 tiempos convectivos, de sobra para el régimen estudiado. El fallo estaba únicamente en la decisión de parar.
+
+El intento de arreglarlo recalibrando las tolerancias merece atención porque **fracasó de una manera instructiva**. Un barrido de 108 combinaciones de tolerancias sobre las series de referencia identificó un ajuste con un 0,82 % de error máximo. Solo 3 de las 48 combinaciones que llegaban a parar bajaban del 2 %, y las tres compartían los mismos valores de tolerancia y ventana, diferenciándose solo en un parámetro que resultó irrelevante.
+
+El problema es que **ese 0,82 % era error de entrenamiento sobre una muestra de tamaño dos**: el criterio se había ajustado sobre las mismas dos series con las que se media. Al aplicarlo a casos que no habían participado en el ajuste, el error de generalización alcanzó el **−23,7 %, con signo impredecible**. En uno de los casos el criterio recalibrado corto a 1,75 tiempos convectivos con solo 10 muestras: exactamente el mismo modo de fallo que el criterio original, solo que más tarde.
+
+La lección es doble y trasciende este trabajo concreto:
+
+1. **Ajustar tolerancias no arregla un estimador mal planteado.** El recalibrado sube el umbral de disparó pero no cambia la pregunta que hace el test.
+2. **Un error de ajuste no es un error de generalización.** Reportar el primero como si fuera el segundo es el mismo error metodológico que se comete al evaluar un modelo de aprendizaje automático sobre sus propios datos de entrenamiento, y aquí produjo un factor 29 de diferencia entre el error creído y el real.
+
+El criterio adecuado debe preguntar por la **tendencia** de la serie y no por su parecido con su pasado. La formulación natural evalúa sobre una ventana móvil expresada en tiempos convectivos:
+
+$$ deriva = \frac{\left| pendiente\left( s(t) \right) \right|}{\left| media(s) \right|}, \qquad ruido = \frac{desv(s)}{\left| media(s) \right|} $$
+
+declarando convergencia cuando ambas magnitudes caen por debajo de sus umbrales y ha transcurrido un tiempo mínimo. La deriva es lo que faltaba: una señal que crece un 5 % por tiempo convectivo tiene deriva alta aunque se parezca mucho a su pasado inmediato. Conviene evaluar el criterio sobre la propia magnitud que se optimiza y no sobre sus componentes por separado, ya que sustentación y resistencia pueden derivar simultáneamente sin que su cociente lo haga.
+
+Un criterio construido así, ajustado por validación cruzada sobre 15 series completas y verificado sobre 5 series apartadas que no intervienen en ninguna decisión, alcanza un error máximo del **1,14 % sobre datos nunca vistos**, frente al −23,7 % del recalibrado anterior, con un coste de entre el 56 y el 67 % del presupuesto fijo. La diferencia decisiva no está en la fórmula sino en **como se eligieron sus parámetros**: 20 series en lugar de 2, y error medido sobre pliegues retenidos en lugar de sobre los datos de ajuste.
+
+Un detalle físico merece registro: la exigencia de un tiempo mínimo antes de comprobar la convergencia resulta imprescindible. Sin ella aparecen paradas prematuras con errores de +10,6 % y +19,6 % en mesetas falsas **anteriores al reataque de la burbuja de separación laminar**. La rejilla de búsqueda seleccionó ese parámetro por si sola, pero la razón por la que es necesario es física y no estadística: por debajo de cierto tiempo el flujo todavía puede dar un salto cualitativo.
+
+#2 Coste computacional como restricción de diseño
+
+El compromiso entre precisión y velocidad está dominado por la proyección de presión, que consume entre el 60 y el 80 % del tiempo de iteración.
+
+**El coste de la honestidad numérica es un factor de aproximadamente 17**: una evaluación fiable a $dx = 0{,}002$ con presupuesto fijo cuesta unas 1 740 segundos frente a los aproximadamente 100 de la evaluación barata empleada en la campaña. Repetir la campaña a la misma escala con evaluaciones fiables costaría del orden de 1 100 horas de GPU, es decir, mes y medio de cálculo continuo. No es viable.
+
+Las salidas disponibles, cuantificadas:
+
+* **Reducir la escala de la búsqueda.** Una configuración de 16 individuos por 25 generaciones y una sola población supone 400 evaluaciones. A coste de evaluación fiable son del orden de 190 horas de GPU; con malla de exploración y criterio de parada verificado, unas 78 horas. El problema es que el ensayo de la sección 4.5 concluyó que una sola población sin migración no converge de forma útil, de modo que la configuración mínima realista requiere varias islas y multiplica el coste.
+* **Emplear una malla intermedia validada para ordenar, reservando la malla fina para el candidato final.** Está es la vía más rentable, y está justificada: el problema del fitness no era la malla sino la terminación. Una malla gruesa introduce un desplazamiento aproximadamente común sobre todos los individuos, y un desplazamiento común no reordena. Lo que si obliga es a **validar el candidato final en la malla fina**, porque su valor absoluto en malla gruesa no es citable.
+* **Activar el modelo sustituto** con umbral calibrado, con un ahorro estimado del 69 % del cálculo CFD y una pérdida del 2,5 % de la élite. Es la única de las tres opciones que no degrada la calidad de la búsqueda, sino que redistribuye el presupuesto.
+
+#2 Calidad de la optimización
+
+Los parámetros evolutivos condicionan el resultado. Con población de 12 individuos y elitismo de 4, la presión selectiva es alta: un tercio de la población pasa intacto a la generación siguiente, lo que acelera la explotación a costa de la diversidad y aumenta el riesgo de convergencia prematura hacia una cuenca local.
+
+El **modelo de islas** se introdujo para mitigar ese riesgo. El ensayo de la sección 4.5 muestra que su efecto real es distinto del previsto: las poblaciones aisladas divergen y solo la migración las homogeneiza. La migración actúa por tanto como **mecanismo de consenso** y no como mecanismo de descubrimiento. Esto no la inválida —un consenso entre varias cuencas exploradas es preferible a quedarse en una— pero exige no interpretar la convergencia observada como evidencia de haber encontrado un óptimo global.
+
+El **modelo sustituto** introduciría un sesgo si se activase sin control: un regresor de bosque aleatorio extrapola mal fuera del dominio de sus datos de entrenamiento, y tendería a asignar predicciones conservadoras a geometrías alejadas de lo ya explorado. Como esas son precisamente las geometrías que aportan exploración, un filtro agresivo convertiría la búsqueda en una búsqueda local. El umbral dinámico mitiga el riesgo, pero la mitigación adecuada es reservar una fracción de la población exenta del filtro.
+
+Un problema concreto detectado durante la verificación y que debe resolverse antes de relanzar: **el algoritmo nunca vio valores de fitness negativos**, porque la parada prematura los enmascaraba. Al medir correctamente aparecen individuos con eficiencia negativa. Es necesario revisar como se convierte el fitness en probabilidad de selección, ya que una formulación que asuma valores positivos puede comportarse de forma indefinida ante ellos.
+
+Y por encima de todo lo anterior: **la calidad de una optimización está acotada por la calidad de su función de fitness**. Cualquier discusión sobre operadores genéticos, tamaño de población o esquemas de migración es secundaria frente al hecho de que la señal empleada no discriminaba en la zona alta. Un algoritmo de búsqueda perfecto sobre una señal que no ordena produce un resultado arbitrario.
+
+#2 Mejoras propuestas, ordenadas por beneficio frente a coste
+
+1. **Rediseño del criterio de terminación.** Coste de implementación bajo, sin coste computacional adicional, y es la medida que elimina la mayor fuente de error del trabajo. Es la primera por un margen amplio.
+2. **Activación del modelo sustituto con umbral calibrado.** Coste bajo, ahorro estimado del 69 % del cálculo CFD. Requiere reentrenar sobre datos medidos correctamente y reservar una fracción de población exenta del filtro.
+3. **Esquemas de advección de mayor orden en la banda próxima al sólido**, del tipo ENO o WENO, que toleran discontinuidades sin generar oscilaciones y permitirían eliminar la banda en semi-Lagrangiano puro. Coste de implementación medio, beneficio directo sobre la región que domina el error de resistencia.
+4. **Función de pared para el modelo de turbulencia**, o bien refinamiento anisótropo en la capa límite. Ambas atacan la resolución insuficiente de pared. La función de pared es más barata; el refinamiento anisótropo es más correcto pero exige abandonar la malla cartesiana uniforme por direcciones.
+5. **Frontera inmersa ajustada al cuerpo** o método de celdas cortadas, que eliminaría el escalonado. Coste de implementación alto.
+6. **Refinamiento adaptativo de malla** guiado por estimadores de error, que concentraría grados de libertad donde el error es mayor. Alto coste de implementación sobre la arquitectura actual, que asume una malla estructurada fija.
+7. **Optimización multiobjetivo** con algoritmos de frente de Pareto [30], y evaluación multipunto en ángulo de ataque. El modo multipunto ya está implementado y solo se descartó por coste.
+8. **Extensión a tres dimensiones** reutilizando el núcleo GPU. Es la mejora de mayor impacto físico y también la de mayor coste: multiplica los requisitos de memoria y exige repensar el multimalla.
+9. **Modelos sustitutos más potentes** —redes neuronales sobre grafo, redes informadas por la física— entrenados sobre el conjunto de datos acumulado.
+10. **Validación experimental en túnel de viento**, que es la única vía para cerrar definitivamente la cuestión del exceso de resistencia.
+
+[PB]
+#1 Análisis de sostenibilidad
+
+Este capítulo analiza la sostenibilidad del trabajo desde las tres perspectivas exigidas —ambiental, económica y social— y en los tres niveles correspondientes: el desarrollo del propio trabajo, la ejecución o aplicación del proyecto, y los riesgos y limitaciones del análisis. Las estimaciones se presentan con sus hipótesis declaradas y su incertidumbre; cuando una magnitud no se ha medido sino estimado, se dice explícitamente.
+
+#2 Perspectiva ambiental
+
+#3 Huella del desarrollo del trabajo
+
+El consumo del trabajo se concentra en las horas de cálculo en GPU. La campaña de optimización consumió 98,60 horas de GPU, a las que hay que añadir el consumo del resto del sistema durante ese tiempo.
+
+Se estima la potencia media en la toma de corriente como la suma de la potencia de la tarjeta gráfica y la del resto del equipo, corregida por el rendimiento de la fuente de alimentación:
+
+$$ P_{pared} = \frac{f\, P_{TDP} + P_{resto}}{\eta_{fuente}} $$
+
+Las hipótesis y su justificación:
+
+* $P_{TDP} = 290$ W es la potencia de diseño térmico de la tarjeta empleada.
+* $f = 0{,}80$ es la fracción de esa potencia efectivamente consumida. No se toma el 100 % porque, como se estableció en la sección 3.9, el solver está limitado por ancho de banda de memoria y no por capacidad aritmética; una carga de ese tipo no satura las unidades de cálculo y consume por debajo del TDP.
+* $P_{resto} = 95$ W cubre procesador, memoria, almacenamiento, placa y ventilación. El procesador trabaja poco, ya que solo alimenta de trabajo a la GPU.
+* $\eta_{fuente} = 0{,}90$ es un rendimiento típico de fuente de alimentación a carga parcial.
+
+Con estos valores la potencia media en pared resulta de **363 W**, y el consumo total de la campaña:
+
+| Magnitud | Valor central | Rango |
+| Potencia media en pared | 363 W | 297 – 449 W |
+| Energía consumida | 35,8 kWh | 29,3 – 44,3 kWh |
+| Emisiones asociadas | 7,7 kg CO2 eq | 6,3 – 11,4 kg CO2 eq |
+[TBL] Huella energética y de carbono de la campaña de cálculo. El rango de potencia recoge las hipótesis extremas razonables sobre fracción de TDP, consumo del resto del equipo y rendimiento de la fuente. El rango de emisiones incorpora además la incertidumbre del factor de emisión.
+
+El factor de emisión empleado para el valor central es de **0,215 kg CO2 eq/kWh**, correspondiente a la intensidad de carbono de la generación eléctrica peninsular española en 2025 [31]. Conviene señalar que ese valor subió un 14,6 % respecto de 2024 —cuando fue de 0,187 kg/kWh— pese al récord de capacidad renovable instalada, por una caída de la generación eólica que se cubrió con gas. Como cota superior se emplea el factor del mix de comercialización publicado por el regulador para 2025, **0,258 kg CO2 eq/kWh** [32], que es mayor porque descuenta la energía con garantía de origen asignada a contratos específicos.
+
+Desglosado por evaluación, el coste ambiental unitario es:
+
+| Configuración de la evaluación | Energía | Emisiones |
+| Media de la campaña realizada | 15,3 Wh | 3,3 g CO2 eq |
+| $dx = 0{,}004$, criterio de parada verificado | 71 Wh | 15,2 g CO2 eq |
+| $dx = 0{,}002$, presupuesto fijo | 176 Wh | 37,8 g CO2 eq |
+| $dx = 0{,}001$, presupuesto fijo | 754 Wh | 162 g CO2 eq |
+[TBL] Coste energético y emisiones por evaluación CFD según la configuración empleada.
+
+El orden de magnitud del conjunto es el de unas pocas decenas de kilovatios hora: comparable al consumo de un frigorífico doméstico durante un mes, o a unos 40 kilómetros recorridos por un vehículo eléctrico. **La huella directa del trabajo es modesta**, y decirlo así es más honesto que presentarla como un logro.
+
+#3 Comparación con las alternativas
+
+El argumento ambiental fuerte del enfoque no es su huella absoluta sino su coste por geometría evaluada frente a las alternativas. La comparación se hace a igualdad de alcance: **una geometría, un punto de operación**.
+
+* **Túnel de viento.** Hipótesis: instalación subsónica de circuito cerrado con sección de ensayo del orden de 1 m2, ventilador de 75 kW, y 15 minutos de funcionamiento efectivo por punto de operación incluyendo estabilización y adquisición. Consumo estimado: **18,8 kWh por punto**, sin contar la fabricación del modelo físico, la climatización de la nave ni el tiempo de montaje.
+* **CFD tridimensional RANS en clúster.** Hipótesis: 1 500 horas de núcleo por punto de operación sobre una malla de orden 10^7 celdas, nodos de cálculo con un consumo de 5,5 W por núcleo bajo carga, y un factor de eficiencia de uso de la energía del centro de datos de 1,3. Consumo estimado: **10,7 kWh por punto**.
+* **Este trabajo**, con la evaluación fiable de $dx = 0{,}002$ y presupuesto fijo: **0,176 kWh por punto**.
+
+| Método | Energía por geometría y punto de operación | Factor frente a este trabajo |
+| Túnel de viento (solo ventilador) | 18,8 kWh | 107 |
+| CFD 3D RANS en clúster | 10,7 kWh | 61 |
+| Solver 2D en GPU (este trabajo) | 0,176 kWh | 1 |
+[TBL] Comparación del coste energético por geometría y punto de operación evaluado. Las hipótesis de cada estimación se declaran en el texto.
+
+El resultado es una reducción de **aproximadamente dos órdenes de magnitud frente al túnel de viento y algo menos de dos frente a la CFD tridimensional en clúster**. Conviene ser preciso sobre el alcance de esta afirmación, porque es fácil exagerarla: la comparación es a igualdad de número de geometrías evaluadas, no a igualdad de calidad de la información obtenida. Un ensayo en túnel proporciona la referencia experimental y una simulación tridimensional captura física que este solver no puede capturar. **La comparación es legítima para la fase de exploración de formas y no para la de verificación de un diseño**, que es precisamente el alcance que se declaro en el capítulo 1.
+
+Si se contabilizara además la fabricación del modelo físico para el ensayo en túnel —mecanizado o fabricación aditiva de una pieza por geometría— la ventaja frente a esa alternativa crecería en al menos otro orden de magnitud, ya que ese coste es proporcional al número de geometrías mientras que en las alternativas computacionales no existe.
+
+#3 El coste ambiental de los errores metodológicos
+
+Este apartado registra una idea que el trabajo ha hecho evidente: **la eficiencia metodológica es una variable ambiental y no solo económica**.
+
+* El modelo sustituto permaneció desactivado durante toda la campaña. Su activación con umbral calibrado habría evitado del orden del 69 % del cálculo, lo que equivale aproximadamente a **24,7 kWh y 5,3 kg CO2 eq** consumidos sin necesidad. Esta cifra hereda la imprecisión de contabilidad señalada en la sección 4.4.
+* Los valores absolutos de toda la campaña hubo que descartarlos por el defecto del criterio de terminación, lo que afecta a los **35,8 kWh y 7,7 kg CO2 eq** del conjunto. Matizando con honestidad: no todo ese cálculo se perdió. Sobreviven la metodología, las geometrías generadas, el conjunto de datos como conjunto de formas, las conclusiones sobre la dinámica del algoritmo, y el propio diagnóstico del defecto, que no habría sido posible sin las series completas. Lo que se perdió son los valores absolutos y el ranking en la zona alta.
+
+La conclusión práctica es que verificar antes de lanzar una campaña grande no es solo buena práctica científica: es la medida de reducción de impacto ambiental de mayor rendimiento disponible en un trabajo de este tipo. Una jornada de verificación habría ahorrado varias decenas de kilovatios hora.
+
+#3 Impacto potencial de la aplicación
+
+La aplicación del trabajo —perfiles aerodinámicos más eficientes— tiene un impacto ambiental indirecto que conviene cuantificar de forma acotada y honesta.
+
+Para una aeronave, la ecuación de Breguet establece que el alcance es proporcional a la eficiencia aerodinámica. En un vehículo eléctrico de propulsión, para una misión fija, la energía consumida es inversamente proporcional a $L/D$, de modo que una mejora relativa $\delta$ en eficiencia reduce el consumo en $1 - 1/(1+\delta)$.
+
+Tomando como caso de referencia un vehículo aéreo no tripulado ligero que ópera en el régimen de Reynolds de este trabajo, con un consumo de 200 Wh por vuelo de una hora, **una mejora del 10 % en eficiencia aerodinámica ahorraría un 9,1 % de la energía, es decir, 18,2 Wh y 3,9 g CO2 eq por vuelo**.
+
+De aquí se sigue una comparación útil: compensar los 7,7 kg CO2 eq de la campaña de cálculo requeriría del orden de **2 000 vuelos** de un único aparato mejorado, o dos vuelos de una flota de mil. El cálculo es trivial de hacer y raramente se hace; su resultado sitúa correctamente la escala del argumento. La contribución ambiental de una herramienta de diseño **no procede de su propia huella, que es despreciable, sino de la escala de despliegue de lo que ayuda a diseñar**.
+
+Debe quedar explícito que **este trabajo no llega a demostrar ninguna mejora aplicable**. La campaña de optimización está pendiente de rehacerse, de modo que la mejora del 10 % empleada arriba es una hipótesis ilustrativa y no un resultado. El impacto es potencial, no medido.
+
+#3 Ciclo de vida del hardware
+
+La huella incorporada en la fabricación de una tarjeta gráfica no es despreciable. Los estudios de ciclo de vida de procesadores gráficos sitúan la huella de fabricación de una unidad de gama alta entre 150 y 300 kg CO2 eq [33], dominada por la fabricación de los circuitos integrados y de la memoria.
+
+Tomando 150 kg CO2 eq como valor representativo para una tarjeta de consumo y una vida útil de 10 000 horas de uso efectivo, la fracción imputable a las 98,60 horas de este trabajo es de aproximadamente **1,5 kg CO2 eq**, frente a los 7,7 kg de consumo operativo. La huella incorporada supone por tanto en torno al **16 % del total** para este uso.
+
+Ese porcentaje es bajo porque el uso fue intensivo: la tarjeta estuvo trabajando a plena carga durante todas esas horas. En un patrón de uso esporádico —una tarjeta que pasa la mayor parte de su vida inactiva— la asignación por hora útil sería mucho mayor y la huella incorporada dominaría. **El hardware compartido y utilizado de forma intensiva es ambientalmente preferible al hardware infrautilizado**, lo que es un argumento a favor de la infraestructura compartida y en contra de la duplicación de equipos.
+
+#3 Riesgos y limitaciones del análisis ambiental
+
+* La potencia media no se ha medido con un vatímetro, sino estimado a partir del TDP y de hipótesis sobre el factor de carga. Una medida directa reduciría la incertidumbre, que actualmente es de aproximadamente ±25 % en energía.
+* El factor de emisión empleado es un promedio anual. El consumo real se distribuye en horas concretas, y la intensidad de carbono de la red varia significativamente a lo largo del día. Programar las corridas largas en horas de alta penetración renovable reduciría las emisiones sin coste alguno; es una medida barata que no se aplicó y que debería aplicarse en la campaña nueva.
+* Las estimaciones de las alternativas se apoyan en hipótesis declaradas pero no verificadas experimentalmente. Su orden de magnitud es robusto; su valor preciso no.
+* No se ha incluido la huella de la infraestructura de red ni la del almacenamiento de los datos generados, que suman varios gigabytes.
+
+#2 Perspectiva económica
+
+#3 Coste del desarrollo
+
+| Concepto | Hipótesis | Coste |
+| Amortización del equipo | 1 400 EUR, 4 años, 3,5 meses de uso | ~102 EUR |
+| Electricidad | 35,8 kWh a 0,15 EUR/kWh | 5,37 EUR |
+| Horas de trabajo del estudiante | [PENDIENTE: créditos ECTS] x 25 h a 15 EUR/h | [PENDIENTE] |
+| Supervisión | ~20 h a 40 EUR/h | 800 EUR |
+| Software | Herramientas de código abierto | 0 EUR |
+[TBL] Estructura de costes del desarrollo del trabajo. El coste de las horas de trabajo depende del número de créditos asignados al TFG y queda pendiente de concretar.
+
+La estructura de costes es la característica de un trabajo de desarrollo de software científico: **domina el tiempo humano**, con el coste computacional en un nivel prácticamente despreciable. La electricidad de tres meses y medio de campaña cuesta menos que una hora de trabajo de ingeniería.
+
+Esta observación tiene una consecuencia de gestión que conviene explicitar: en este tipo de proyectos, **optimizar el uso de la GPU es económicamente irrelevante frente a optimizar el uso del tiempo del ingeniero**. Las 98,60 horas de cálculo costaron 5,37 EUR de electricidad; el tiempo dedicado a diagnosticar un defecto que una verificación previa habría detectado cuesta órdenes de magnitud más. La decisión económicamente correcta —invertir tiempo en verificar la medida antes de lanzar la campaña— coincide en este caso con la científicamente correcta y con la ambientalmente correcta.
+
+La elección de una GPU de consumo frente al alquiler de recursos en la nube o al acceso a un clúster fue deliberada y es la principal decisión de reducción de coste del proyecto: elimina el coste por hora de cálculo, elimina los tiempos de espera en cola y permite ciclos de iteración cortos durante el desarrollo, que es lo que hace viable un trabajo de esta naturaleza en un plazo acotado.
+
+#3 Viabilidad de la aplicación
+
+El coste marginal por geometría evaluada es lo que determina la viabilidad del enfoque como herramienta de diseño:
+
+| Método | Coste estimado por geometría y punto de operación |
+| Ensayo en túnel de viento | > 500 EUR (incluyendo fabricación del modelo y tiempo de instalación) |
+| CFD 3D RANS en clúster comercial | ~75 EUR (1 500 h de núcleo a 0,05 EUR/h) |
+| Solver 2D en GPU (este trabajo) | ~0,09 EUR (electricidad más amortización) |
+[TBL] Coste económico por geometría y punto de operación evaluado. Las hipótesis se declaran en el texto.
+
+La diferencia de tres a cuatro órdenes de magnitud es lo que hace viable una búsqueda de miles de evaluaciones. Con coste de túnel, una campaña de 2 347 evaluaciones costaría más de un millón de euros; con el enfoque de este trabajo, alrededor de 200 EUR de coste marginal.
+
+La barrera de entrada también es baja: una tarjeta gráfica de consumo, software libre y un ordenador convencional. No hay licencias, ni contratos de mantenimiento, ni infraestructura especializada. Esto abre la herramienta a equipos que no tienen acceso a un túnel ni a un clúster —equipos de competición universitaria, pequeñas empresas, docencia.
+
+Los costes de mantenimiento a lo largo de la vida del proyecto son los de cualquier software científico: adaptación a nuevas versiones de las bibliotecas y del entorno CUDA. El riesgo principal es la dependencia de un ecosistema propietario, que se discute en la perspectiva social. No hay coste de desmantelamiento más allá del reciclaje del hardware al final de su vida útil.
+
+#3 Riesgos y limitaciones del análisis económico
+
+El riesgo económico dominante del proyecto **se ha materializado ya**: la campaña de cálculo tuvo que descartarse en sus valores absolutos, lo que en términos de coste supone la pérdida de las horas de ingeniería dedicadas a lanzarla, analizarla y documentarla, muy por encima del coste de la electricidad. Esto ilustra que en proyectos de simulación el riesgo económico no está en el coste de cálculo sino en **el coste de tomar decisiones sobre resultados no verificados**.
+
+Otras limitaciones del análisis: no se ha imputado el coste de oportunidad del tiempo dedicado, no se ha valorado económicamente el conjunto de datos generado, y las estimaciones de coste de las alternativas proceden de órdenes de magnitud públicos y no de presupuestos concretos.
+
+#2 Perspectiva social
+
+#3 Impacto personal y profesional
+
+El trabajo ha exigido una reflexión sobre estándares profesionales que constituye probablemente su aportación formativa más útil. La secuencia —construir una herramienta, obtener resultados, verificarlos, descubrir que la herramienta de medida estaba mal, cuantificar el alcance del error y decidir que no se publica lo que no se sostiene— es una experiencia de método que no se adquiere cuando todo sale bien.
+
+La decisión de no presentar los resultados de optimización es la decisión de mayor contenido ético del trabajo. Habría sido posible presentar las tablas obtenidas con la mención de que "los valores absolutos tienen incertidumbre elevada pero el ranking se conserva". Esa afirmación **se midió y resultó falsa**, y presentarla habría sido incorrecto. La alternativa —entregar la herramienta verificada más el diagnóstico de por que los resultados anteriores no son publicables— es un resultado menos vistoso y más defendible.
+
+Sobre el uso del lenguaje: la memoria emplea formas impersonales y de primera persona del plural, evitando marcas de género innecesarias y sin recurrir a estereotipos.
+
+#3 Impacto social de la aplicación
+
+El efecto social potencialmente más relevante es la **reducción de la barrera de acceso** a la capacidad de diseño aerodinámico. Históricamente esa capacidad ha requerido acceso a un túnel de viento o a un centro de cálculo, lo que la concentra en grandes organizaciones. Una herramienta que corre en hardware de consumo la pone al alcance de equipos universitarios, pequeñas empresas y usos docentes. El valor docente es directo: permite observar la formación de una capa límite, la aparición de una burbuja de separación o el desprendimiento de la estela con visualización en tiempo real y acceso al código numérico que lo produce.
+
+Existe también un desplazamiento de tipo de trabajo, común a toda sustitución de ensayo por simulación: menos horas de técnico de túnel y más horas de ingeniero de simulación. No es una destrucción neta de empleo sino un cambio de perfil, que exige formación.
+
+#3 Riesgos sociales y limitaciones
+
+* **Riesgo de uso indebido de un resultado no validado.** Es el riesgo principal, y este mismo trabajo es su ilustración. Una herramienta que produce números con aspecto creíble y que en realidad no predicen coeficientes absolutos puede inducir decisiones de diseño equivocadas. La mitigación es la que se ha aplicado: publicar el envolvente de validez junto con la herramienta, y enunciarlo de forma explícita y restrictiva (sección 4.1). La responsabilidad de quien distribuye una herramienta de simulación incluye documentar donde deja de ser válida.
+* **Dependencia tecnológica.** El solver depende de CUDA y por tanto de hardware de un único fabricante. Es una dependencia real que deja al usuario en posición débil frente a decisiones de ese fabricante sobre precios o compatibilidad. Su mitigación —portar los núcleos a una interfaz abierta— es un trabajo considerable que no se ha abordado.
+* **Accesibilidad.** El requisito de una GPU compatible es una barrera económica para parte del publico potencial, aunque muy inferior a la de las alternativas. La interfaz gráfica y el visor en tiempo real no se han evaluado desde el punto de vista de accesibilidad para personas con diversidad funcional, lo que constituye una limitación reconocida.
+* **Colectivos potencialmente perjudicados.** No se identifica ninguno de forma directa. El uso de la tecnología aeronáutica tiene aplicaciones duales, pero el alcance de este trabajo —un solver bidimensional para diseño preliminar de perfiles a bajo Reynolds— no lo sitúa de forma singular en ese debate.
+* **Limitaciones del análisis social.** No se ha realizado consulta a usuarios potenciales ni estudio de usabilidad. Las afirmaciones sobre valor docente y sobre reducción de barreras son razonadas, no medidas.
+
+#2 Síntesis
+
+| Perspectiva | Desarrollo del trabajo | Ejecución o aplicación | Riesgos y limitaciones |
+| Ambiental | 35,8 kWh, 7,7 kg CO2 eq; huella modesta y bien acotada | Dos órdenes de magnitud menos por geometría que las alternativas; impacto potencial vía eficiencia, no demostrado | Estimación de potencia no medida; no se aprovecho la variabilidad horaria del mix eléctrico |
+| Económica | Coste dominado por el tiempo humano; cálculo prácticamente gratuito | Coste marginal por geometría de tres a cuatro órdenes de magnitud inferior al del ensayo | El riesgo se materializo: decidir sobre resultados no verificados es el coste real |
+| Social | Aprendizaje metodológico; decisión de no publicar lo que no se sostiene | Reducción de la barrera de acceso al diseño aerodinámico; valor docente | Uso indebido de resultados no validados; dependencia de un ecosistema propietario |
+[TBL] Matriz de sostenibilidad del trabajo, según las tres perspectivas y los tres niveles de análisis.
+
+[PB]
+#1 Conclusiones
+
+#2 Grado de cumplimiento de los objetivos
+
+Se recorren los cinco objetivos enunciados en la sección 1.3 indicando en que grado se ha cumplido cada uno.
+
+**Objetivo 1: desarrollar un solver CFD 2D incompresible transitorio acelerado por GPU. Cumplido y verificado.** El solver esta operativo, resuelve las ecuaciones completas con proyección multimalla, advección de segundo orden, geometría embebida y dos modelos de turbulencia, y evalúa un perfil en tiempos que van de dos minutos a dos horas según la resolución exigida. Su verificación incluye simetría a precisión de máquina, contraste con una DNS publicada y un estudio de convergencia de malla con orden observado 2,18, coincidente con el orden formal del esquema.
+
+**Objetivo 2: cálculo de fuerzas por integración de esfuerzos sobre geometría embebida. Cumplido y verificado.** El cálculo se realiza mediante extrapolación por mínimos cuadrados de la presión a la pared, corrección de presión de fondo e integración del tensor de esfuerzos. Su verificación se apoya en tres estimadores independientes de la sustentación cuya concordancia mutua constituye una comprobación de consistencia interna, y en la reproducción de la pendiente de sustentación teórica dentro de un 8 %.
+
+**Objetivos 3 y 4: acoplamiento con el algoritmo genético y modelo sustituto. Construidos y funcionales, con resultados pendientes de una campaña nueva.** El optimizador está implementado, ha ejecutado seis estudios completos y el modelo sustituto alcanza un coeficiente de determinación de 0,850 en validación cruzada. Pero la campaña realizada empleo una función de fitness cuya validez el objetivo 5 demuestra insuficiente, de modo que sus resultados de optimización no se presentan. Se dice exactamente eso, sin adornarlo ni ocultarlo: la maquinaria funciona, los resultados que produjo no son publicables.
+
+**Objetivo 5: verificar y validar el conjunto. Cumplido**, y su resultado es el que obliga a rehacer la campaña de los objetivos 3 y 4.
+
+La conclusión honesta del trabajo es, por tanto, que **entrega una herramienta verificada más el diagnóstico de por que los resultados anteriores no son publicables, y no una optimización cerrada**. Se considera que el segundo elemento tiene más valor que la tabla de resultados que habría ocupado su lugar, porque una tabla sin barras de error y sin verificación de la señal que la produjo no es un resultado de ingeniería.
+
+#2 Que queda validado
+
+Con precisión:
+
+**El solver sirve para comparar perfiles entre si a igual ángulo de ataque y misma malla, con una incertidumbre de discretización acotada en ±1,4 % en el coeficiente de sustentación. No sirve para predecir coeficientes absolutos comparables con la literatura o con datos experimentales.**
+
+Es una afirmación más estrecha que la que se podía hacer antes del capítulo de verificación, y es la defendible. Su alcance coincide con el uso previsto: la comparación perfil contra perfil a igual ángulo de ataque y misma malla es la única operación que necesita el optimizador.
+
+#2 Principales aportaciones
+
+* **Un solver CFD 2D transitorio completo acelerado por GPU**, con núcleos CUDA propios, funcionando sobre hardware de consumo y con un coste por evaluación de minutos.
+* **Un multimalla geométrico con corrección del defecto sobre geometría embebida**, con preservación exacta de la simetría a través de toda la jerarquía de mallas y protección automática frente a amplificación del residuo del ciclo en V.
+* **El diagnóstico y corrección de una cadena de cuatro defectos acoplados**: burbuja de separación laminar sin modelo de turbulencia adecuado, pared insuficientemente resuelta, inconsistencia entre la frontera inmersa y la proyección, y difusión numérica del esquema semi-Lagrangiano. Cada capa se confirmo o se falso mediante un experimento numérico específico, incluidas las hipótesis que resultaron falsas —la más relevante, que anular el flujo neto a través de lazos cerrados alrededor del perfil no recuperó la sustentación, lo que exoneró a la proyección y obligó a buscar la cuarta capa. La métrica de flujo neto sobre lazos cerrados demostró ser una herramienta de diagnóstico útil y de coste despreciable.
+* **El acoplamiento entre CFD y algoritmo genético** con parametrización en camber y espesor y restricciones geométricas físicamente motivadas.
+* **Un estudio de verificación y validación que encuentra un defecto propio, lo cuantifica, lo corrige, mide que la corrección no basta y determina estadísticamente que conclusiones sobreviven.** Está es la aportación principal. El elemento distintivo no es haber encontrado el defecto sino haber medido, mediante estadística de rangos sobre una muestra estratificada, que el argumento habitual de que "los valores absolutos están mal pero el orden se conserva" era falso en la zona en la que el algoritmo selecciona.
+* **Evidencia experimental de que, en este problema, un algoritmo genético sin migración no converge a un óptimo único**: cuatro corridas aisladas desde semillas distintas terminan en geometrías mutuamente más alejadas que sus puntos de partida. La convergencia observada con modelo de islas es un artefacto del flujo de genes y no la identificación de un óptimo global.
+* **Un conjunto de datos de 3 884 evaluaciones CFD** —geometría, condiciones y coeficientes— junto con la infraestructura de registro reutilizable. Debe declararse explícitamente que **las etiquetas de este conjunto están sesgadas** por el criterio de terminación: su valor actual reside en las geometrías y en el flujo de trabajo, no en los coeficientes.
+
+#2 Trabajo futuro
+
+Por orden de prioridad:
+
+1. **Relanzar la campaña de optimización con una medida verificada.** Es la consecuencia directa de la sección 4.5 y la línea más importante. Debe ir precedida de la revisión de la conversión de fitness a probabilidad de selección, para manejar correctamente valores negativos que el criterio anterior enmascaraba.
+2. **Diagnosticar el exceso de resistencia.** El experimento discriminante consiste en comparar el perfil de velocidad en la capa límite con $dx = 0{,}001$ frente a $dx = 0{,}002$ y contrastar la posición del reataque de la burbuja con la que predice XFOIL. Si el perfil de velocidad converge con el refinado, la causa es de resolución; si el reataque esta desplazado, es de separación prematura. Distingue entre las hipótesis 1 y 2 de la sección 4.1 y orienta las mejoras 3 y 4 de la sección 5.5.
+3. **Rediseño del criterio de terminación y su verificación sobre un conjunto retenido**, siguiendo el planteamiento de la sección 5.3. Es requisito previo al punto 1.
+4. **Activación del modelo sustituto** con umbral calibrado sobre datos correctamente medidos, reservando una fracción de la población exenta del filtro para preservar la exploración.
+5. **Optimización multipunto en ángulo de ataque**, ya implementada y descartada únicamente por coste, que produciría geometrías más robustas fuera del punto de diseño.
+6. **Validación experimental en túnel de viento**, única vía para cerrar definitivamente la cuestión de los coeficientes absolutos.
+
+[PB]
+#0 Bibliografía
+
+[REF] A. J. Chorin, "Numerical solution of the Navier-Stokes equations", *Mathematics of Computation*, vol. 22, no. 104, pp. 745-762, 1968.
+[REF] J. Stam, "Stable fluids", en *Proceedings of SIGGRAPH '99*, ACM, 1999, pp. 121-128.
+[REF] A. Selle, R. Fedkiw, B. Kim, Y. Liu y J. Rossignac, "An unconditionally stable MacCormack method", *Journal of Scientific Computing*, vol. 35, no. 2-3, pp. 350-371, 2008.
+[REF] F. Nicoud y F. Ducros, "Subgrid-scale stress modelling based on the square of the velocity gradient tensor", *Flow, Turbulence and Combustión*, vol. 62, no. 3, pp. 183-200, 1999.
+[REF] P. R. Spalart y S. R. Allmaras, "A one-equation turbulence model for aerodynamic flows", *AIAA Paper 92-0439*, 30th Aerospace Sciences Meeting, Reno, 1992.
+[REF] S. C. Cakmakcioglu, O. Bas y U. Kaynak, "A correlation-based algebraic transition model", *Proceedings of the Institution of Mechanical Engineers, Part C: Journal of Mechanical Engineering Science*, vol. 232, no. 21, pp. 3915-3929, 2018.
+[REF] F. R. Menter, R. B. Langtry, S. R. Likki, Y. B. Suzen, P. G. Huang y S. Volker, "A correlation-based transition model using local variables. Part I: Model formulation", *Journal of Turbomachinery*, vol. 128, no. 3, pp. 413-422, 2006.
+[REF] C. S. Peskin, "The immersed boundary method", *Acta Numérica*, vol. 11, pp. 479-517, 2002.
+[REF] R. Mittal y G. Iaccarino, "Immersed boundary methods", *Annual Review of Fluid Mechanics*, vol. 37, pp. 239-261, 2005.
+[REF] M. Drela, "XFOIL: An analysis and design system for low Reynolds number airfoils", en *Low Reynolds Number Aerodynamics*, Lecture Notes in Engineering, vol. 54, Springer, 1989, pp. 1-12.
+[REF] P. J. Roache, "Perspective: A method for uniform reporting of grid refinement studies", *Journal of Fluids Engineering*, vol. 116, no. 3, pp. 405-413, 1994.
+[REF] I. B. Celik, U. Ghia, P. J. Roache, C. J. Freitas, H. Coleman y P. E. Raad, "Procedure for estimation and reporting of uncertainty due to discretization in CFD applications", *Journal of Fluids Engineering*, vol. 130, no. 7, art. 078001, 2008.
+[REF] ASME, *Standard for Verification and Validation in Computational Fluid Dynamics and Heat Transfer*, ASME V&V 20-2009, American Society of Mechanical Engineers, 2009.
+[REF] A. Jameson, "Aerodynamic design vía control theory", *Journal of Scientific Computing*, vol. 3, no. 3, pp. 233-260, 1988.
+[REF] D. E. Goldberg, *Genetic Algorithms in Search, Optimization and Machine Learning*. Reading, MA: Addison-Wesley, 1989.
+[REF] A. E. Eiben y J. E. Smith, *Introduction to Evolutionary Computing*, 2a ed. Berlin: Springer, 2015.
+[REF] A. I. J. Forrester, A. Sobester y A. J. Keane, *Engineering Design vía Surrogate Modelling: A Practical Guide*. Chichester: Wiley, 2008.
+[REF] S. N. Skinner y H. Zare-Behtash, "State-of-the-art in aerodynamic shape optimisation methods", *Applied Soft Computing*, vol. 62, pp. 933-962, 2018.
+[REF] J. D. Anderson, *Fundamentals of Aerodynamics*, 6a ed. New York: McGraw-Hill, 2017.
+[REF] J. Katz y A. Plotkin, *Low-Speed Aerodynamics*, 2a ed. Cambridge: Cambridge University Press, 2001.
+[REF] I. H. Abbott y A. E. von Doenhoff, *Theory of Wing Sections: Including a Summary of Airfoil Data*. New York: Dover, 1959.
+[REF] M. S. Selig, J. F. Donovan y D. B. Fraser, *Summary of Low-Speed Airfoil Data, Volume 1*. Virginia Beach: SoarTech Publications, 1995.
+[REF] D. F. Kurtulus, "On the unsteady behavior of the flow around NACA 0012 airfoil with steady external conditions at Re = 1000", *International Journal of Micro Air Vehicles*, vol. 7, no. 3, pp. 301-326, 2015.
+[REF] S. B. Pope, *Turbulent Flows*. Cambridge: Cambridge University Press, 2000.
+[REF] U. Trottenberg, C. W. Oosterlee y A. Schuller, *Multigrid*. London: Academic Press, 2001.
+[REF] A. Brandt, "Multi-level adaptive solutions to boundary-value problems", *Mathematics of Computation*, vol. 31, no. 138, pp. 333-390, 1977.
+[REF] R. Okuta, Y. Unno, D. Nishino, S. Hido y C. Loomis, "CuPy: A NumPy-compatible library for NVIDIA GPU calculations", en *Workshop on Machine Learning Systems, NIPS*, 2017.
+[REF] L. Breiman, "Random forests", *Machine Learning*, vol. 45, no. 1, pp. 5-32, 2001.
+[REF] F. Pedregosa et al., "Scikit-learn: Machine learning in Python", *Journal of Machine Learning Research*, vol. 12, pp. 2825-2830, 2011.
+[REF] K. Deb, A. Pratap, S. Agarwal y T. Meyarivan, "A fast and elitist multiobjective genetic algorithm: NSGA-II", *IEEE Transactions on Evolutionary Computation*, vol. 6, no. 2, pp. 182-197, 2002.
+[REF] Red Eléctrica de España, *Informe del sistema eléctrico español 2025*, Red Eléctrica, 2026. [En línea]. Disponible en: https://www.ree.es/
+[REF] Comisión Nacional de los Mercados y la Competencia, *Informe sobre el mix de la energía eléctrica y las etiquetas de electricidad. Ejercicio 2025*, CNMC, abril de 2026.
+[REF] U. Gupta et al., "Chasing carbón: The elusive environmental footprint of computing", en *IEEE International Symposium on High-Performance Computer Architecture (HPCA)*, 2021, pp. 854-867.
+[REF] J. H. Ferziger, M. Peric y R. L. Street, *Computational Methods for Fluid Dynamics*, 4a ed. Cham: Springer, 2020.
+[REF] G.-S. Jiang y C.-W. Shu, "Efficient implementation of weighted ENO schemes", *Journal of Computational Physics*, vol. 126, no. 1, pp. 202-228, 1996.
+[REF] P. B. S. Lissaman, "Low-Reynolds-number airfoils", *Annual Review of Fluid Mechanics*, vol. 15, pp. 223-239, 1983.
+
+[PB]
+#0 Anexo A. Configuración de referencia del solver
+
+Se recoge aquí la configuración completa con la que se han obtenido los resultados del capítulo 4, para que sean reproducibles.
+
+| Parámetro | Valor | Comentario |
+| Dominio | 12 c x 8 c | Longitudes en unidades de cuerda |
+| Tratamiento de pared | `wall_treatment="consistent"` | Divergencia por flujo de caras, gradiente unilateral, sin refuerzo de impermeabilidad |
+| Modelo de turbulencia | `turb_model="sa"` | Spalart-Allmaras |
+| Modelo de transición | `transition_model="sa_bc"` | Intermitencia algebraica, intensidad turbulenta de corriente libre 0,1 % |
+| Esquema de advección | `advection_scheme="maccormack"` | Con banda de 2 celdas en semi-Lagrangiano junto al sólido |
+| Frontera inmersa | `ibm_wall_mode="ghost_noslip"` | Celdas fantasma con punto imagen |
+| Número de Courant | 0,25 | |
+| Coeficiente de estabilidad viscosa | 0,25 | |
+| Malla de exploración | $dx = 0{,}004$ | Fuera del rango asintótico; valida para ordenar, no para valores absolutos |
+| Malla de validación | $dx = 0{,}002$ | ~2,4 % de error de discretización |
+| Malla de referencia | $dx = 0{,}001$ | 3 243 x 1 203 nodos; ±1,4 % de GCI en sustentación |
+[TBL] Configuración de referencia del solver empleada en todos los resultados del capítulo 4.
+
+Todas las simulaciones se ejecutan sobre una GPU NVIDIA RTX 3070 Ti con 8 GB de memoria. La ejecución requiere el entorno virtual del proyecto, que contiene CuPy; el intérprete del sistema no dispone de acceso a la GPU.
+
+[PB]
+#0 Anexo B. Ficheros de resultados y guiones de verificación
+
+| Guion | Función |
+| `verificacion_numerica.py` | Etapas de calibración, reevaluación, estudio GCI, polar y validación externa |
+| `criterio_parada.py` | Ajuste por validación cruzada y verificación sobre conjunto retenido del criterio de terminación |
+| `series_dx004.py` | Series completas sin parada anticipada: referencia del criterio y ensayo de ordenación entre mallas |
+| `revalidar_ranking.py` | Muestreo estratificado del historial y correlación de rangos |
+| `metricas_ga.py` | Postproceso del algoritmo genético sin GPU: figuras e informe |
+| `run_convergence_study.py` | Orquestador de los estudios de optimización |
+[TBL] Guiones de verificación y su función. Todos son reanudables y almacenan resultados intermedios en formato JSON.
+
+[PENDIENTE: si el tutor lo solícita, incluir aquí las respuestas detalladas al cuestionario guía del análisis de sostenibilidad de la maqueta. La síntesis de la sección 6.4 cubre las tres perspectivas exigidas.]

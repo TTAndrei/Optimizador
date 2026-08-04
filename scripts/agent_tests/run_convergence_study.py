@@ -52,6 +52,10 @@ for d in (OUT_DIR, BASE_DIR, PLOTS_DIR, TESTS_DIR, ARMA_DIR, ARMB_DIR):
 
 CALIB_JSON = os.path.join(OUT_DIR, "calibration.json")
 
+# Centinela de pausa: crear el fichero equivale a un Ctrl+C, pero funciona con la
+# corrida en segundo plano. Se borra al arrancar. Lo sobreescribe --stop-file.
+STOP_FILE = os.path.join(OUT_DIR, "STOP")
+
 # Condiciones de vuelo del estudio (fijas)
 ALPHA = 4.0
 CFL = 0.5
@@ -81,6 +85,14 @@ def iters_for(cfl, dx, t_target=T_TARGET):
 
 def _log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def _check_stop(donde):
+    """Las fases que llaman a simular_perfil directamente (calibración, refinado)
+    no pasan por el bucle de RunGA, que es quien consulta el centinela. Sin esto
+    una pausa durante la calibración no surtiría efecto hasta horas después."""
+    if STOP_FILE and os.path.exists(STOP_FILE):
+        raise KeyboardInterrupt(f"pausa solicitada durante {donde}")
 
 
 # ============================================================
@@ -114,6 +126,7 @@ def calibrar(re=1e5):
             cfg["simulacion_iteraciones"] = iters_for(CFL, dx)
             cfg["CFL"] = CFL
             key = f"dx{int(dx*1000)}_a{a:.0f}"
+            _check_stop(f"calibración {key}")
             _log(f"  calib {key}: iters={cfg['simulacion_iteraciones']} ...")
             t0 = time.time()
             res = RunGA.simular_perfil("profiles/NACA_0012_sharp", a, cfg)
@@ -194,6 +207,7 @@ def _run_ga(nombre, dir_out, cfg_over, deadline_s):
         "multi_angulo": False,
         "usar_ia": False,
         "tiempo_limite_s": max(60.0, deadline_s),
+        "stop_file": STOP_FILE,
     }
     cfg.update(cfg_over)
     _log(f"  RUN {nombre}: pop={cfg.get('poblacion_tamano')} "
@@ -206,6 +220,10 @@ def _run_ga(nombre, dir_out, cfg_over, deadline_s):
         _log(f"  [!] {nombre} crasheó: {e}")
         with open(os.path.join(dir_out, "FAILED.txt"), "w") as f:
             f.write(traceback.format_exc())
+    # RunGA absorbe el Ctrl+C para poder checkpointear. Sin re-lanzarlo aquí el
+    # orquestador seguiría con la siguiente isla y la pausa no pararía nada.
+    if RunGA.PARADA_SOLICITADA:
+        raise KeyboardInterrupt(f"pausa solicitada durante {nombre}")
 
 
 def ejecutar_estudio(cal, deadline_total_s, t_start, reforzado=False):
@@ -414,6 +432,7 @@ def ejecutar_islas(cal, deadline_total_s, t_start,
     n_islas = len(islas)
     # Presupuesto: n_epocas * n_islas evaluaciones-GA
     for ep in range(n_epocas):
+        _check_stop(f"época {ep}")
         remaining = deadline_total_s - (time.time() - t_start)
         if remaining <= 180:
             _log("  Islas: sin presupuesto; se detiene.")
@@ -524,6 +543,7 @@ def refinar_top_k(cal, k=3, dx_ref=0.002, deadline_s=None, t_start=None):
     os.makedirs(tmp_dir, exist_ok=True)
     filas = []
     for c in top:
+        _check_stop(f"refinado de {c['id']}")
         if deadline_s is not None and t_start is not None:
             if (time.time() - t_start) > deadline_s - 120:
                 _log("  S3: sin presupuesto; refinado parcial.")
@@ -831,11 +851,21 @@ def main():
                     help="Agregacion del L/D sobre los angulos: media, peor caso o ponderada.")
     ap.add_argument("--transition-model", default="none", choices=["none", "sa_bc"])
     ap.add_argument("--freestream-tu", type=float, default=0.1)
+    ap.add_argument("--dx", type=float, default=0.0,
+                    help="fuerza el dx de exploración e ignora el de calibration.json")
+    ap.add_argument("--t-target", type=float, default=T_TARGET,
+                    help="tiempos convectivos de tope duro por evaluación")
+    ap.add_argument("--stop-file", default="",
+                    help="centinela de pausa (por defecto results/convergence_study/STOP)")
     ap.add_argument("--re", type=float, default=1e5,
                     help="Reynolds (v0x=1, chord=1 -> nu=1/Re). Cambia dx_min/iters via calibración propia.")
     args = ap.parse_args()
 
-    global ISLAS_DIR, REFINE_JSON, REFINE_SCOPE
+    global ISLAS_DIR, REFINE_JSON, REFINE_SCOPE, STOP_FILE
+    if args.stop_file:
+        STOP_FILE = os.path.abspath(args.stop_file)
+    if os.path.exists(STOP_FILE):
+        os.remove(STOP_FILE)   # una pausa previa no debe matar el relanzamiento
     if args.run_tag:
         ISLAS_DIR = os.path.join(OUT_DIR, f"islands_{args.run_tag}")
         REFINE_JSON = os.path.join(ISLAS_DIR, "refine_dx002.json")
@@ -888,6 +918,14 @@ def main():
         analizar_convergencia(); return
 
     cal = calibrar(re=args.re)
+    if args.dx > 0:
+        # La revalidación del ranking (n=20) mostró que dx=0.004 ordena mejor
+        # (rho mitad alta 0.75) que la campaña original a dx=0.002 mal parada
+        # (0.15). Se explora en grueso y se valida el ganador en fino.
+        cal = dict(cal, use_dx=args.dx,
+                   iters=iters_for(CFL, args.dx, args.t_target))
+        _log(f"dx forzado: {args.dx} -> iters tope={cal['iters']} "
+             f"(t={args.t_target} tiempos convectivos)")
     if args.calib_only:
         return
     if args.refine:
@@ -937,4 +975,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt as e:
+        _log(f"PAUSA: {e}. Checkpoint guardado; relanza el mismo comando "
+             "para continuar donde quedó.")
+        sys.exit(0)
