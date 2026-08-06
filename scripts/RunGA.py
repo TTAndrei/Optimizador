@@ -1771,12 +1771,20 @@ def guardar_estado_ga(filepath, poblacion, mejor_global, gen, historial,
         ],
     }
 
+    # Escritura atómica: un corte de luz a mitad del volcado dejaría el JSON
+    # truncado y la reanudación caería en "checkpoint ilegible; empiezo de cero",
+    # tirando la época entera. Con os.replace o está el checkpoint viejo o el
+    # nuevo, nunca uno a medias.
     try:
         dirpath = os.path.dirname(filepath)
         if dirpath:
             os.makedirs(dirpath, exist_ok=True)
-        with open(filepath, 'w', encoding='utf-8') as f:
+        tmp = filepath + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(estado, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, filepath)
     except Exception as e:
         print(f" Error guardando estado GA: {e}")
 

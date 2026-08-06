@@ -24,3 +24,7 @@ graphify-out/cache/
 # evaluación. Regenerable, no aporta historia.
 sim_last.npz
 _temp_gen*_ind*.dat
+
+# Copias de seguridad locales de la campaña (redundantes con el histórico de git).
+results/convergence_study/backups/
+results/convergence_study/*.pid

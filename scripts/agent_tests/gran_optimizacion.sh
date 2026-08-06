@@ -89,7 +89,16 @@ case "${1:-}" in
     echo "Parada limpia. Reanudar con: $0 start"
     status
     ;;
+  snapshot)
+    # Copia consistente sin parar la corrida: solo las épocas cerradas
+    # (estado_ga_final.json) son inmutables; la que está en curso se copia igual
+    # y, si sale truncada por el corte, se descarta y se repite esa época.
+    DEST="$BASE/backups/${TAG}_$(date +%Y%m%d_%H%M)"
+    mkdir -p "$DEST"
+    cp -a "$ISLAS" "$BASE/calibration.json" "$LOG" "$DEST"/ 2>/dev/null
+    echo "Copia en $DEST ($(du -sh "$DEST" | cut -f1))"
+    ;;
   status) status ;;
   log)    tail -f "$LOG" ;;
-  *) echo "uso: $0 {start|run|stop|status|log}"; exit 1 ;;
+  *) echo "uso: $0 {start|run|stop|status|log|snapshot}"; exit 1 ;;
 esac
