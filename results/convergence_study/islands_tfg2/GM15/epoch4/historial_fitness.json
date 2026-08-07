@@ -1,0 +1,30 @@
+[
+  {
+    "gen": 0,
+    "mejor": 23.1346,
+    "media": 22.13335625,
+    "peor": 17.9796,
+    "evaluados": 16,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 9415.3,
+    "vs_base": 0.2348,
+    "descartados_geom_repro": 0,
+    "reparados_param_repro": 0,
+    "fallback_legacy_repro": 0
+  },
+  {
+    "gen": 1,
+    "mejor": 23.1346,
+    "media": 21.020531249999998,
+    "peor": 14.1146,
+    "evaluados": 16,
+    "descartados_ia": 0,
+    "descartados_geom_eval": 0,
+    "tiempo_seg": 6939.7,
+    "vs_base": 0.2348,
+    "descartados_geom_repro": 0,
+    "reparados_param_repro": 0,
+    "fallback_legacy_repro": 0
+  }
+]
