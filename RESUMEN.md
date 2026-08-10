@@ -7,9 +7,11 @@ Simulador CFD 2D incompresible (Navier-Stokes) en GPU (CuPy, RTX 3070 Ti) para p
 - Sólidos por IBM (Immersed Boundary): máscara rasterizada + ghost-cell no-slip (`ibm_wall_mode="ghost_noslip"`).
 - **Ejecutar SIEMPRE con `.venv/bin/python`** (el python3 del sistema no tiene CuPy).
 
-## Estado actual (2026-08-04, rama Malla-Variable, commit `8ab2461`)
+## Estado actual (2026-08-04, rama Malla-Variable, commit `5213410`)
 
-**VERIFICACIÓN NUMÉRICA CERRADA — documento completo en [`docs/verificacion_numerica.md`](docs/verificacion_numerica.md) (10 secciones, es la fuente de verdad).** Leerlo antes de citar cualquier L/D. Guion del TFG en `docs/PROMPT_TFG.md`.
+**SEGUNDA GRAN OPTIMIZACIÓN LANZADA Y EN CURSO** (ver bloque al final de esta sección). Todo lo demás de abajo sigue vigente.
+
+**VERIFICACIÓN NUMÉRICA CERRADA — documento completo en [`docs/verificacion_numerica.md`](docs/verificacion_numerica.md) (10 secciones, es la fuente de verdad).** Leerlo antes de citar cualquier L/D. Guion del TFG en `docs/PROMPT_TFG.md`; memoria en construcción en `docs/tfg/`.
 
 **Reorganización de resultados**: toda la campaña anterior está archivada en **`results/1eraGranOptimizacion/`** (`convergence_study/`, `verificacion_numerica/`, `agent_tests/`, `barridos/`, `metricas_ga/`, `comparativas_v1/`, `videos_ganadores/`, …). `results/verificacion_numerica/` en la raíz solo contiene lo nuevo (`criterio_parada.json/.png`, `series_dx004/`). Cualquier ruta de este documento o de scripts antiguos que apunte a `results/convergence_study/...` hay que leerla bajo `results/1eraGranOptimizacion/`. El `.gitignore` se reancló a patrones `**/` porque los anclados a `results/` dejaron de aplicar tras el archivado (metían 5585 ficheros y tres >100 MB al índice).
 
@@ -58,7 +60,28 @@ El sesgo en valor absoluto a dx=0.004 es de **−44.9 % ± 68** y no importa par
 
 **`cl_cp_discrepancy` cayó de 0.31–0.83 a 0.02–0.14** al medir sin transitorio: buena parte de la sobre-circulación diagnosticada era artefacto. Queda un residuo real, menor, que crece con Re.
 
-**Árbol de trabajo limpio**: todo commiteado en `8ab2461`; solo queda `RESUMEN.md.tmp` sin seguir (artefacto del hook de regeneración). Los pendientes de limpieza de julio (rename `core_v0x`→`v0x_ic`, `--smoke`/Cl_cp en scripts de barrido, `prueba_inicialesdiferentes/`, `comparativas_v1/`, reorganización de `convergence_study/`) están resueltos vía el archivado en `results/1eraGranOptimizacion/`.
+### Segunda gran optimización (`5213410`, lanzada 2026-08-04, EN CURSO)
+
+Campaña de días con el criterio de parada validado. Lanzador `scripts/agent_tests/gran_optimizacion.sh {start|run|stop|status|log}`; salidas en **`results/convergence_study/islands_tfg2/`**, log `results/convergence_study/gran_optimizacion_tfg2.log`, PID en `..._tfg2.pid`.
+
+- **Presupuesto**: 4 islas × pop 16 × 2 gen/época × 13 épocas = **1456 evaluaciones** (16 la primera generación de cada época + 12 la segunda, con 4 élites). A ~700 s por evaluación a dx=0.004 son ~283 h, + ~2 h de calibración y ~3 h de refinado a dx=0.002 → **~288 h** dentro del tope de 311 h (`--deadline-hours 311`). 13 épocas y no 14 para que el deadline no trunque una época a medias.
+- **Config**: `--islands --run-tag tfg2 --island-epochs 13 --island-migrate-every 2 --island-pop 16 --dx 0.004 --t-target 12 --transition-model sa_bc --freestream-tu 0.1 --re 1e5 --refine-k 3 --stop-file results/convergence_study/STOP`.
+- **Explorar a dx=0.004 es decisión justificada**, no ahorro a ciegas: la revalidación (n=20) da ρ de la mitad alta **0.75** frente a **0.15** de la campaña original a dx=0.002 mal parada. El ganador se valida después a dx=0.002 (`--refine-k 3`).
+- **Pausa/reanudación**: `stop` crea el centinela `STOP`; la corrida termina la evaluación CFD en curso (≤12 min), guarda `estado_ga.json` y sale. `start` continúa exactamente donde quedó — las épocas cerradas se saltan y los individuos ya simulados de la generación a medias no se vuelven a pagar.
+
+Tres defectos que hacían inviable una corrida de días, todos corregidos en `5213410`:
+
+1. **Fitness negativo indistinguible de un fallo.** `calcular_fitness` filtraba `ld > 0`, así que un perfil con L/D<0 devolvía 0.0 — el mismo valor que un crasheo o un descarte geométrico. Ahora hay centinela explícito `Individuo.evaluado` y el filtro de signo desapareció. El pool de reproducción y las estadísticas pasan de `fitness > 0` a `ind.resultados`, para que una generación mala no vacíe el pool. (Cierra el punto 2 de los próximos pasos anteriores: el individuo 1265 con L/D=−1.29 ya no rompe la selección.)
+2. **Reanudar costaba una generación entera**: el checkpoint guardaba el fitness pero no lo restauraba al reconstruir la población → 16 re-simulaciones, 3.1 h por pausa. Ahora restaura fitness, resultados y `evaluado`; una pausa a mitad de generación se guarda como `gen-1` (verificado: 2 pendientes de 4).
+3. **La pausa no paraba nada**: RunGA absorbe el Ctrl+C para checkpointear y `_run_ga` no lo miraba, así que el orquestador seguía con la siguiente isla. Ahora se re-lanza como `KeyboardInterrupt` y las fases que llaman a `simular_perfil` directamente (calibración, refinado) consultan el centinela entre simulaciones.
+
+Además: `parada_pedida()` acepta fichero centinela además de Ctrl+C (pausar una campaña en segundo plano sin buscar el PID); **`guardar_memoria` ya no pisa el histórico** — volcaba `datos_X` tal cual, así que una corrida arrancada con memoria vacía lo borraba todo (una prueba de humo de 10 individuos se llevó por delante 2347 experiencias; el `.pkl` bueno sigue en el histórico de git), ahora relee disco, solo añade lo nuevo y escribe atómicamente; barra de progreso a 1 actualización/minuto cuando la salida no es TTY (a 10 refrescos/s eran ~700 kB por simulación, ~1 GB de log en la campaña); flags `--dx` y `--t-target` en `run_convergence_study.py`; `sim_last.npz` y `_temp_gen*_ind*.dat` fuera del control de versiones.
+
+### Memoria del TFG (`docs/tfg/`)
+
+Pipeline propio de generación del documento, añadido en `5213410`: fuente en `memoria.txt` (marcas `#1..#4`, `$$latex$$`, `[FIG]/[TBL]/[TOC]/[PB]`, tablas `| a | b |`), `build_tfg.py` sustituye `word/document.xml` sobre la plantilla oficial EETAC `MaquetaTFG.docx` (que aporta estilos, numeración, encabezados y márgenes), `latex2omml.py` convierte el subconjunto de LaTeX usado a OMML (lanza `ValueError` si algo no está soportado, para que falle en generación y no en Word) y `acentuar.py`/`acentuar2.py` restauran tildes sobre el fuente ASCII usando `/usr/share/dict/spanish`. Salidas versionadas: `TFG.docx`, `TFG.pdf`.
+
+**Estado del árbol**: todo lo importante commiteado en `5213410`. Sin seguir: `RESUMEN.md.tmp` (artefacto del hook de regeneración) y `results/convergence_study/` (salidas de la campaña en curso). Modificados por la corrida en vivo: `aprendizaje_ML.jsonl`, `cerebro_aerodinamico.pkl`, `polar_results.json`. Los pendientes de limpieza de julio (rename `core_v0x`→`v0x_ic`, `--smoke`/Cl_cp en scripts de barrido, `prueba_inicialesdiferentes/`, `comparativas_v1/`, reorganización de `convergence_study/`) están resueltos vía el archivado en `results/1eraGranOptimizacion/`.
 
 ## Estado histórico (2026-07-12, rama Malla-Variable)
 
@@ -108,30 +131,24 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
 
 **Prioridad tras la verificación numérica (2026-08-04)**
 
-1. **Relanzar la optimización con el criterio nuevo.** Consecuencia directa de §6: el GA anterior optimizó una señal que no ordena en la zona alta. Ya no hace falta rediseñar el presupuesto a ciegas — §7 justifica explorar a **dx=0.004** (ρ=0.93 global, 0.75 en la mitad alta) y §8 baja una evaluación a ~700 s. Escalas sobre la mesa (la campaña anterior fueron 98.6 h-GPU):
-
-   | configuración | evaluaciones | h-GPU |
-   |---|---|---|
-   | pop 16 × 25 gen × 1 isla | 400 | 78 |
-   | pop 16 × 25 gen × 4 islas | 1600 | 311 |
-   | pop 24 × 40 gen × 4 islas | 3840 | 747 |
-
-   El estudio de convergencia concluyó que la migración es el motor del GA → una isla sola probablemente no sirve. Validar siempre el ganador a dx=0.002.
-2. **Manejar fitness negativo antes de lanzar**: el individuo 1265 da L/D=−1.29 a dx=0.004. El GA nunca vio negativos (la parada prematura los enmascaraba); revisar la conversión fitness→probabilidad de selección.
+1. ~~Relanzar la optimización con el criterio nuevo~~ → **HECHO, corriendo**: campaña `islands_tfg2` (4 islas × pop 16 × 13 épocas a dx=0.004, ~288 h). **Vigilar**, no relanzar: `./scripts/agent_tests/gran_optimizacion.sh status` da épocas cerradas y mejor L/D por isla; `stop` pausa limpio. Al terminar: refinado automático top-3 a dx=0.002 (`refine_dx002.json`), y después pasar `metricas_ga.py` sobre la corrida nueva.
+2. ~~Manejar fitness negativo antes de lanzar~~ → **HECHO** (`5213410`): centinela `Individuo.evaluado`, filtro `ld > 0` eliminado, pool por `ind.resultados`.
 3. **Diagnosticar el exceso de Cd** (+226 % a α=10 frente a XFOIL): perfil de capa límite en pared a dx=0.001 vs dx=0.002, y posición de reataque de la burbuja frente a lo que predice XFOIL. Decide entre las hipótesis 1 y 2 de §5.2 (resolución de BL vs separación prematura).
 4. **GA multipunto α∈{2,4,6}**: se descartó cuando una evaluación costaba ~17 min a dx=0.002 con presupuesto fijo; con dx=0.004 y parada por meseta baja a ~12 min por los tres ángulos, así que vuelve a estar sobre la mesa. Etapa `multipunto` ya cableada en `cola_tfg.sh` (fuera de la cola por defecto, hay que lanzarla a mano).
-5. **Activar el surrogate** (`usar_ia=True`, umbral percentil 70): ahorro estimado del 69 % del CFD con pérdida del 2.5 % de la élite. Reentrenar sobre datos medidos con el criterio nuevo, no sobre el historial sesgado.
+5. **Activar el surrogate** (`usar_ia=True`, umbral percentil 70): ahorro estimado del 69 % del CFD con pérdida del 2.5 % de la élite. Reentrenar sobre datos medidos con el criterio nuevo — la campaña `tfg2` en curso es justo esa fuente de datos limpia; no reentrenar sobre el historial sesgado.
+   - **Terminar la memoria del TFG** (`docs/tfg/memoria.txt` → `build_tfg.py`), incorporando los resultados de `tfg2` cuando cierre.
 
 **Anteriores (siguen abiertos)**
 
 6. Estudio de convergencia CERRADO: no relanzar corridas de diagnóstico de la misma pregunta. Direcciones abiertas: más diversidad/multi-arranque si se quiere un óptimo global real; revisar físicamente el óptimo de camber alto (Cl~1.07 a α=4, semilla s1014).
 7. **Ejecutar el barrido** `scripts/agent_tests/run_cfl_sweep.py` (30 sims, resumible) para caracterizar coste/error CFL×dx×α — sigue pendiente, ninguna sim lanzada.
-8. Investigar el error no fatal de carga de `cerebro_aerodinamico.pkl` ("inhomogeneous shape") visto en el log de "reforzado" — no bloquea (se reinicia la memoria), pero pierde el histórico.
+8. Investigar el error no fatal de carga de `cerebro_aerodinamico.pkl` ("inhomogeneous shape") visto en el log de "reforzado" — no bloquea (se reinicia la memoria), pero pierde el histórico. **Ojo**: con `guardar_memoria` arreglado (`5213410`) ya no borra el `.pkl`, pero la carga fallida sigue sin diagnosticarse.
 9. Opcional barato: probar MacCormack+turbo_hd (~19 it/s esperado) para pre-screening si el sesgo por Q=0.026 resulta consistente entre geometrías.
 10. Opcional física: sublinealidad α=8 (deriva -0.002, TE separación creciendo) — vigilar si el optimizador explora α altos.
-11. Actualizar rutas en scripts/notebooks que apunten a `results/convergence_study/...` o `results/verificacion_numerica/{gci,polar,reeval_*}.json` — ahora viven bajo `results/1eraGranOptimizacion/`.
+11. Actualizar rutas en scripts/notebooks que apunten a `results/convergence_study/...` o `results/verificacion_numerica/{gci,polar,reeval_*}.json` — los de la campaña vieja viven bajo `results/1eraGranOptimizacion/`. **Cuidado**: `results/convergence_study/` volvió a existir y ahora contiene la campaña NUEVA (`islands_tfg2/`), así que una ruta antigua ya no falla — apunta a datos distintos.
 
 ## Tests
+- `scripts/agent_tests/gran_optimizacion.sh {start|run|stop|status|log}` — segunda gran optimización (islas `tfg2`, dx=0.004, 13 épocas, tope 311 h). `start` en segundo plano con PID, `run` en primer plano (Ctrl+C pausa), `stop` deja el centinela `STOP` y espera al checkpoint (≤12 min). Reanuda sin repetir evaluaciones pagadas.
 - `scripts/agent_tests/cola_tfg.sh {run [etapa]|status}` — cola serie reanudable: `calibrar → reeval → gci → polar` (+ `multipunto`, fuera de la cola por defecto). Cada etapa cachea sus simulaciones en JSON; Ctrl+C y relanzar `run` continúa.
 - `scripts/agent_tests/cola_final.sh` — encadena `repolar → validacion → revalidacion`. `scripts/agent_tests/cola.sh` — cola genérica de corridas de GA.
 - `scripts/agent_tests/verificacion_numerica.py --calibrar|--reeval|--gci|--polar|--repolar|--validacion` — etapas sueltas; `criterio_calibrado()` y `T_TARGET_CASO` viven aquí.
@@ -146,6 +163,7 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
 - `scripts/agent_tests/run_convergence_study.py --aislado` — test de convergencia por semilla sin migración (lanzador `aislado.sh`, subcomando `status`). **Estudio cerrado**; no relanzar salvo para direcciones nuevas.
 - `scripts/comparativa_barrido_completo.py --smoke` — validación rápida del pipeline outer_sum vs XFoil (1 perfil, 1 Re, 3 alphas, malla gruesa, 50 iters) sin gastar GPU real.
 - `pytest tests/ --ignore=tests/test_generacion_geometrica_ga.py` (5 passed; el de GA está roto pre-existente: importa `RunGA` inexistente).
+- `docs/tfg/build_tfg.py [--plantilla RUTA] [--salida RUTA]` — regenera `TFG.docx` desde `memoria.txt` sobre la plantilla EETAC (sin GPU).
 
 ## Diagnósticos clave (métodos de Mesh)
 - `compute_circulation()` — Γ en lazos, Cl_circ=-2Γ/(U·c).
