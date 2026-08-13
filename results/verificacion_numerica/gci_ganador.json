@@ -1,0 +1,48 @@
+{
+  "mallas": {
+    "0.0040": {
+      "cl": 0.701436,
+      "cd": 0.025281,
+      "ld": 27.7455,
+      "wall_s": 1171.1
+    },
+    "0.0020": {
+      "cl": 0.686508,
+      "cd": 0.023883,
+      "ld": 28.7441,
+      "wall_s": 2761.2
+    },
+    "0.0010": {
+      "cl": 0.681299,
+      "cd": 0.025507,
+      "ld": 26.71,
+      "wall_s": 11990.9
+    }
+  },
+  "geometria": {
+    "t_max_pct": 2.164234198124636,
+    "x_t_max": 0.6582914572864321,
+    "f_max_pct": 5.635023492572073
+  },
+  "ganador": "results/convergence_study/islands_tfg2/NACA_0012_sharp/epoch10/estado_ga_final.json",
+  "gci": {
+    "cl": {
+      "convergencia": "monótona",
+      "p": 1.5189425491010453,
+      "f_extrapolado": 0.684090818191172,
+      "gci_21_pct": 0.5122233760749639,
+      "gci_32_pct": 1.4567962411166355,
+      "error_extrap_pct": 0.408106367887522
+    },
+    "cd": {
+      "convergencia": "oscilatoria",
+      "ratio": -0.8608374384236469,
+      "banda": 6.366879680087807
+    },
+    "ld": {
+      "convergencia": "oscilatoria",
+      "ratio": -0.4909296494764271,
+      "banda": 7.615499812804188
+    }
+  }
+}

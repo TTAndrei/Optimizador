@@ -28,3 +28,7 @@ _temp_gen*_ind*.dat
 # Copias de seguridad locales de la campaña (redundantes con el histórico de git).
 results/convergence_study/backups/
 results/convergence_study/*.pid
+
+# temporales del refinado del top-k
+results/convergence_study/islands_tfg2/refine_tmp/
+docs/tfg/.~lock.*#

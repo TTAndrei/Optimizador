@@ -12,11 +12,13 @@
 # nuevo continúa exactamente donde quedó: las épocas cerradas se saltan y los
 # individuos ya simulados de la generación a medias no se vuelven a pagar.
 #
-# Presupuesto: 4 islas x pop 16 x 2 gen/época x 13 épocas = 1456 evaluaciones
+# Presupuesto: 4 islas x pop 16 x 2 gen/época x 11 épocas = 1232 evaluaciones
 # (16 la primera generación de cada época + 12 la segunda, con 4 élites).
-# A ~700 s por evaluación a dx=0.004 son ~283 h, + ~2 h de calibración y ~3 h de
-# refinado a dx=0.002: ~288 h dentro del tope de 311 h. Se dejan 13 épocas y no 14
-# para que el deadline no trunque una época a medias.
+#
+# Se recortó de 13 a 11 épocas (0-10) en la época 8: la ganancia por época había
+# caído a +0.1..+0.5 mientras el ruido entre épocas es de ±1 (AG24 retrocedió de
+# 25.58 a 24.57), así que las dos últimas épocas ya no distinguirían mejora de
+# ruido. La época 10 cierra la campaña y pasa al refinado del top-3 a dx=0.002.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
@@ -28,7 +30,7 @@ STOP="$BASE/STOP"
 LOG="$BASE/gran_optimizacion_$TAG.log"
 PIDF="$BASE/gran_optimizacion_$TAG.pid"
 
-EPOCAS=13
+EPOCAS=11
 MIGRA=2
 POP=16
 DX=0.004
