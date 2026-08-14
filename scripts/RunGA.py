@@ -1340,7 +1340,13 @@ def simular_perfil(filepath_temp, alpha_deg, config):
             print(f"   [!] Resultado NaN/Inf @ alpha={alpha_deg}°")
             return None
 
-        cl_force = cl_val
+        # La auditoría de superficie se evalúa sobre el campo FINAL y solo con la
+        # parte de presión, mientras que cd_val es una media temporal de presión +
+        # viscoso. Mezclarlas en el cociente mete la fase del ciclo de
+        # desprendimiento dentro del L/D: a dx=0.001 el ganador de la campaña da
+        # 0.6879 promediado frente a 0.7222 en el instante final, un 5% que no es
+        # física. Se queda como diagnóstico y el L/D usa la misma ventana que el Cd.
+        cl_audit_inst = float('nan')
         try:
             rho = float(sim_params.get('rho', 1.225))
             nu = float(sim_params.get('nu', 1.5e-5))
@@ -1350,13 +1356,12 @@ def simular_perfil(filepath_temp, alpha_deg, config):
                 chord=float(sim_params.get('chord', 1.0)),
                 n_extrap_layers=5,
             )
-            val = float(audit.get("summary", {}).get("Cl_from_Cp_force_consistent", cl_val))
-            if np.isfinite(val):
-                cl_force = val
+            cl_audit_inst = float(audit.get("summary", {})
+                                  .get("Cl_from_Cp_force_consistent", float('nan')))
         except Exception:
             pass
 
-        ld = cl_force / cd_val if abs(cd_val) > 1e-6 else 0.0
+        ld = cl_val / cd_val if abs(cd_val) > 1e-6 else 0.0
 
         # Volcado de las series completas: lo necesita el recalibrado offline del
         # criterio de early-stop, que reproduce el criterio sobre la señal real.
@@ -1377,8 +1382,9 @@ def simular_perfil(filepath_temp, alpha_deg, config):
         cd_ci95 = 1.96 * cd_std / np.sqrt(max(1, len(cd_arr)))
 
         return {
-            'cl': round(cl_force, 6), 'cd': round(cd_val, 6), 'ld': round(ld, 4),
+            'cl': round(cl_val, 6), 'cd': round(cd_val, 6), 'ld': round(ld, 4),
             'cl_raw': round(cl_val, 6),
+            'cl_audit_inst': _round_or_none(cl_audit_inst, 6),
             'cl_std': round(cl_std, 6), 'cd_std': round(cd_std, 6),
             'n_samples': int(len(cd_arr)),
             'cl_ci95': round(float(cl_ci95), 6), 'cd_ci95': round(float(cd_ci95), 6),

@@ -1,0 +1,122 @@
+{
+  "motivo": "El L/D mezclaba un Cl instantaneo de la auditoria de superficie (solo presion, campo final) con un Cd promediado. Se recalcula dx=0.001 con Cl y Cd de la misma ventana temporal, a partir de las series guardadas. No se ha simulado nada nuevo.",
+  "ventana": {
+    "t_min": 14.0,
+    "n_muestras": 3088,
+    "periodo_desprendimiento": 0.2,
+    "ciclos": 285
+  },
+  "dx0001_corregido": {
+    "cl": 0.6878344416618347,
+    "cd": 0.025384049862623215,
+    "ld": 27.09711198111999
+  },
+  "dx0001_anterior": {
+    "cl": 0.681299,
+    "cd": 0.025507,
+    "ld": 26.71,
+    "nota": "Cl instantaneo, ventana t=12"
+  },
+  "estacionariedad_por_tramos": [
+    {
+      "t0": 14.006778717041016,
+      "t1": 28.213741302490234,
+      "cl": 0.6859745383262634,
+      "cd": 0.02539990469813347,
+      "ld": 27.006973266601562
+    },
+    {
+      "t0": 28.231569290161133,
+      "t1": 42.512481689453125,
+      "cl": 0.6881704330444336,
+      "cd": 0.02534428983926773,
+      "ld": 27.15287971496582
+    },
+    {
+      "t0": 42.53185272216797,
+      "t1": 56.81546401977539,
+      "cl": 0.6893031597137451,
+      "cd": 0.025361213833093643,
+      "ld": 27.17942237854004
+    },
+    {
+      "t0": 56.831016540527344,
+      "t1": 71.02342224121094,
+      "cl": 0.6878897547721863,
+      "cd": 0.025430791079998016,
+      "ld": 27.049482345581055
+    }
+  ],
+  "fluctuacion_instantanea_pct": {
+    "cl": 6.470587253570557,
+    "cd": 15.480561256408691
+  },
+  "gci_antes": {
+    "cl": {
+      "valores": [
+        0.701436,
+        0.686508,
+        0.681299
+      ],
+      "ratio": 2.8658091764253957,
+      "banda_pct": 0.7645688603682113,
+      "convergencia": "monotona",
+      "p": 1.5189425491010453,
+      "extrapolado": 0.684090818191172,
+      "gci21_pct": 0.5122233760749639
+    },
+    "cd": {
+      "valores": [
+        0.025281,
+        0.023883,
+        0.025507
+      ],
+      "ratio": -0.8608374384236469,
+      "banda_pct": 6.366879680087807,
+      "convergencia": "oscilatoria"
+    },
+    "ld": {
+      "valores": [
+        27.7455,
+        28.7441,
+        26.71
+      ],
+      "ratio": -0.4909296494764271,
+      "banda_pct": 7.615499812804188,
+      "convergencia": "oscilatoria"
+    }
+  },
+  "gci_despues": {
+    "cl": {
+      "valores": [
+        0.701436,
+        0.686508,
+        0.6878344416618347
+      ],
+      "ratio": -11.25417003213832,
+      "banda_pct": 0.19284315839578708,
+      "convergencia": "oscilatoria"
+    },
+    "cd": {
+      "valores": [
+        0.025281,
+        0.023883,
+        0.025384049862623215
+      ],
+      "ratio": -0.9313481415979581,
+      "banda_pct": 5.913358470168452,
+      "convergencia": "oscilatoria"
+    },
+    "ld": {
+      "valores": [
+        27.7455,
+        28.7441,
+        27.09711198111999
+      ],
+      "ratio": -0.6063189219063484,
+      "banda_pct": 6.078094300335599,
+      "convergencia": "oscilatoria"
+    }
+  },
+  "pendiente": "dx=0.004 y dx=0.002 siguen usando el Cl instantaneo; alli el flujo llega a estacionario y la diferencia deberia ser pequena, pero hay que rehacerlas (66 min) para que las tres mallas usen la misma definicion."
+}
