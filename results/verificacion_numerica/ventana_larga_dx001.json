@@ -1,0 +1,41 @@
+{
+  "dx": 0.001,
+  "alpha": 4.0,
+  "iters_tope": 192000,
+  "t_guarda": 60.0,
+  "criterio": {
+    "clcd_tol_drift": 0.005,
+    "clcd_tol_noise": 0.05,
+    "clcd_window_conv_time": 1.0,
+    "clcd_n_sostenido": 1,
+    "clcd_min_t_fisico_before_check": 5.0
+  },
+  "wall_s": 59008.2,
+  "resultado": {
+    "cl": 0.72221,
+    "cd": 0.02543,
+    "ld": 28.4002,
+    "cl_raw": 0.687876,
+    "cl_std": 0.04518,
+    "cd_std": 0.003975,
+    "n_samples": 768,
+    "cl_ci95": 0.003195,
+    "cd_ci95": 0.000281,
+    "ld_ci95": 0.3406,
+    "converged_clcd": false,
+    "t_conv_clcd": null,
+    "iters_efectivas": 192000,
+    "cl_cp_discrepancy": 0.05491,
+    "cl_cp_discrepancy_flag": true
+  },
+  "referencia_t12": {
+    "cl": 0.681299,
+    "cd": 0.025507,
+    "ld": 26.71
+  },
+  "gci_previo": {
+    "cd_dx004": 0.025281,
+    "cd_dx002": 0.023883,
+    "cd_dx001": 0.025507
+  }
+}
