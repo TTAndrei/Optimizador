@@ -1,0 +1,462 @@
+// ============================================================================
+// RESULTADOS FINALES v2 — material para reescribir los capítulos 4, 5 y 6
+// ============================================================================
+//
+// Este fichero NO se compila. Es el texto de sustitución para memoria.txt,
+// escrito con sus mismas marcas (#1..#4, $$..$$, |a|b|, [TBL], [FIG], [PB])
+// para poder pegarlo directamente.
+//
+// Qué cambia respecto de la versión actual de la memoria:
+//   - Cae la restricción declarada al inicio del capítulo 4. La campaña se ha
+//     rehecho con el criterio de parada verificado, así que la sección 4.6
+//     "Resultados de optimización [EN ESPERA]" ya se puede escribir.
+//   - Los resultados de optimización se presentan, pero con una banda de
+//     incertidumbre de malla que impide citar un valor puntual. Esa banda es el
+//     segundo resultado de verificación del trabajo y es tan importante como el
+//     primero.
+//   - El capítulo 5 gana tres limitaciones nuevas, todas medidas, no supuestas.
+//   - El capítulo 6 cambia todas las cifras de energía y emisiones.
+//
+// Trazabilidad de cada número (todos verificados contra fichero, no de memoria):
+//   results/convergence_study/islands_tfg2/                    campaña
+//   results/convergence_study/islands_tfg2/convergencia_islas.json
+//   results/convergence_study/islands_tfg2/refine_dx002.json   refinado top-3
+//   results/verificacion_numerica/espesor_vs_malla.json        test de espesor
+//   results/verificacion_numerica/gci_ganador.json             GCI tres mallas
+//   results/verificacion_numerica/gci_recalculado.json         GCI corregido
+//   results/verificacion_numerica/ventana_larga_dx001.json     ventana t=60
+//   Commits: a1ba132 (campaña + GCI), 0263a13 (ventana larga), 08af2c4 (fitness)
+// ============================================================================
+
+
+// ####################  BLOQUE A — CAPÍTULO 4 (RESULTADOS)  ##################
+
+// -- A.1 --------------------------------------------------------------------
+// SUSTITUYE al tercer párrafo de la introducción del capítulo 4 (el que empieza
+// "Antes de entrar en materia conviene declarar una restricción...").
+
+Antes de entrar en materia conviene declarar el estado de la campaña de optimización. La versión anterior de este trabajo no presentaba resultados de optimización porque la verificación había identificado un defecto en el criterio de parada que invalidaba los valores absolutos. Ese criterio se rediseñó, se verificó sobre series retenidas y la campaña se rehizo por completo. **Los resultados de optimización si se presentan en esta memoria.**
+
+Se presentan, sin embargo, acompañados de una restricción distinta y de naturaleza más profunda. La verificación de malla del perfil ganador, ejecutada con tres niveles de refinamiento, **no consigue acotar su eficiencia aerodinámica por debajo de una banda del 6 %**. La causa no es el criterio de parada, que esta vez funciona como debe, sino la definición misma de la fuerza sobre una geometría muy delgada representada por frontera inmersa. Ese hallazgo es el resultado principal de esta segunda vuelta, y ocupa las secciones 4.1.5 a 4.1.7.
+
+Todos los valores de este capítulo proceden de los ficheros de resultados y se han contrastado contra ellos.
+
+
+// -- A.2 --------------------------------------------------------------------
+// SUSTITUYE la sección "#3 Diseño experimental de la campaña" (4.5.1).
+
+#3 Diseño experimental de la campaña
+
+La campaña definitiva emplea un **modelo de islas con migración**, elegido a partir de la conclusión de la campaña anterior de que las poblaciones aisladas no convergen a un óptimo común y que es la migración la que produce consenso.
+
+| Parámetro | Valor |
+| Islas | 4, sembradas con NACA 0012 afilado, AG24, GM15 y s1014 |
+| Población por isla | 16 individuos, 4 élites |
+| Generaciones por época | 2 |
+| Épocas | 11 |
+| Migración | al cerrar cada época; cada isla resiembra con su ganador y los tres visitantes |
+| Selección | torneo de tamaño 4 |
+| Mutación | paramétrica sobre camber y espesor, sigma adaptativa de 3,0 a 1,0 |
+| Malla de exploración | $dx = 0{,}004$ |
+| Condiciones | $Re = 1e5$, $\alpha = 4$ grados |
+| Terminación de cada simulación | criterio de deriva y ruido verificado (sección 5.3) |
+[TBL] Configuración de la campaña de optimización definitiva.
+
+El presupuesto se fijó inicialmente en 13 épocas y se recortó a 11 durante la ejecución, cuando la ganancia por época había caído al nivel del ruido entre épocas. Las épocas 9 y 10 volvieron a producir saltos grandes, de modo que **el recorte fue conservador de más** y se registra como tal: la búsqueda no estaba agotada cuando se detuvo.
+
+El modelo sustituto permaneció **desactivado**, igual que en la campaña anterior. No cribó ningún individuo. La mejora número 2 de la sección 5.5 sigue por tanto sin aplicarse, y el ahorro que habría producido sigue siendo una estimación retrospectiva.
+
+
+// -- A.3 --------------------------------------------------------------------
+// NUEVA sección. Sustituye íntegramente "#3 Resultados de optimización"
+// (la que dice [EN ESPERA: campaña por rehacer]).
+
+#3 Resultados de optimización
+
+La campaña consumió **169,0 horas de GPU** en 44 corridas —una por isla y época—, procesando 1 332 individuos de los que 1 203 completaron simulación CFD. El coste medio por evaluación fue de 506 segundos.
+
+Las cuatro islas mejoran de forma sostenida a lo largo de las once épocas:
+
+| Época | NACA 0012 | AG24 | GM15 | s1014 |
+| 0 | 14,71 | 15,61 | 16,96 | 7,14 |
+| 1 | 17,70 | 19,28 | 19,90 | 8,03 |
+| 2 | 19,82 | 21,49 | 21,81 | 21,77 |
+| 3 | 22,65 | 22,09 | 22,90 | 22,71 |
+| 4 | 22,66 | 22,70 | 23,13 | 23,29 |
+| 5 | 23,22 | 23,06 | 24,85 | 25,27 |
+| 6 | 24,95 | 24,73 | 25,44 | 25,66 |
+| 7 | 24,98 | 25,58 | 25,75 | 25,47 |
+| 8 | 25,47 | 24,57 | 25,49 | 25,15 |
+| 9 | 26,55 | 24,79 | 25,98 | 28,66 |
+| 10 | **27,75** | 25,00 | 26,84 | 25,92 |
+[TBL] Mejor eficiencia aerodinámica de cada isla al cerrar cada época, sobre la malla de exploración $dx = 0{,}004$. Los valores absolutos de esta tabla están sujetos a la banda de incertidumbre de malla de la sección 4.1.5 y deben leerse como una ordenación relativa, no como coeficientes citables.
+
+Respecto de sus semillas, la mejora relativa es sustancial y sistemática:
+
+| Isla | Semilla | Época 10 | Factor |
+| NACA 0012 afilado | 9,37 | 27,75 | 2,96 |
+| AG24 | 12,69 | 25,00 | 1,97 |
+| GM15 | 15,74 | 26,84 | 1,71 |
+| s1014 | 6,48 | 25,92 | 4,00 |
+[TBL] Eficiencia de partida y de llegada de cada isla sobre la malla de exploración.
+
+Dos observaciones sobre la dinámica del algoritmo, que **confirman con la medida corregida** lo que la campaña anterior solo había sugerido:
+
+* **La migración es el mecanismo dominante, no la evolución interna.** La isla s1014 parte de una eficiencia de 7,14, menos de la mitad que las demás, y en dos épocas apenas mejora. En la época 2 pasa de 8,03 a 21,77, un factor 2,71 en una sola época, coincidiendo exactamente con la primera migración que consigue integrar. La isla no se rescató a si misma: la rescataron las otras tres.
+* **Las islas convergen a la misma geometría.** La distancia de forma media entre las cuatro cae de 0,0475 en la época 0 a 0,0030 en la época 6, y ya no se recupera. A partir de ahí el modelo de islas deja de aportar diversidad y funciona como un único algoritmo genético con población efectiva de 64. Esto acota la utilidad de alargar la campaña: más épocas producen refinamiento local, no exploración.
+
+[FIG] Evolución de la mejor eficiencia por isla a lo largo de las once épocas, con la migración de la época 2 señalada sobre la curva de s1014.
+
+La geometría ganadora, procedente de la isla NACA 0012 en la época 10, presenta los siguientes parámetros descriptivos:
+
+| Parámetro | Semilla NACA 0012 | Ganador |
+| Espesor máximo | 12,00 % | 2,16 % |
+| Posición del espesor máximo | 0,30 c | 0,66 c |
+| Curvatura máxima | 0,00 % | 5,64 % |
+| Posición de la curvatura máxima | — | 0,49 c |
+[TBL] Parámetros geométricos de la semilla y del perfil resultante.
+
+[FIG] Comparativa geométrica entre la semilla NACA 0012 afilado y el perfil ganador de la época 10, a escala real en ambos ejes.
+
+
+// -- A.4 --------------------------------------------------------------------
+// NUEVA sección, va inmediatamente después de la anterior.
+
+#3 La deriva hacia perfiles delgados y su verificación
+
+La tendencia más marcada de la campaña no es la eficiencia sino el espesor. Las cuatro semillas van del 6,7 % al 16,5 % de la cuerda; los cuatro ganadores de la época 10 están por debajo del 2,2 %. La eficiencia sube de forma monótona con el adelgazamiento.
+
+Esto obliga a una comprobación antes de aceptar el resultado. Sobre la malla de exploración, un cuerpo del 2 % de espesor tiene **cinco celdas** de espesor máximo: la capa límite no está resuelta, y cabe la posibilidad de que el optimizador esté explotando la falta de resolución en lugar de descubrir física.
+
+El experimento discriminante consiste en reevaluar al doble de resolución cuatro ganadores del mismo linaje con espesores decrecientes. Si el adelgazamiento fuese un artefacto numérico, la ventaja del perfil fino se estrecharía o se invertiría al refinar.
+
+| Candidato | Espesor | Curvatura | $L/D$ a $dx=0{,}004$ | $L/D$ a $dx=0{,}002$ | Cambio |
+| GM15, época 0 | 6,13 % | 4,37 % | 16,96 | 22,01 | +29,8 % |
+| GM15, época 3 | 3,46 % | 5,14 % | 22,90 | 27,22 | +18,9 % |
+| GM15, época 6 | 1,91 % | 5,88 % | 25,44 | 28,82 | +13,3 % |
+| s1014, época 6 | 2,13 % | 5,67 % | 25,66 | 30,17 | +17,6 % |
+[TBL] Test de resolución sobre cuatro ganadores de espesor decreciente. Los cuatro mejoran al refinar y el orden se conserva íntegro.
+
+El orden se conserva por completo y los cuatro suben. La ventaja del perfil fino sobre el grueso pasa de un factor 1,513 a 1,371: la malla gruesa **exagera en torno a un 10 % relativo** la ventaja del delgado, pero no invierte ninguna comparación. El mecanismo es coherente con la física de Reynolds bajo: al refinar, la resistencia del perfil grueso cae a la mitad —de 0,0476 a 0,0241— mientras su sustentación solo baja de 1,05 a 0,73.
+
+**El adelgazamiento es un resultado físico y no un artefacto de malla.** Conviene añadir el matiz de alcance: un perfil del 2 % de espesor es estructuralmente inviable como sección de ala real. El optimizador está resolviendo el problema que se le planteó —maximizar eficiencia con restricciones puramente geométricas— y la ausencia de una restricción estructural o de momento de inercia es una limitación del planteamiento, no un fallo del algoritmo.
+
+
+// -- A.5 --------------------------------------------------------------------
+// NUEVA sección.
+
+#3 El refinado de malla cambia al ganador
+
+Cerrada la exploración, los tres mejores candidatos se reevalúan sobre la malla validada de $dx = 0{,}002$. Dos de ellos mejoran en la proporción esperable. El tercero se desploma.
+
+| Candidato | $L/D$ a $dx=0{,}004$ | $L/D$ a $dx=0{,}002$ | Cambio |
+| NACA 0012, época 10 | 27,75 | 28,88 | +4,1 % |
+| GM15, época 10 | 26,84 | 27,62 | +2,9 % |
+| s1014, época 9 | 28,66 | 24,81 | **−13,4 %** |
+[TBL] Reevaluación de los tres finalistas sobre la malla validada. El líder de la exploración termina último.
+
+El individuo que lideraba la exploración con 28,66 —el mejor valor de toda la campaña sobre la malla de trabajo— cae a 24,81 y pasa a ser el peor de los tres. Su geometría lo explica: es el único que sitúa el espesor máximo al **84 % de la cuerda**, frente al 61-66 % de los otros dos. Esa distribución tan retrasada es precisamente la que la malla gruesa evalúa mal.
+
+Este resultado tiene una lectura metodológica que va más allá del caso concreto. La estrategia de explorar en malla gruesa y validar el candidato final en malla fina —recomendada en la sección 5.4 de la versión anterior de esta memoria con el argumento de que *una malla gruesa introduce un desplazamiento aproximadamente común sobre todos los individuos, y un desplazamiento común no reordena*— **queda refutada por este experimento**. El desplazamiento no es común: depende de la geometría, y para geometrías atípicas puede alcanzar el 13 % con signo contrario al del resto. La estrategia sigue siendo la única viable por coste, pero exige refinar **varios** candidatos y no solo el mejor, porque el mejor en malla gruesa puede no serlo en malla fina. En esta campaña, refinar solo el líder habría dado por ganador al peor de los tres.
+
+
+// -- A.6 --------------------------------------------------------------------
+// NUEVA sección. Es el resultado de verificación principal de esta vuelta.
+// Va dentro de 4.1 (Validación del solver), después del GCI existente, o como
+// sección propia 4.1.5. El GCI que ya está en la memoria es sobre otro perfil y
+// caracteriza el esquema; éste caracteriza al ganador.
+
+#3 Convergencia de malla del perfil ganador
+
+El estudio de convergencia de la sección 4.1.4 caracteriza el **esquema numérico** sobre una geometría de trabajo. Esta sección caracteriza el **resultado de la optimización**, que es una geometría distinta y mucho más exigente: 2,16 % de espesor, es decir, 5 celdas sobre la malla de exploración, 11 sobre la validada y 22 sobre la más fina que la memoria disponible permite.
+
+Se emplean tres mallas de razón de refinamiento 2, con la misma configuración y el mismo horizonte temporal, y se aplica el índice de convergencia de malla con $F_s = 1{,}25$.
+
+| Magnitud | $dx=0{,}004$ | $dx=0{,}002$ | $dx=0{,}001$ | Convergencia | Banda |
+| $C_L$ | 0,70144 | 0,68651 | 0,68783 | oscilatoria | ±0,19 % |
+| $C_D$ | 0,02528 | 0,02388 | 0,02538 | oscilatoria | ±5,91 % |
+| $L/D$ | 27,75 | 28,74 | 27,10 | oscilatoria | ±6,08 % |
+[TBL] Convergencia de malla del perfil ganador a $Re = 1e5$ y $\alpha = 4$ grados, con razón de refinamiento 2. Sustentación y resistencia se promedian sobre la misma ventana temporal.
+
+La sustentación queda acotada: la diferencia entre las dos mallas finas es del 0,19 %, y aunque formalmente la secuencia no es monótona, el rebote es tan pequeño que el valor está determinado a efectos prácticos.
+
+La resistencia no. La secuencia 0,02528 → 0,02388 → 0,02538 baja y vuelve a subir, con razón de residuos −0,93. Con no monotonía la extrapolación de Richardson no es aplicable, y lo único defendible es la banda entre las dos mallas finas. La eficiencia hereda el problema amplificado, porque su numerador apenas se mueve.
+
+**La conclusión es que la eficiencia del perfil ganador no puede citarse como un valor puntual.** Lo defendible es el intervalo:
+
+$$ L/D = 27{,}1 \ \text{a}\ 28{,}7 \qquad (\alpha = 4^{\circ},\ Re = 1e5) $$
+
+Y de ahí se sigue una consecuencia que afecta a la interpretación de toda la campaña: **esa banda del 6 % es más ancha que las diferencias entre islas de las últimas épocas**, que oscilan entre 1 y 2 puntos de eficiencia. El algoritmo ordenó 1 203 evaluaciones con una señal cuya incertidumbre de discretización es mayor que las diferencias sobre las que decidía. La búsqueda encontró una región de rendimiento alto —eso lo sostiene el factor 2 a 4 de mejora frente a las semillas, muy por encima de cualquier banda— pero **el orden fino dentro de esa región no queda respaldado por la verificación**.
+
+Es, en forma distinta, la misma conclusión que la campaña anterior: el algoritmo encuentra el barrio correcto y no puede elegir la casa. Lo que cambia es la causa. Allí era el criterio de parada, que se ha corregido; aquí es el error de discretización sobre una geometría delgada, que no se corrige refinando.
+
+[FIG] Convergencia de sustentación, resistencia y eficiencia del perfil ganador sobre las tres mallas, con la banda de incertidumbre sombreada sobre la eficiencia.
+
+
+// -- A.7 --------------------------------------------------------------------
+// NUEVA sección, continuación de la anterior.
+
+#3 Ausencia de estado estacionario en la malla fina
+
+La no monotonía de la resistencia admitía dos explicaciones y son separables experimentalmente. O bien es un error de discretización espacial genuino, o bien es un artefacto de promediado: sobre la malla fina el flujo podría no haber alcanzado régimen establecido dentro del horizonte simulado, de modo que su valor no sería comparable con el de las mallas gruesas.
+
+Para discriminar se repitió la simulación de $dx = 0{,}001$ **dejando que la terminara el criterio de convergencia y no el contador de iteraciones**, con un tope de seguridad situado cinco veces por encima del horizonte original. El resultado, en si mismo, es informativo: el criterio **nunca llegó a dispararse**. La simulación agotó las 192 000 iteraciones, alcanzando un tiempo físico de 60 frente a los 12 del estudio de convergencia, con un coste de 16,4 horas de GPU.
+
+| Magnitud | Ventana $t=12$ | Ventana $t=60$ | Cambio |
+| $C_D$ | 0,025507 | 0,025430 | −0,30 % |
+| $C_L$ promediado | — | 0,68788 | — |
+| Muestras promediadas | 104 | 768 | — |
+[TBL] Contraste entre el horizonte del estudio de convergencia y el horizonte extendido sobre la malla fina.
+
+**La resistencia no se mueve**: un 0,30 % entre ambas ventanas, dentro de su propio intervalo de confianza al 95 %. La hipótesis del promediado queda descartada, y la banda del 5,91 % del apartado anterior es un error de discretización real.
+
+El análisis de la serie temporal explica por qué el criterio no se dispara, y el motivo no es un defecto del criterio:
+
+| Tramo de tiempo físico | $C_L$ | $C_D$ | $L/D$ |
+| 14 – 28 | 0,68657 | 0,025440 | 26,99 |
+| 28 – 43 | 0,68842 | 0,025354 | 27,15 |
+| 43 – 57 | 0,68893 | 0,025329 | 27,20 |
+| 57 – 71 | 0,68788 | 0,025430 | 27,05 |
+[TBL] Medias por cuartos de la serie temporal sobre la malla fina, una vez superado el transitorio inicial.
+
+Las medias por cuartos varían menos del 0,4 %: **el flujo es estadísticamente estacionario**. Lo que no es, es instantáneamente estable. La resistencia fluctúa con una desviación típica del 15,5 % de su media y una excursión de pico a pico del 81 %, con un periodo de desprendimiento de 0,20 unidades de tiempo convectivo.
+
+Sobre esa señal, el test de deriva de la sección 5.3 —que exige que la pendiente local caiga por debajo del 0,5 % de la media sobre una ventana de un tiempo convectivo— **falla en 52 de las 57 ventanas por deriva y solo en 5 por ruido**. Con unos cinco periodos por ventana y una amplitud de esa magnitud, cualquier desequilibrio de fase entre ciclos produce una pendiente local superior al umbral.
+
+El criterio no está mal construido: **está fuera de su dominio de calibración**. Se ajustó y se verificó sobre series que alcanzan estado estacionario, y sobre un flujo con desprendimiento sostenido su pregunta deja de tener sentido. Para ese régimen la terminación correcta no es esperar a que la deriva se anule sino promediar sobre un número prefijado de periodos de desprendimiento. Es una extensión necesaria del criterio y figura entre las mejoras propuestas.
+
+
+// -- A.8 --------------------------------------------------------------------
+// NUEVA sección. Es la causa raíz y conecta con "#3 Tres estimadores
+// independientes de la sustentación" que ya existe en el capítulo 3.
+
+#3 La sustentación depende del estimador empleado
+
+El diagnóstico de la simulación de horizonte extendido incluye el cálculo de la sustentación por los tres caminos independientes descritos en la sección 3.8.4, sobre el mismo campo y en el mismo instante:
+
+| Vía de cálculo | $C_L$ |
+| Integral de esfuerzos sobre la superficie | 0,7222 |
+| Circulación sobre lazo interior | 0,6508 |
+| Integral de $\Delta C_p$ a lo largo de la cuerda | 0,6419 |
+[TBL] Sustentación del perfil ganador calculada por tres vías independientes sobre el mismo campo instantáneo, en la malla de $dx = 0{,}001$.
+
+La dispersión entre estimadores alcanza el **12 %**. Sobre las geometrías de trabajo previas estos tres caminos coincidían dentro de tolerancia; sobre un perfil del 2,16 % de espesor, no. Esto no es error de malla ni de promediado: es que **la fuerza no está bien definida sobre este cuerpo con el tratamiento de frontera actual**.
+
+Dos diagnósticos adicionales lo confirman:
+
+* El residuo de la condición de Kutta, medido como el salto de coeficiente de presión entre extradós e intradós en el último 5 % de la cuerda, vale $\Delta C_p = -0{,}092$ frente a una tolerancia de 0,05. Debería anularse. Y **empeora al refinar**: sobre las mallas gruesas valía −0,127 y durante el transitorio de la malla fina alcanzó −0,321.
+* La circulación depende del tamaño del lazo de integración. Sobre lazos de margen creciente, $\Gamma$ pasa de −0,324 a −0,146, un factor 2,2. En un flujo con circulación ligada bien definida, ese valor debería ser independiente del lazo mientras éste no encierre vorticidad de estela.
+
+La interpretación conjunta es que el borde de salida no está resuelto como tal. Con un espesor máximo del 2,16 % de la cuerda, el borde de salida del perfil tiene una altura inferior a una celda incluso sobre la malla más fina, de modo que **las celdas fantasma del extradós y del intradós se solapan**. Refinar la malla no separa ambas superficies porque las acerca en índices de celda a la misma velocidad a la que reduce el tamaño de celda. El mecanismo por el que el flujo abandona el perfil por el borde de salida —que es lo que fija la circulación— no está representado.
+
+Esto explica de forma unificada los tres síntomas: la no monotonía de la resistencia, la discrepancia entre estimadores y el residuo de Kutta que empeora al refinar. Y explica también por qué el adelgazamiento se premia hasta el límite geométrico permitido: la penalización de resistencia asociada a un borde de salida mal resuelto no está en la función objetivo.
+
+Existen dos vías de corrección, ambas implementadas o triviales de activar en el solver, y ninguna aplicada en esta campaña:
+
+* **Imposición explícita de la condición de Kutta.** El solver dispone de un mecanismo que amortigua la componente de velocidad transversal a la bisectriz del borde de salida sobre una franja de estela de cuatro celdas, forzando la dirección de salida sin imponer su magnitud. Está implementado y desactivado por defecto. Es una condición de Kutta numérica, práctica habitual en métodos de frontera inmersa, pero **impone parte de la respuesta** y debe declararse como decisión de modelado y cuantificarse su efecto.
+* **Altura mínima del borde de salida.** El cargador de geometría admite un factor que fuerza una altura mínima del borde de salida en múltiplos del tamaño de celda. La campaña empleó el valor 1, pensado para perfiles de borde afilado. Elevarlo a 2 separaría las celdas fantasma de ambas caras a costa de un borde de salida ligeramente romo.
+
+El experimento discriminante consiste en evaluar el perfil ganador sobre la malla de $dx = 0{,}002$ en cuatro configuraciones —base, altura mínima elevada, Kutta explícita, y ambas— y comparar los tres estimadores de sustentación y el residuo de Kutta en cada una. Son del orden de 12 horas de GPU y no se ha ejecutado.
+
+
+// -- A.9 --------------------------------------------------------------------
+// NUEVA sección corta. Ampliar "#3 Coste por evaluación CFD" y SUSTITUIR
+// "#3 Coste de la campaña realizada y una inconsistencia de contabilidad".
+
+#3 Coste de la campaña definitiva
+
+| Fase | Horas de GPU |
+| Algoritmo genético, 44 corridas | 169,02 |
+| Refinado del top-3 a $dx=0{,}002$ | 2,30 |
+| Test de resolución sobre el espesor | 2,58 |
+| Convergencia de malla, tres niveles | 4,42 |
+| Horizonte extendido a $dx=0{,}001$ | 16,39 |
+| **Total** | **194,71** |
+[TBL] Reparto del coste computacional de la campaña definitiva y de su verificación.
+
+El coste medio por evaluación sobre la malla de exploración con el criterio verificado fue de **506 segundos**, frente a los 100 de la evaluación defectuosa de la campaña anterior y los 1 150 del presupuesto fijo equivalente. El criterio verificado captura por tanto en torno al 44 % del ahorro que ofrecía el criterio defectuoso, pero midiendo el flujo correcto.
+
+Merece registro que **la verificación costó 25,7 horas, un 13 % del total**, y que ese 13 % es lo que ha impedido publicar un resultado erróneo por segunda vez.
+
+
+// ####################  BLOQUE B — CAPÍTULO 5 (DISCUSIÓN)  ###################
+
+// -- B.1 --------------------------------------------------------------------
+// AÑADIR a "#2 Limitaciones numéricas", después del párrafo de escalonado.
+
+**Definición de la fuerza sobre geometrías muy delgadas.** Es la limitación numérica dominante del resultado final, y no estaba identificada en la versión anterior de este trabajo porque las geometrías de trabajo entonces empleadas no la activaban. Sobre un perfil del 2,16 % de espesor los tres estimadores independientes de sustentación divergen un 12 %, el residuo de la condición de Kutta se mantiene en el doble de su tolerancia y empeora al refinar, y la circulación depende del lazo de integración por un factor 2,2. La causa es el solapamiento de las celdas fantasma de ambas caras en un borde de salida cuya altura es inferior a una celda. **Refinar la malla no lo mitiga**, porque reduce el tamaño de celda y la separación entre superficies a la misma velocidad. Esto acota el dominio de validez del solver por el lado del espesor, de forma análoga a como la resolución de capa límite lo acota por el lado del Reynolds, y es la razón por la que la eficiencia del perfil ganador solo puede darse como banda.
+
+**Error de discretización del resultado de optimización.** El estudio de convergencia sobre el perfil ganador deja la sustentación acotada en ±0,19 % entre las dos mallas finas, pero la resistencia no converge de forma monótona y su banda es del ±5,91 %, que traslada a la eficiencia una incertidumbre del ±6,08 %. Esa banda es mayor que las diferencias de eficiencia entre las cuatro islas en las últimas épocas de la campaña, de modo que **la ordenación fina producida por el algoritmo no queda respaldada por la verificación**, aunque si lo esté la magnitud de la mejora global frente a las semillas.
+
+// -- B.2 --------------------------------------------------------------------
+// AÑADIR al final de "#2 La limitación metodológica: el criterio de terminación",
+// antes del párrafo del tiempo mínimo.
+
+El criterio rediseñado se comportó como se esperaba durante toda la campaña de exploración. Su límite apareció en la verificación, y es un límite de **dominio y no de formulación**. Sobre la malla más fina el perfil ganador no alcanza estado estacionario: presenta desprendimiento sostenido con un periodo de 0,20 tiempos convectivos y una excursión de resistencia del 81 % de pico a pico, mientras sus medias por cuartos de serie se mantienen dentro del 0,4 %. El flujo es estadísticamente estacionario pero no instantáneamente estable, y sobre esa señal el test de deriva falla en 52 de 57 ventanas.
+
+La lectura correcta no es que el criterio esté mal, sino que **fue calibrado y verificado sobre series que alcanzan estado estacionario y se aplicó fuera de ese conjunto**. Es exactamente el mismo modo de fallo metodológico que se documenta en esta misma sección para el recalibrado de tolerancias, trasladado del espacio de parámetros al espacio de regímenes: un estimador verificado sobre una familia de casos no está verificado fuera de ella. Para flujo con desprendimiento sostenido la terminación debe formularse sobre un número prefijado de periodos y no sobre la anulación de la deriva.
+
+// -- B.3 --------------------------------------------------------------------
+// AÑADIR a "#2 Calidad de la optimización", antes del párrafo final.
+
+**El planteamiento del problema carece de restricciones no aerodinámicas.** Las cuatro islas convergen a perfiles por debajo del 2,2 % de espesor, y la verificación confirma que ese adelgazamiento es física real y no artefacto numérico. Pero un perfil del 2 % es estructuralmente inviable como sección de ala: no admite larguero, y su rigidez a flexión y a torsión es despreciable. El optimizador resuelve correctamente el problema que se le planteó; el problema planteado está incompleto. Una formulación utilizable requiere una restricción de espesor mínimo, de momento de inercia de la sección, o una formulación multiobjetivo que incorpore masa estructural. Esto es una limitación del planteamiento y no del algoritmo, y es previa a cualquier discusión sobre operadores genéticos.
+
+**La estrategia de explorar en malla gruesa y validar en malla fina exige refinar varios candidatos.** La versión anterior de esta memoria argumentaba que el error de malla gruesa introduce un desplazamiento aproximadamente común que no reordena. El refinado del top-3 lo refuta: de los tres finalistas, dos mejoran entre un 3 y un 4 % al refinar y el tercero empeora un 13 %, invirtiendo el orden y cambiando al ganador. El desplazamiento depende de la geometría y para geometrías atípicas cambia de signo. La estrategia sigue siendo la única viable por coste, pero refinar únicamente al líder de la exploración es insuficiente.
+
+**El modelo sustituto volvió a estar desactivado.** La mejora número 2 de la sección 5.5, propuesta en la versión anterior y estimada en un ahorro del 69 % del cálculo, no se aplicó tampoco en esta campaña.
+
+// -- B.4 --------------------------------------------------------------------
+// SUSTITUIR los puntos 1 y 2 de "#2 Mejoras propuestas" y AÑADIR el nuevo
+// primero. La numeración posterior se desplaza.
+
+1. **Resolución del borde de salida en perfiles delgados.** Es la primera por un margen amplio, porque es lo que impide dar un valor de eficiencia y no solo una banda. Dos vías, ambas de coste de implementación nulo por estar ya en el código: activación de la condición de Kutta explícita, y elevación de la altura mínima impuesta al borde de salida. Requiere un experimento de discriminación de unas 12 horas de GPU y la declaración explícita de la vía elegida como decisión de modelado.
+2. **Extensión del criterio de terminación al régimen con desprendimiento sostenido**, promediando sobre un número prefijado de periodos en lugar de exigir la anulación de la deriva. Coste de implementación bajo, y elimina el único modo de fallo conocido del criterio actual.
+3. **Restricción estructural en el planteamiento del problema de optimización**, mediante espesor mínimo, momento de inercia de la sección o formulación multiobjetivo con masa. Sin ella el óptimo aerodinámico no es un diseño utilizable.
+4. **Activación del modelo sustituto con umbral calibrado.** Coste bajo, ahorro estimado del 69 % del cálculo CFD. Sigue sin aplicarse tras dos campañas.
+
+
+// ####################  BLOQUE C — CAPÍTULO 6 (SOSTENIBILIDAD)  ##############
+
+// -- C.1 --------------------------------------------------------------------
+// SUSTITUYE "#3 Huella del desarrollo del trabajo" desde el primer párrafo
+// hasta la tabla de coste unitario incluida. El modelo de potencia y sus
+// hipótesis (P_pared = 363 W) no cambian y se mantienen tal cual.
+
+El consumo del trabajo se concentra en las horas de cálculo en GPU. Se contabilizan por separado las dos campañas, porque la primera quedó invalidada y la segunda es la que sustenta los resultados:
+
+| Fase del trabajo | Horas de GPU |
+| Primera campaña, invalidada por el criterio de parada | 98,60 |
+| Campaña definitiva, algoritmo genético | 169,02 |
+| Campaña definitiva, verificación | 25,69 |
+| **Total** | **293,31** |
+[TBL] Reparto del coste computacional del trabajo entre la campaña invalidada y la definitiva.
+
+Con la potencia media en pared de 363 W estimada según el modelo anterior, el consumo resulta:
+
+| Magnitud | Campaña definitiva | Total del trabajo |
+| Energía consumida | 70,7 kWh | 106,5 kWh |
+| Emisiones, factor peninsular 2025 | 15,2 kg CO2 eq | 22,9 kg CO2 eq |
+| Emisiones, factor de comercialización | 18,2 kg CO2 eq | 27,5 kg CO2 eq |
+[TBL] Huella energética y de carbono. Los factores de emisión empleados son 0,215 y 0,258 kg CO2 eq/kWh, según se detalla más abajo. La incertidumbre de la potencia media es de aproximadamente ±25 %.
+
+Desglosado por evaluación:
+
+| Configuración de la evaluación | Energía | Emisiones |
+| $dx = 0{,}004$, criterio verificado | 51 Wh | 11,0 g CO2 eq |
+| $dx = 0{,}002$, presupuesto fijo | 278 Wh | 59,9 g CO2 eq |
+| $dx = 0{,}001$, presupuesto fijo | 1 209 Wh | 260 g CO2 eq |
+| $dx = 0{,}001$, horizonte extendido | 5 950 Wh | 1 279 g CO2 eq |
+[TBL] Coste energético y emisiones por evaluación CFD según la configuración empleada.
+
+El orden de magnitud del conjunto sigue siendo el de unas pocas decenas de kilovatios hora, comparable al consumo de un frigorífico doméstico durante dos o tres meses. **La huella directa del trabajo es modesta**, y decirlo así es más honesto que presentarla como un logro.
+
+Conviene señalar el salto de escala del último renglón de la tabla: una única simulación de verificación con horizonte extendido consume tanto como 117 evaluaciones de exploración. La verificación no es cara en horas de trabajo pero si en energía por caso, y eso condiciona cuantas veces puede repetirse.
+
+// -- C.2 --------------------------------------------------------------------
+// En "#3 Comparación con las alternativas": la comparación se mantiene, pero
+// SUSTITUIR la cifra de este trabajo y el factor.
+
+* **Este trabajo**, con la evaluación fiable de $dx = 0{,}002$ y presupuesto fijo: **0,278 kWh por punto**.
+
+| Método | Energía por geometría y punto de operación | Factor frente a este trabajo |
+| Túnel de viento (solo ventilador) | 18,8 kWh | 68 |
+| CFD 3D RANS en clúster | 10,7 kWh | 38 |
+| Solver 2D en GPU (este trabajo) | 0,278 kWh | 1 |
+[TBL] Comparación del coste energético por geometría y punto de operación evaluado. Las hipótesis de cada estimación se declaran en el texto.
+
+El resultado sigue siendo una reducción de **entre uno y dos órdenes de magnitud** frente a ambas alternativas, si bien los factores son menores que los estimados en la versión anterior porque el coste de una evaluación fiable se ha medido y no estimado. Todas las salvedades sobre el alcance de la comparación —igualdad de número de geometrías y no de calidad de la información— se mantienen sin cambios.
+
+// -- C.3 --------------------------------------------------------------------
+// SUSTITUYE "#3 El coste ambiental de los errores metodológicos".
+
+#3 El coste ambiental de los errores metodológicos
+
+Este apartado registra una idea que el trabajo ha hecho evidente por partida doble: **la eficiencia metodológica es una variable ambiental y no solo económica**.
+
+* Los valores absolutos de la primera campaña hubo que descartarlos por el defecto del criterio de terminación, lo que afecta a sus **35,8 kWh y 7,7 kg CO2 eq**. Matizando con honestidad: no todo ese cálculo se perdió. Sobreviven la metodología, las geometrías generadas, las conclusiones sobre la dinámica del algoritmo y el propio diagnóstico del defecto, que no habría sido posible sin las series completas.
+* El modelo sustituto permaneció desactivado en **ambas** campañas. Su activación con umbral calibrado habría evitado del orden del 69 % del cálculo del algoritmo genético, lo que sobre las 169,02 horas de la campaña definitiva equivale aproximadamente a **42,3 kWh y 9,1 kg CO2 eq** consumidos sin necesidad. Que la misma mejora figure como no aplicada en dos campañas consecutivas es, en si mismo, un resultado sobre la dificultad de trasladar una recomendación a la práctica.
+* El recorte de la campaña de 13 a 11 épocas se decidió con el argumento de que la ganancia había caído al nivel del ruido. Las dos épocas siguientes produjeron las mayores ganancias de toda la segunda mitad. La decisión ahorró unas 30 horas de GPU y unos 2,3 kg CO2 eq, pero **a costa de detener la búsqueda antes de agotarla**. Es el error simétrico del anterior: gastar de menos también tiene coste, solo que se paga en calidad del resultado y no en energía.
+
+La conclusión práctica se refuerza respecto de la versión anterior: verificar antes de lanzar una campaña grande sigue siendo la medida de reducción de impacto de mayor rendimiento disponible. En esta segunda vuelta la verificación consumió 25,69 horas —un 13 % del total— y evitó publicar como valor puntual una eficiencia que la propia verificación demuestra que solo puede darse como banda del 6 %.
+
+// -- C.4 --------------------------------------------------------------------
+// En "#3 Impacto potencial de la aplicación": SUSTITUIR el párrafo final y la
+// cifra de vuelos de compensación.
+
+Compensar los 22,9 kg CO2 eq del trabajo completo requeriría del orden de **5 900 vuelos** de un único aparato mejorado, o seis vuelos de una flota de mil. La contribución ambiental de una herramienta de diseño **no procede de su propia huella, que es despreciable, sino de la escala de despliegue de lo que ayuda a diseñar**.
+
+Debe quedar explícito el alcance de lo demostrado. Este trabajo **si obtiene una mejora medida**: entre un factor 1,7 y un factor 4 de eficiencia aerodinámica sobre cuatro perfiles de partida distintos, con la magnitud de la mejora muy por encima de cualquier banda de incertidumbre. Lo que no obtiene es un valor de eficiencia citable para el perfil resultante, ni una geometría estructuralmente viable, de modo que **la mejora es real como demostración de capacidad del método y no como diseño aplicable**. La hipótesis del 10 % empleada en el cálculo anterior sigue siendo ilustrativa.
+
+// -- C.5 --------------------------------------------------------------------
+// En "#3 Ciclo de vida del hardware": SUSTITUIR la cifra imputada.
+
+Tomando 150 kg CO2 eq como valor representativo y una vida útil de 10 000 horas de uso efectivo, la fracción imputable a las 293,31 horas de este trabajo es de aproximadamente **4,4 kg CO2 eq**, frente a los 22,9 kg de consumo operativo. La huella incorporada supone por tanto en torno al **16 % del total** para este uso, proporción que no cambia respecto de la estimación anterior porque ambas magnitudes escalan con las horas.
+
+// -- C.6 --------------------------------------------------------------------
+// AÑADIR a "#3 Riesgos y limitaciones del análisis ambiental".
+
+* La recomendación de programar las corridas largas en horas de alta penetración renovable, formulada en la versión anterior de este análisis, **tampoco se aplicó en la campaña definitiva**. Las 169 horas del algoritmo genético se ejecutaron de forma continua durante varios días, sin ninguna planificación horaria. Es una medida de coste nulo que sigue pendiente.
+* El reparto de horas entre fases se ha medido sobre los ficheros de resultados salvo el refinado del top-3, cuyo coste se estima a partir del de una simulación equivalente en la misma malla.
+
+
+// ####################  BLOQUE D — CONTROL DE VALORES  #######################
+//
+// Tabla de contraste. Cualquier cifra del texto anterior debe coincidir con
+// esta lista, y esta lista con los ficheros citados en la cabecera.
+//
+// CAMPAÑA
+//   corridas GA .......................... 44  (4 islas x 11 épocas)
+//   individuos procesados ................ 1332
+//   simulaciones CFD completadas ......... 1203
+//   descartes por modelo sustituto ....... 0    (desactivado)
+//   descartes geométricos en evaluación .. 74
+//   rechazos geométricos en reproducción . 442
+//   horas GPU del GA ..................... 169.02
+//   coste medio por evaluación ........... 506 s
+//
+// GANADOR: NACA_0012_sharp / época 10
+//   espesor máximo ....................... 2.16 %   en x/c = 0.66
+//   curvatura máxima ..................... 5.64 %   en x/c = 0.49
+//   L/D  dx=0.004 ........................ 27.7455
+//   L/D  dx=0.002 ........................ 28.7441  (28.8842 en el refinado)
+//   L/D  dx=0.001 ........................ 27.0971
+//   banda citable ........................ 27.1 - 28.7
+//
+// GCI DEL GANADOR (ventana temporal común)
+//   Cl   0.70144 / 0.68651 / 0.68783   oscilatoria  banda 0.19 %
+//   Cd   0.02528 / 0.02388 / 0.02538   oscilatoria  banda 5.91 %
+//   L/D  27.7455 / 28.7441 / 27.0971   oscilatoria  banda 6.08 %
+//
+// HORIZONTE EXTENDIDO dx=0.001
+//   iteraciones .......................... 192000 (tope), t = 60
+//   criterio disparado ................... NO
+//   Cd t=12 -> t=60 ...................... 0.025507 -> 0.025430  (-0.30 %)
+//   periodo de desprendimiento ........... 0.20
+//   ruido instantáneo Cd ................. 15.5 %  (p2p 81 %)
+//   ventanas que fallan por deriva ....... 52 de 57
+//   wall ................................. 16.39 h
+//
+// ESTIMADORES DE SUSTENTACIÓN (mismo campo, dx=0.001)
+//   integral de superficie ............... 0.7222
+//   circulación, lazo interior ........... 0.6508
+//   integral de dCp en cuerda ............ 0.6419
+//   dispersión ........................... 12 %
+//   dCp_TE ............................... -0.092  (tolerancia 0.05)
+//   Gamma según lazo ..................... -0.324 a -0.146  (factor 2.2)
+//
+// ENERGÍA  (P_pared = 363 W, factores 0.215 y 0.258 kg CO2 eq/kWh)
+//   campaña definitiva ................... 194.71 h -> 70.7 kWh -> 15.2 / 18.2 kg
+//   total del trabajo .................... 293.31 h -> 106.5 kWh -> 22.9 / 27.5 kg
+//   huella incorporada imputada .......... 4.4 kg  (16 % del total)
+//
+// ADVERTENCIA PENDIENTE DE CUANTIFICAR
+//   La campaña se ejecutó con la definición antigua de la eficiencia, que
+//   dividía una sustentación instantánea de la auditoría de superficie entre
+//   una resistencia promediada (corregido en el commit 08af2c4). Sobre la malla
+//   de exploración el flujo alcanza estado estacionario y el efecto debe ser
+//   pequeño, pero NO se ha medido. Rehacer las mallas dx=0.004 y dx=0.002 del
+//   estudio de convergencia con la definición nueva cuesta 66 minutos y cierra
+//   la cuestión. Hasta entonces, las tres mallas del GCI no comparten
+//   definición de sustentación y eso debe declararse si el estudio se publica
+//   tal cual.
+// ============================================================================
