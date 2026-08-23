@@ -1378,6 +1378,25 @@ def simular_perfil(filepath_temp, alpha_deg, config):
                 guardado=int(getattr(mesh_gruesa, 'guardado', 50)),
             )
 
+        # Campo final (u, v, p, máscara sólida y los ejes 1D de la malla estirada).
+        # Es el estado en el instante de parada, sea por convergencia o por contador.
+        campo = config.get('dump_field_path')
+        if campo:
+            os.makedirs(os.path.dirname(campo) or '.', exist_ok=True)
+            np.savez_compressed(
+                campo,
+                x=cp.asnumpy(mesh_gruesa.X_1d),
+                y=cp.asnumpy(mesh_gruesa.Y_1d),
+                u=cp.asnumpy(mesh_gruesa.u),
+                v=cp.asnumpy(mesh_gruesa.v),
+                p=cp.asnumpy(mesh_gruesa.p),
+                solid=cp.asnumpy(mesh_gruesa.solid),
+                Lx=float(mesh_gruesa.Lx),
+                Ly=float(mesh_gruesa.Ly),
+                alpha_deg=float(alpha_deg),
+                iters=int(n_datos * int(sim_params.get('guardado', 50))),
+            )
+
         cl_ci95 = 1.96 * cl_std / np.sqrt(max(1, len(cd_arr)))
         cd_ci95 = 1.96 * cd_std / np.sqrt(max(1, len(cd_arr)))
 

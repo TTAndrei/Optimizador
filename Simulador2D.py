@@ -7096,39 +7096,112 @@ def _guardar_punto_polar(polar_data, mesh, mu, rho, U_inf, chord,
     })
 
 
-def _detect_series_convergence(t_arr, serie, tol_drift=0.005, tol_noise=0.05,
+def _n_efectivo(x):
+    """Muestras independientes que hay realmente en x.
+
+    Con desprendimiento las muestras de una ventana estan correlacionadas: el
+    CI95 ingenuo (sigma/sqrt(N)) se cree N muestras cuando tiene unos pocos
+    ciclos. Se corrige por el tiempo de autocorrelacion integrado, truncando en
+    la primera autocorrelacion no positiva (secuencia positiva inicial).
+    """
+    n = len(x)
+    d = x - x.mean()
+    c0 = float(np.dot(d, d)) / n
+    if c0 <= 0:
+        return 1.0
+    tau = 1.0
+    for k in range(1, n // 2):
+        rk = float(np.dot(d[:-k], d[k:])) / (n * c0)
+        if rk <= 0:
+            break
+        tau += 2.0 * rk
+    return max(1.0, n / tau)
+
+
+def _n_efectivo(x):
+    """Muestras independientes que hay realmente en x.
+
+    Con desprendimiento las muestras de una ventana estan correlacionadas: el
+    CI95 ingenuo (sigma/sqrt(N)) se cree N muestras cuando tiene unos pocos
+    ciclos. Se corrige por el tiempo de autocorrelacion integrado, truncando en
+    la primera autocorrelacion no positiva (secuencia positiva inicial).
+    """
+    n = len(x)
+    d = x - x.mean()
+    c0 = float(np.dot(d, d)) / n
+    if c0 <= 0:
+        return 1.0
+    tau = 1.0
+    for k in range(1, n // 2):
+        rk = float(np.dot(d[:-k], d[k:])) / (n * c0)
+        if rk <= 0:
+            break
+        tau += 2.0 * rk
+    return max(1.0, n / tau)
+
+
+def _detect_series_convergence(t_arr, serie, tol_drift=0.005, tol_ci95=0.03,
                                window_conv_time=1.0):
     """
-    ¿Ha dejado de cambiar la serie? Mide la *tendencia* en una ventana móvil.
+    ¿Ha dejado de cambiar la *media* de la serie? Dos condiciones sobre una
+    ventana movil que se ensancha sola:
 
-    El criterio anterior comparaba la señal con la media de su propio último 15%:
-    preguntaba "¿me parezco a mí mismo hace poco?", no "¿he dejado de cambiar?".
-    Una deriva lenta y monótona lo satisface siempre, y por eso paraba en t≈1-2
-    midiendo flujo no desarrollado, con errores de hasta el 47%. Recalibrar sus
-    tolerancias tampoco bastó (ver docs/verificacion_numerica.md §2.1).
+      ci95  = 1.96*sigma / sqrt(N_ef) / |media|    incertidumbre de la media
+      drift = |pendiente| / |media|                cambio relativo por tiempo convectivo
 
-      drift = |pendiente| / |media|   cambio relativo por tiempo convectivo
-      noise = std / |media|           dispersión dentro de la ventana
+    Se parte de `window_conv_time` y se dobla la ventana hasta que el CI95 baja
+    del umbral o hasta agotar la serie; el drift se evalua sobre esa ventana.
+    Ensanchar de mas no cuela un transitorio como convergido: un transitorio
+    tiene pendiente, y el drift lo caza.
 
-    Ajustado por validación cruzada sobre 20 series completas y verificado sobre 5
-    que no intervinieron en ninguna decisión: error máximo 1.14%.
+    Historia de las versiones anteriores, porque las tres fallaban por medir la
+    cosa equivocada y conviene no repetirlo:
 
-    Devuelve (drift, converged).
+      1. Comparar la senal con la media de su propio ultimo 15% preguntaba "me
+         parezco a mi mismo hace poco?", no "he dejado de cambiar?". Una deriva
+         lenta y monotona lo satisface siempre: paraba en t~1-2 con errores de
+         hasta el 47%.
+      2. drift + ruido crudo (sigma/|media| < 0.05) arreglo eso en flujo
+         estacionario y volvio el criterio inaplicable con desprendimiento:
+         sigma/|media| mide la amplitud de una oscilacion fisica y permanente,
+         no la incertidumbre del promedio. En el ganador a dx=0.001 vale 8.9%
+         con ventana 1 y *empeora* a 11.7% al ensancharla. Con umbral 0.05 no
+         abrio en 192000 iteraciones (t=71) mientras el drift ya pasaba.
+      3. Ventana atada al periodo de desprendimiento: a dx=0.001 la estela no es
+         periodica limpia (el pico de autocorrelacion no llega a 0.2), asi que
+         no hay periodo que medir y la ventana no se ensanchaba nunca.
+
+    Ensanchar hasta que el CI95 baje no necesita que la senal sea periodica:
+    vale igual para un ciclo limite y para una estela de banda ancha, y no
+    introduce ningun parametro nuevo.
+
+    Devuelve (drift, ci95, converged).
     """
     t = np.asarray(t_arr, dtype=float)
     s = np.asarray(serie, dtype=float)
+    nan = float("nan")
     if len(s) < 10 or not np.all(np.isfinite(s)) or not np.all(np.isfinite(t)):
-        return float("nan"), False
-    w = t >= (t[-1] - window_conv_time)
-    if w.sum() < 8:
-        return float("nan"), False
-    tw, sw = t[w], s[w]
-    media = float(np.mean(sw))
-    if abs(media) < 1e-9:
-        return float("nan"), False
-    drift = abs(float(np.polyfit(tw, sw, 1)[0])) / abs(media)
-    noise = float(np.std(sw)) / abs(media)
-    return drift, bool(drift < tol_drift and noise < tol_noise)
+        return nan, nan, False
+    span = float(t[-1] - t[0])
+    ventana = float(window_conv_time)
+    drift = ci95 = nan
+    while True:
+        w = t >= (t[-1] - ventana)
+        if w.sum() >= 8:
+            tw, sw = t[w], s[w]
+            media = float(np.mean(sw))
+            if abs(media) < 1e-9:
+                return nan, nan, False
+            ci95 = 1.96 * float(np.std(sw, ddof=1)) / np.sqrt(_n_efectivo(sw)) / abs(media)
+            drift = abs(float(np.polyfit(tw, sw, 1)[0])) / abs(media)
+            if ci95 < tol_ci95:
+                break
+        if ventana >= span:
+            break
+        ventana = min(2.0 * ventana, span)
+    if not np.isfinite(ci95):
+        return nan, nan, False
+    return drift, ci95, bool(drift < tol_drift and ci95 < tol_ci95)
 
 
 def main(
@@ -7286,9 +7359,9 @@ def main(
     # validación paraban en t≈4.2 con errores de +10.6% y +19.6%.
     clcd_min_t_fisico_before_check=5.0,  # tiempos convectivos mínimos antes de chequear
     clcd_tol_drift=0.005,                # deriva relativa de L/D por tiempo convectivo
-    clcd_tol_noise=0.05,                 # dispersión relativa dentro de la ventana
+    clcd_tol_ci95=0.02,                  # incertidumbre relativa de la media (CI95)
     clcd_n_sostenido=1,                  # chequeos consecutivos que deben cumplirse
-    clcd_window_conv_time=1.0,           # ventana, en tiempos convectivos
+    clcd_window_conv_time=1.0,           # ventana mínima; se ensancha sola si hace falta
     # Flag secundario (no decide convergencia): |Cl_sim - Cl_cp| > tol implica
     # posible separación/inestabilidad residual (ver α=10 en results/cfl_sweep).
     clcd_discrepancy_tol=0.05,
@@ -8374,8 +8447,8 @@ def main(
                     # vez sin que su cociente lo haga.
                     with np.errstate(divide="ignore", invalid="ignore"):
                         _ld_arr = np.where(np.abs(_cd_arr) > 1e-9, _cl_arr / _cd_arr, np.nan)
-                    _drift, _conv = _detect_series_convergence(
-                        _t_arr, _ld_arr, clcd_tol_drift, clcd_tol_noise, clcd_window_conv_time)
+                    _drift, _ci95, _conv = _detect_series_convergence(
+                        _t_arr, _ld_arr, clcd_tol_drift, clcd_tol_ci95, clcd_window_conv_time)
                     _clcd_seguidos = _clcd_seguidos + 1 if _conv else 0
                     if _clcd_seguidos >= clcd_n_sostenido:
                         _cpd = mesh_gruesa.compute_cp_diagnostics(mu, rho, verbose=False) or {}
@@ -8389,7 +8462,8 @@ def main(
                             np.isfinite(_discrepancy) and _discrepancy > clcd_discrepancy_tol)
 
                         print(f"\n{'='*70}")
-                        print(f"[OK] L/D EN MESETA (drift={_drift:.2e} < {clcd_tol_drift}) en iteracion {it}")
+                        print(f"[OK] L/D EN MESETA (drift={_drift:.2e} < {clcd_tol_drift}, "
+                              f"CI95={_ci95:.2e} < {clcd_tol_ci95}) en iteracion {it}")
                         print(f"{'='*70}")
                         print(f"  Tiempo simulado: {tiempo_fisico_acumulado:.4f} s")
                         print(f"  Cl_simulado={cl_val:+.4f}  Cl_cp={_cl_cp_val:+.4f}  |Cl_sim-Cl_cp|={_discrepancy:.4f}"

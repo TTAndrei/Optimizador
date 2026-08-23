@@ -1,0 +1,120 @@
+{
+  "cl": 0.682018,
+  "cd": 0.020029,
+  "ld": 34.0513,
+  "cl_raw": 0.682018,
+  "cl_audit_inst": 0.697384,
+  "cl_std": 0.018083,
+  "cd_std": 0.002123,
+  "n_samples": 208,
+  "cl_ci95": 0.002458,
+  "cd_ci95": 0.000289,
+  "ld_ci95": 0.5056,
+  "converged_clcd": false,
+  "t_conv_clcd": null,
+  "iters_efectivas": 52000,
+  "cl_cp_discrepancy": 0.05298,
+  "cl_cp_discrepancy_flag": true,
+  "wall_s": 12305.0,
+  "dx": 0.002,
+  "iters_programadas": 52000,
+  "alpha": 4.0,
+  "Re": 100000.0,
+  "Lx": 24.0,
+  "Ly": 16.0,
+  "cx": 6.0,
+  "perfil": "results/convergence_study/islands_tfg2/NACA_0012_sharp/epoch10/NACA_0012_sharp_winner_Re100000_a4.0_LD27.75.dat",
+  "ref_polar_13000it": 31.7,
+  "evolucion": [
+    {
+      "t": 5.0,
+      "ld_cola": 24.133,
+      "ld_acum": 22.561,
+      "ld_ratio_medio": 23.054,
+      "cl_cola": 0.64683,
+      "cd_cola": 0.026803,
+      "n": 52
+    },
+    {
+      "t": 8.0,
+      "ld_cola": 29.571,
+      "ld_acum": 25.713,
+      "ld_ratio_medio": 26.669,
+      "cl_cola": 0.66804,
+      "cd_cola": 0.022591,
+      "n": 129
+    },
+    {
+      "t": 10.0,
+      "ld_cola": 32.333,
+      "ld_acum": 27.229,
+      "ld_ratio_medio": 28.302,
+      "cl_cola": 0.67861,
+      "cd_cola": 0.020988,
+      "n": 180
+    },
+    {
+      "t": 12.0,
+      "ld_cola": 33.42,
+      "ld_acum": 28.37,
+      "ld_ratio_medio": 29.479,
+      "cl_cola": 0.68181,
+      "cd_cola": 0.020401,
+      "n": 229
+    },
+    {
+      "t": 15.0,
+      "ld_cola": 33.747,
+      "ld_acum": 29.569,
+      "ld_ratio_medio": 30.605,
+      "cl_cola": 0.68185,
+      "cd_cola": 0.020205,
+      "n": 304
+    },
+    {
+      "t": 20.0,
+      "ld_cola": 34.038,
+      "ld_acum": 30.77,
+      "ld_ratio_medio": 31.7,
+      "cl_cola": 0.68019,
+      "cd_cola": 0.019983,
+      "n": 428
+    },
+    {
+      "t": 25.0,
+      "ld_cola": 34.032,
+      "ld_acum": 31.466,
+      "ld_ratio_medio": 32.303,
+      "cl_cola": 0.68193,
+      "cd_cola": 0.020038,
+      "n": 553
+    },
+    {
+      "t": 30.0,
+      "ld_cola": 34.129,
+      "ld_acum": 31.934,
+      "ld_ratio_medio": 32.701,
+      "cl_cola": 0.68272,
+      "cd_cola": 0.020004,
+      "n": 677
+    },
+    {
+      "t": 35.0,
+      "ld_cola": 34.088,
+      "ld_acum": 32.252,
+      "ld_ratio_medio": 32.966,
+      "cl_cola": 0.68176,
+      "cd_cola": 0.02,
+      "n": 801
+    },
+    {
+      "t": 41.48,
+      "ld_cola": 34.049,
+      "ld_acum": 32.538,
+      "ld_ratio_medio": 33.192,
+      "cl_cola": 0.68193,
+      "cd_cola": 0.020028,
+      "n": 963
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+// Apartado 3.4.2 reescrito. Fuente en el marcado de memoria.txt.
+// Los titulos llevan numero literal porque este fichero se compila como extracto.
+
+#3 3.4.2 Difusión numérica del esquema de advección
+
+El método semi-Lagrangiano no introduce error en el transporte: la expresión del apartado anterior es la solución exacta de la advección pura a lo largo de la característica, y lo es para cualquier paso temporal, de donde procede su estabilidad incondicional [2]. El campo, no obstante, solo se conoce en los nodos, y el pie de la característica cae en general entre ellos: todo el error se concentra por tanto en la interpolación bilineal con que se evalúa el campo en la posición de partida.
+
+#4 3.4.2.1 Origen del término difusivo
+
+El error de la interpolación lineal de una función regular sobre un intervalo $h$, en la posición fraccionaria $\alpha$, tiene por término dominante $\tfrac{1}{2}\alpha(1-\alpha)h^{2}f^{\prime\prime}$: es proporcional a la derivada segunda del campo, de modo que no es una perturbación arbitraria, sino una cantidad con la estructura de un operador laplaciano.
+
+Cada paso temporal añade así al campo una contribución $\tfrac{1}{2}\alpha(1-\alpha)\Delta x^{2}\,\partial^{2}\phi/\partial x^{2}$, mientras que una ecuación de difusión de coeficiente $\nu$ añade $\nu\,\Delta t\,\partial^{2}\phi/\partial x^{2}$ en el mismo intervalo. Identificándolas se obtiene la viscosidad equivalente del esquema,
+
+$$ \nu_{núm} = \frac{\alpha(1-\alpha)\,\Delta x^{2}}{2\,\Delta t} $$
+
+que, con el número de Courant $C = u\,\Delta t/\Delta x$ y en el régimen $C \ll 1$ del solver, se reduce a
+
+$$ \nu_{núm} \approx \frac{u\,\Delta x}{2} $$
+
+El razonamiento constituye un análisis de ecuación modificada: la ecuación que el esquema resuelve no es la discretizada, sino esa misma aumentada con sus términos de truncamiento. Como el término dominante es un laplaciano, el error de interpolación resulta indistinguible de una viscosidad añadida al modelo: no son dos fenómenos acoplados, sino una única cantidad admitiendo dos lecturas.
+
+De (3.10) se siguen dos propiedades. El paso temporal se cancela, pues $\Delta t$ figura en el denominador y, vía $\alpha$, también en el numerador: refinarlo no reduce la viscosidad numérica, sino que la hace converger al suelo (3.11), lo que explica que el defecto sobreviviera a las primeras campañas de refinado. Y la dependencia con el tamaño de celda es lineal, lo que sitúa al esquema en primer orden espacial.
+
+#4 3.4.2.2 Superposición con la difusión física
+
+Incorporando el término de truncamiento al balance de cantidad de movimiento, la ecuación que el solver integra efectivamente es
+
+$$ \frac{\partial \mathbf{u}}{\partial t} + (\mathbf{u}\cdot\nabla)\mathbf{u} = -\nabla p + \nabla\cdot\left[ \left( \nu + \nu_{t} + \nu_{núm} \right) \nabla \mathbf{u} \right] $$
+
+Las tres se suman en pie de igualdad, pero solo dos son magnitudes del modelo. La numérica procede de la discretización y no se comporta como una viscosidad: depende de la velocidad local, por lo que no es invariante frente a un cambio de sistema de referencia inercial, y del tamaño de celda, ajeno al fluido. Es además inaccesible desde la implementación, pues el paso de difusión aplica solo $\nu + \nu_{t}$ y $\nu_{núm}$ se genera en el de advección: no hay campo que la contenga ni diagnóstico que la mida, y solo cabe inferirla de sus efectos, lo que explica que fuese la última de las cuatro capas del diagnóstico de la sección 3.7.
+
+La superposición desplaza también el punto de trabajo del modelo de turbulencia. Spalart-Allmaras construye su función de amortiguamiento a partir del cociente $\chi = \tilde{\nu}/\nu$, definido frente a la molecular; si la difusión real la excede en un orden de magnitud, el modelo evalúa la resolución de pared contra una referencia que no corresponde a la difusión efectiva. La competencia se resuelve además de forma más desfavorable donde el modelo se retira: en la subcapa viscosa $\nu_{t}$ tiende a cero y el único contrapeso es la molecular, precisamente donde se evalúan la fricción de pared y el gradiente que determina la circulación.
+
+#4 3.4.2.3 Dependencia con el régimen y efecto sobre la solución
+
+Dividiendo la ecuación (3.11) por la viscosidad molecular se obtiene la importancia relativa de ambos mecanismos,
+
+$$ \frac{\nu_{núm}}{\nu} \approx \frac{u\,\Delta x}{2\nu} = \frac{Re_{\Delta x}}{2} $$
+
+donde $Re_{\Delta x} = u\,\Delta x/\nu$ es el número de Reynolds de celda. La difusión numérica supera a la física siempre que $Re_{\Delta x} > 2$, criterio clásico e independiente del caso analizado. Como $Re_{\Delta x} = Re\,(u/U_{\infty})(\Delta x/c)$, a malla fija crece linealmente con el Reynolds del problema, y la malla, cartesiana y con banda uniforme de tamaño $\Delta x$ en torno al perfil, no agrupa nodos hacia la pared ni compensa ese crecimiento.
+
+El contraste entre ambos regímenes deja así de ser un comportamiento doble. Con $u \approx 0{,}1\,U_{\infty}$ en la capa límite y la malla $\Delta x = 0{,}002$ de la campaña, la viscosidad numérica vale $\nu_{núm} \approx 1\cdot 10^{-4}$ en los dos casos; lo único que cambia es la referencia frente a la que se compara.
+
+| Régimen | Viscosidad molecular | $Re_{\Delta x}$ | $\nu_{núm}/\nu$ |
+| $Re = 10^{3}$ | $10^{-3}$ | 0,2 | 0,1 |
+| $Re = 10^{5}$ | $10^{-5}$ | 20 | 10 |
+
+[TBL] Importancia relativa de la difusión numérica frente a la molecular en la capa límite, sobre la malla de $\Delta x = 0{,}002$.
+
+El esquema no se degrada al subir el Reynolds: lo que se reduce en dos órdenes de magnitud es la viscosidad física con la que compite. No son dos defectos distintos, sino uno solo sobre fondos que difieren en un factor cien, lo que explica que el contraste contra la DNS de referencia a $Re = 1000$ resultase satisfactorio con el mismo código que fallaba a $Re = 10^{5}$. El efecto se concentra donde hay gradientes, la capa límite y la estela, y no en el flujo libre, donde el laplaciano de la velocidad es despreciable pese a ser allí mayor el cociente (3.13).
+
+Al sumarse las viscosidades, el flujo calculado corresponde a un Reynolds efectivo $Re_{ef} = U_{\infty}c/(\nu + \nu_{núm})$: una simulación planteada a $Re = 10^{5}$ resuelve un flujo próximo a $9\cdot 10^{3}$. Para una capa límite laminar, con $\delta/c \sim Re^{-1/2}$, el error de espesor es
+
+$$ \frac{\delta_{ef}}{\delta_{fís}} = \sqrt{\frac{\nu + \nu_{núm}}{\nu}} \approx \sqrt{11} \approx 3{,}3 $$
+
+y reproduce el factor tres observado en los perfiles calculados. La cadena hasta la sustentación se cierra por el espesor de desplazamiento: una capa límite tres veces más gruesa presenta al flujo exterior un cuerpo efectivo más voluminoso y de borde de salida más romo, la condición de Kutta fija una circulación ligada menor, y el coeficiente de sustentación desciende desde el valor esperado de 0,55 hasta 0,32. Suprimirlo por refinado exigiría $\Delta x \lesssim 2\cdot 10^{-4}$ para mantener $Re_{\Delta x} < 2$, una malla diez veces más fina que la empleada y que excede la memoria de la tarjeta disponible. La vía practicable no es refinar la discretización, sino elevar el orden del esquema de advección.

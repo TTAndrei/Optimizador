@@ -85,12 +85,15 @@ def resolver_dat(spec):
     return None
 
 
-def simular(dat, re, dx, alpha=ALPHA, iters=None, extra=None, dump=None):
+def simular(dat, re, dx, alpha=ALPHA, iters=None, extra=None, dump=None,
+            dump_field=None):
     cfg = dict(RunGA.CONFIG)
     cfg["sim_extra_params"] = {**cfg.get("sim_extra_params", {}), **EXTRA,
                                **criterio_calibrado(), **(extra or {})}
     if dump:
         cfg["dump_series_path"] = dump
+    if dump_field:
+        cfg["dump_field_path"] = dump_field
     cfg["nu"] = 1.0 / re
     cfg["v0x"] = 1.0
     cfg["chord"] = 1.0
@@ -470,7 +473,7 @@ def criterio_calibrado():
     c = json.load(open(p))["criterio"]
     return {
         "clcd_tol_drift": c["tol_drift"],
-        "clcd_tol_noise": c["tol_noise"],
+        "clcd_tol_ci95": c["tol_ci95"],
         "clcd_window_conv_time": c["window"],
         "clcd_n_sostenido": c["n_sostenido"],
         "clcd_min_t_fisico_before_check": c["min_t"],

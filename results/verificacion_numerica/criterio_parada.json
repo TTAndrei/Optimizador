@@ -1,10 +1,9 @@
 {
   "criterio": {
-    "tol_drift": 0.005,
-    "tol_noise": 0.05,
+    "tol_drift": 0.002,
+    "tol_ci95": 0.02,
     "window": 1.0,
-    "tol_res": Infinity,
-    "n_sostenido": 1,
+    "n_sostenido": 3,
     "min_t": 5.0
   },
   "cv": {
@@ -246,5 +245,6 @@
       "coste": 0.412,
       "t_final": 15.74
     }
-  ]
+  ],
+  "procedencia": "recalibrado por criterio_ci95.py: la puerta de ruido pasa de sigma/|media| a CI95 de la media"
 }

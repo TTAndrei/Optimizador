@@ -1,4 +1,12 @@
 """
+SUPERADO por scripts/agent_tests/criterio_ci95.py -- se conserva porque documenta
+el paso anterior, pero ya no produce el criterio en produccion y su rejilla usa la
+puerta de ruido crudo (sigma/|media|), que es la que hubo que quitar.
+
+El motivo: sigma/|media| mide la amplitud de la oscilacion de la estela, no la
+incertidumbre del promedio, asi que con desprendimiento no abre nunca. La puerta
+ahora es el CI95 de la media sobre N efectivo, y la ventana se ensancha sola.
+
 Criterio de parada nuevo, ajustado y validado sobre series separadas.
 
 El criterio actual (`_detect_series_convergence`) compara la señal con la media de

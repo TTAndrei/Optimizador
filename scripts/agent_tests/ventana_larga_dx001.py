@@ -41,7 +41,7 @@ T_GUARDA = 60.0   # tope de seguridad, no objetivo
 
 def criterio():
     c = json.load(open("results/verificacion_numerica/criterio_parada.json"))["criterio"]
-    return {"clcd_tol_drift": c["tol_drift"], "clcd_tol_noise": c["tol_noise"],
+    return {"clcd_tol_drift": c["tol_drift"], "clcd_tol_ci95": c["tol_ci95"],
             "clcd_window_conv_time": c["window"], "clcd_n_sostenido": c["n_sostenido"],
             "clcd_min_t_fisico_before_check": c["min_t"]}
 
@@ -65,7 +65,7 @@ def main():
 
     crit = criterio()
     print(f">>> dx={DX}  tope de seguridad {iters} iteraciones (t={T_GUARDA})", flush=True)
-    print(f"    criterio: drift<{crit['clcd_tol_drift']}  ruido<{crit['clcd_tol_noise']}  "
+    print(f"    criterio: drift<{crit['clcd_tol_drift']}  CI95<{crit['clcd_tol_ci95']}  "
           f"ventana={crit['clcd_window_conv_time']}  t_min={crit['clcd_min_t_fisico_before_check']}", flush=True)
     print("    referencia dx=0.001 con t=12: Cd=0.025507  L/D=26.71  (sin converger)", flush=True)
 

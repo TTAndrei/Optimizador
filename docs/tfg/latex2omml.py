@@ -42,7 +42,7 @@ NARY = {"int": "∫", "oint": "∮", "iint": "∬", "sum": "∑",
 FUNCS = {"ln", "log", "exp", "sin", "cos", "tan", "max", "min", "sgn", "erf",
          "tanh", "sinh", "cosh", "arctan", "lim", "sup", "inf", "det", "diag"}
 
-SPACES = {",": " ", ";": " ", ":": " ", "quad": " ", "qquad": "  ", "!": ""}
+SPACES = {" ": " ", "~": " ", ",": " ", ";": " ", ":": " ", "quad": " ", "qquad": "  ", "!": ""}
 
 MATHFONT = '<w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr>'
 

@@ -1,0 +1,36 @@
+// Apartado 3.8.2 reescrito. Fuente en el marcado de memoria.txt.
+// El titulo lleva numero literal porque este fichero se compila como extracto.
+
+#3 3.8.2 Corrección de presión de fondo
+
+En un flujo incompresible la presión no es una variable termodinámica. Su papel es otro: es la magnitud que se ajusta en cada instante para que el campo de velocidad cumpla la condición de divergencia nula. De ahí se sigue una consecuencia directa. La presión aparece en la ecuación de cantidad de movimiento solo a través de su gradiente, no aparece en la de continuidad, y no hay ecuación de estado que la ligue a la densidad ni a la temperatura. Sumar una constante $p_{0}$ a todo el campo deja por tanto las ecuaciones exactamente igual. El nivel absoluto de la presión no lo determina la física del problema.
+
+La indeterminación reaparece en el cálculo. El paso de proyección resuelve una ecuación de Poisson con condiciones de Neumann en las cuatro fronteras, y un problema de ese tipo tiene infinitas soluciones que se diferencian en una constante. El multimalla converge a una cualquiera de ellas. Fijar un punto de referencia, opción que el solver contempla, no cambia el fondo del asunto, porque el valor que se asigna a ese punto es igualmente arbitrario. Esa es la constante indeterminada a la que se alude: el nivel del campo de presión, que no transporta información física.
+
+Sobre un contorno cerrado esa constante sería inofensiva. Para cualquier curva cerrada se cumple $\oint \mathbf{n}\,dl = 0$, de manera que una presión uniforme produce fuerza nula y el nivel no puede contaminar la integral.
+
+El contorno del perfil, sin embargo, no es una curva. Es un conjunto discreto de segmentos obtenido al rasterizar la geometría sobre la malla cartesiana, y su residuo de cierre
+
+$$ \mathbf{\varepsilon} = \sum_{i} \mathbf{n}_{i}\,\Delta l_{i} $$
+
+no vale exactamente cero. La fuerza espuria asociada al nivel de presión es entonces $\Delta\mathbf{F} = -p_{0}\,\mathbf{\varepsilon}$, y sus dos factores quedan fuera de control: $p_{0}$ es arbitrario, y $\mathbf{\varepsilon}$ es un residuo de discretización que además depende de cómo quede orientado el perfil respecto de la malla.
+
+Al nivel indeterminado se le suma un segundo efecto de origen distinto. El dominio es finito, y en su frontera exterior la perturbación que introduce el perfil todavía no ha desaparecido. En dos dimensiones el campo lejano de un cuerpo sustentador lo domina el torbellino ligado, cuya velocidad inducida decae como $1/r$ y arrastra consigo una perturbación de presión del mismo orden. Es un decaimiento mucho más lento que el de un cuerpo tridimensional. A ello se añade la diferencia de presión entre los planos de entrada y de salida que impone el déficit de cantidad de movimiento de la estela. El campo numérico presenta por eso una pendiente residual de fondo.
+
+Y ahí está la diferencia con la constante: una pendiente **no se cancela sobre un contorno cerrado**. Por el teorema de la divergencia,
+
+$$ \oint p_{fondo}\,\mathbf{n}\,dl = \iint_{A} \nabla p_{fondo}\,dA = (b,\,c)\,A $$
+
+lo que equivale a una fuerza de flotabilidad: el gradiente de fondo multiplicado por el área encerrada. Contamina la integral aunque el contorno cierre de forma exacta, y su magnitud crece con el espesor del perfil.
+
+La corrección se aplica en dos pasos, un ajuste afín de fondo y una sustracción de media, que actúan sobre términos distintos del campo de presión.
+
+El ajuste afín estima el campo de presión de fondo por regresión lineal. Se recogen los valores de presión de las celdas de fluido contenidas en una banda perimetral adyacente a la frontera exterior, se resuelve por mínimos cuadrados el sistema sobredeterminado que corresponde al modelo $p_{fondo} = a + bx + cy$, y el plano resultante se evalúa en las coordenadas de los puntos de pared y se resta del campo extrapolado. Los tres coeficientes describen la aproximación de menor orden al campo lejano: $a$ es el nivel uniforme y el par $(b,\,c)$ es el gradiente constante. La banda de ajuste se sitúa lejos del perfil, de modo que la operación no toca la señal de pared salvo a través del plano que se resta, y solo alcanza los términos de orden cero y uno del fondo, no su curvatura.
+
+La sustracción de media elimina un único escalar. Sobre la presión de pared que sobrevive al paso anterior se calcula la media ponderada por el elemento de arco a lo largo del contorno del perfil,
+
+$$ \bar{p} = \frac{\sum_{i} p_{i}\,\Delta l_{i}}{\sum_{i} \Delta l_{i}} $$
+
+y ese valor se resta de todos los puntos de pared por igual. La operación es una traslación del campo: deja invariantes todas las diferencias $p_{i} - p_{j}$ y con ellas la forma completa de la distribución de presión, y su efecto neto es fijar en cero el coeficiente de presión medio sobre el contorno. Absorbe así el nivel residual que arrastra el plano de fondo al extrapolarse desde la frontera exterior hasta la posición del perfil.
+
+Cada término puede activarse o desactivarse de forma independiente, y los coeficientes ajustados quedan registrados en cada ejecución. Sobre la suite de diagnóstico del NACA 0012 el término independiente vale $a \approx -2{,}8\cdot 10^{-2}$ y las pendientes $b \approx 2{,}6\cdot 10^{-3}$ y $c \approx -3{,}7\cdot 10^{-5}$, con valores de $|a|$ que recorren el intervalo de $3\cdot 10^{-3}$ a $2{,}3\cdot 10^{-1}$ según la configuración. Tomando el área de un NACA 0012 de cuerda unidad, $A \approx 0{,}082$, la fuerza de flotabilidad asociada a las pendientes supone del orden de $10^{-5}$ en coeficiente de sustentación y de $4\cdot 10^{-4}$ en resistencia, alrededor del 1 % de la resistencia de presión calculada. El término constante es dos órdenes de magnitud mayor que las pendientes, pero su efecto sobre la fuerza no lo acota esta estimación, sino el residuo de cierre $\mathbf{\varepsilon}$, que no se mide.

@@ -891,12 +891,12 @@ def main():
         RunGA.CONFIG["sim_extra_params"] = {
             **RunGA.CONFIG["sim_extra_params"],
             "clcd_tol_drift": c["tol_drift"],
-            "clcd_tol_noise": c["tol_noise"],
+            "clcd_tol_ci95": c["tol_ci95"],
             "clcd_window_conv_time": c["window"],
             "clcd_n_sostenido": c["n_sostenido"],
             "clcd_min_t_fisico_before_check": c["min_t"],
         }
-        _log(f"Criterio de parada validado: drift<{c['tol_drift']} noise<{c['tol_noise']} "
+        _log(f"Criterio de parada validado: drift<{c['tol_drift']} CI95<{c['tol_ci95']} "
              f"window={c['window']} min_t={c['min_t']} n={c['n_sostenido']} "
              f"(test err_max={j['test']['err_max']:.2f}%, coste={j['test']['coste_medio']:.2f})")
     else:

@@ -49,7 +49,7 @@ def iters_for(dx, t=T_TARGET):
 def criterio():
     p = "results/verificacion_numerica/criterio_parada.json"
     c = json.load(open(p))["criterio"]
-    return {"clcd_tol_drift": c["tol_drift"], "clcd_tol_noise": c["tol_noise"],
+    return {"clcd_tol_drift": c["tol_drift"], "clcd_tol_ci95": c["tol_ci95"],
             "clcd_window_conv_time": c["window"], "clcd_n_sostenido": c["n_sostenido"],
             "clcd_min_t_fisico_before_check": c["min_t"]}
 
