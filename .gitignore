@@ -32,3 +32,8 @@ results/convergence_study/*.pid
 # temporales del refinado del top-k
 results/convergence_study/islands_tfg2/refine_tmp/
 docs/tfg/.~lock.*#
+
+# Campos finales del Richardson de la polar: 355 MB de u/v/p/máscara (5 ficheros
+# de 45 MB en la malla fina). Se conservan en local para instrumentar el TE; al
+# repo van los escalares, las series, las figuras y el log.
+results/richardson_polar_domC/campos/*.npz
