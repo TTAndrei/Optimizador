@@ -1,0 +1,50 @@
+{
+  "caso": "T4",
+  "Lx": 20.0,
+  "Ly": 2.0,
+  "Re": 10000.0,
+  "dx": 0.01,
+  "sa": true,
+  "t_obj": 30.0,
+  "tipo": "llenado",
+  "nu": 0.0002,
+  "iters": 9000,
+  "wall_s": 230.5,
+  "t_final": 11.056,
+  "dt_medio": 0.001228417064379931,
+  "modelo": "sa+sa_bc",
+  "Le_medida": null,
+  "Le_teorica_005ReH": 1000.0,
+  "desarrollado": false,
+  "u_centro_salida": 1.0759,
+  "u_centro_teorico": 1.5,
+  "dpdx_medido": -0.028567521556003447,
+  "dpdx_teorico": -0.0006000000000000001,
+  "err_dpdx_pct": null,
+  "u_pared_max": 0.0,
+  "perfiles": {
+    "x/H=1": {
+      "u_centro": 1.1491,
+      "err_rms_vs_poiseuille": 0.2119,
+      "caudal": 0.9684
+    },
+    "x/H=2": {
+      "u_centro": 1.3328,
+      "err_rms_vs_poiseuille": 0.0744,
+      "caudal": 0.9432
+    },
+    "x/H=5": {
+      "u_centro": 1.3292,
+      "err_rms_vs_poiseuille": 0.1178,
+      "caudal": 0.8932
+    },
+    "x/H=10": {
+      "u_centro": 1.0759,
+      "err_rms_vs_poiseuille": 0.2269,
+      "caudal": 0.8613
+    }
+  },
+  "Le_relativa": 1.1399999856948853,
+  "celdas_a_lo_ancho": 200,
+  "err_u_centro_pct": -28.274
+}

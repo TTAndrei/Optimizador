@@ -1,0 +1,80 @@
+{
+  "circulo_1e+04": {
+    "colapso": true,
+    "motivo": "colapso detectado post-run (fase A)",
+    "sonda_dijo": "dt estable",
+    "dx": 0.004,
+    "t_con_sa": 6.145
+  },
+  "cuadrado_1e+04": {
+    "dt_ini": 0.0005588492114717761,
+    "dt_fin": 0.0003579772843254937,
+    "dt_cfl": 0.001,
+    "razon_cfl": 0.3579772843254937,
+    "razon_tendencia": 0.6405614913238056,
+    "colapso": true,
+    "motivo": "dt colapsa",
+    "dx": 0.004
+  },
+  "gota_1e+04": {
+    "colapso": true,
+    "motivo": "colapso detectado post-run (fase A)",
+    "sonda_dijo": "dt estable",
+    "dx": 0.004,
+    "t_con_sa": 8.759
+  },
+  "circulo_1e+05": {
+    "dt_ini": 0.0008701663904099001,
+    "dt_fin": 0.000512491332160102,
+    "dt_cfl": 0.001,
+    "razon_cfl": 0.5124913321601019,
+    "razon_tendencia": 0.5889578565757844,
+    "colapso": true,
+    "motivo": "dt colapsa",
+    "dx": 0.004
+  },
+  "cuadrado_1e+05": {
+    "dt_ini": 0.0004959610130430924,
+    "dt_fin": 0.000375313229031033,
+    "dt_cfl": 0.001,
+    "razon_cfl": 0.37531322903103304,
+    "razon_tendencia": 0.7567393790253899,
+    "colapso": true,
+    "motivo": "dt colapsa",
+    "dx": 0.004
+  },
+  "gota_1e+05": {
+    "colapso": true,
+    "motivo": "colapso detectado post-run (fase A)",
+    "sonda_dijo": "dt estable",
+    "dx": 0.004,
+    "t_con_sa": 9.378
+  },
+  "circulo_1e+06": {
+    "dt_ini": 0.0008729647622547215,
+    "dt_fin": 0.0005079878701104058,
+    "dt_cfl": 0.001,
+    "razon_cfl": 0.5079878701104058,
+    "razon_tendencia": 0.5819110828693227,
+    "colapso": true,
+    "motivo": "dt colapsa",
+    "dx": 0.004
+  },
+  "cuadrado_1e+06": {
+    "dt_ini": 0.0004960914478740759,
+    "dt_fin": 0.0004030060768127441,
+    "dt_cfl": 0.001,
+    "razon_cfl": 0.40300607681274414,
+    "razon_tendencia": 0.8123624757890205,
+    "colapso": true,
+    "motivo": "dt colapsa",
+    "dx": 0.004
+  },
+  "gota_1e+06": {
+    "colapso": true,
+    "motivo": "colapso detectado post-run (fase A)",
+    "sonda_dijo": "dt estable",
+    "dx": 0.004,
+    "t_con_sa": 9.279
+  }
+}

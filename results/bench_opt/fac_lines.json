@@ -1,0 +1,43 @@
+{
+  "name": "fac_lines",
+  "opts": [
+    "line_smoother"
+  ],
+  "overrides": {
+    "dx_min": 0.002,
+    "mg_pre_suavizado": 1,
+    "mg_post_suavizado": 1
+  },
+  "dx": 0.002,
+  "iters": 400,
+  "wall_s": 258.8,
+  "it_s": 1.545,
+  "s_paso": 0.64711,
+  "gpu_util_media": 86.6,
+  "gpu_util_p95": 90.0,
+  "gpu_util_n": 253,
+  "cl": 0.403076,
+  "cd": 0.05141,
+  "ld": 7.8405,
+  "cl_std": 0.01309,
+  "cd_std": 0.002144,
+  "n_samples": 10,
+  "mg_cycles_media": 19.34,
+  "mg_cycles_p95": 28.0,
+  "mg_cycles_total": 7737,
+  "div_mean": 0.0132895,
+  "div_max": 167.281,
+  "outers_media": 8.0,
+  "outers_p95": 8.0,
+  "outers_max": 8,
+  "frac_converge": 0.0,
+  "div_before_media": 0.004251,
+  "div_after_media": 0.001533,
+  "reduccion_div": 2.77,
+  "mg_factor_medio": 0.3438,
+  "mg_factor_mediana": 0.3493,
+  "mg_factor_p95": 0.4104,
+  "mg_factor_n": 4,
+  "mg_ciclos_por_decada": 2.2,
+  "cronometraje_valido": false
+}

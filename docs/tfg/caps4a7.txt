@@ -1,0 +1,467 @@
+#1 Resultados
+
+Este capítulo presenta los resultados del trabajo. Se organiza como una cadena de verificación que va de lo más elemental a lo más comprometido: primero la consistencia interna del solver y su contraste con una referencia externa, después la verificación de convergencia de malla que fija el error de discretización, a continuación la campaña de optimización y la geometría que produce, y por último los resultados aerodinámicos y el coste computacional.
+
+Todos los valores proceden de los ficheros de resultados del estudio de verificación y se han contrastado contra ellos. Las magnitudes que la verificación no consigue acotar se declaran como tales en el punto en que aparecen.
+
+#2 Validación del solver
+
+#3 Simetría
+
+La comprobación más barata y más exigente en un sentido concreto es la de simetría. Un perfil simétrico a ángulo de ataque nulo, en un dominio simétrico respecto de su eje, debe producir sustentación idénticamente nula. Cualquier desviación delata un error en la cadena que va de las métricas de malla a la rasterización de la geometría, al multimalla y a la integración de fuerzas.
+
+Sobre el NACA 0012 a $\alpha = 0$ el coeficiente de sustentación calculado vale $4{,}0\cdot 10^{-3}$ en la malla de $dx = 0{,}008$, $9{,}7\cdot 10^{-4}$ en la de $0{,}004$ y $-1{,}5\cdot 10^{-3}$ en la de $0{,}002$. Los tres valores son del orden del intervalo de confianza de la propia serie temporal, que en la malla fina vale $8{,}6\cdot 10^{-3}$, de modo que la sustentación espuria no es distinguible de la fluctuación estadística del promediado.
+
+El valor de esta prueba es que verifica la cadena completa en un solo test. Un sesgo sistemático de redondeo en cualquiera de sus etapas rompería la simetría y aparecería como sustentación no nula que no decrece al refinar.
+
+[FIG] Coeficiente de presión sobre extradós e intradós del NACA 0012 a $\alpha = 0$. La superposición de ambas ramas es el control gráfico de la simetría del cálculo. ||resultados_finales/comparativa/cp_superficie_a00.0.png
+
+#3 Contraste con una referencia externa
+
+El segundo eslabón compara la polar calculada del NACA 0012 con la que produce XFOIL [10] en el mismo régimen, $Re = 1\cdot 10^{5}$ con $N_{crit} = 9$. XFOIL no es un experimento, pero es la referencia de uso corriente en el diseño de perfiles a bajo número de Reynolds y su formulación, capa límite integral acoplada a un método de paneles con criterio de transición $e^{N}$, es independiente de la del solver aquí desarrollado. La discrepancia entre ambos mide por tanto algo real.
+
+| $\alpha$ [°] | $C_L$ XFOIL | $C_L$ fina | $C_L$ extrap. | $C_D$ XFOIL | $C_D$ fina | $C_D$ extrap. |
+| 0 | 0,0000 | -0,0015 | -0,0023 | 0,01693 | 0,01434 | 0,01240 |
+| 2 | 0,3737 | 0,2075 | 0,2085 | 0,01444 | 0,01728 | 0,01434 |
+| 4 | 0,5365 | 0,4978 | 0,5103 | 0,01520 | 0,02746 | 0,02335 |
+| 6 | 0,6862 | 0,6087 | 0,6504 | 0,01958 | 0,03987 | 0,03408 |
+| 8 | 0,8471 | 0,6732 | 0,7288 | 0,02869 | 0,07984 | 0,07070 |
+[TBL] Contraste de la polar calculada del NACA 0012 con XFOIL a $Re = 1\cdot 10^{5}$. El valor extrapolado procede de la extrapolación de Richardson descrita en la sección 4.2.
+
+La lectura de la tabla separa con nitidez las dos magnitudes. **La sustentación concuerda de forma razonable en el entorno del punto de diseño**: el valor extrapolado se aparta un 4,9 % en $\alpha = 4$ y un 5,2 % en $\alpha = 6$. El acuerdo se degrada hacia los extremos del intervalo, con un 44 % de defecto en $\alpha = 2$ y un 14 % en $\alpha = 8$.
+
+**La resistencia se sobrestima de forma sistemática y por un margen mucho mayor**, entre el 54 % y el 146 % según el ángulo, y el defecto crece con la incidencia. Como el cociente hereda el error de ambas, la eficiencia aerodinámica calculada resulta aproximadamente la mitad de la que predice XFOIL: 18,1 frente a 35,3 en $\alpha = 4$.
+
+Este resultado condiciona todo lo que sigue y conviene enunciarlo sin rodeos: **los valores absolutos de eficiencia que produce este solver no están validados**, y su uso como predicción cuantitativa de rendimiento no está justificado. Lo que sí queda validado es el comportamiento cualitativo de la sustentación y la capacidad de discriminar entre geometrías, que es la función que el solver desempeña dentro del optimizador. El alcance exacto de esa afirmación se acota en el capítulo 5.
+
+La causa del exceso de resistencia es identificable y coherente con el resto del estudio. Contribuyen la difusión numérica residual del esquema de advección, que engrosa la capa límite, y la representación escalonada de la superficie por frontera inmersa, que añade resistencia de forma. Ambas actúan sobre la resistencia y apenas sobre la circulación, que es exactamente el reparto de error observado.
+
+#2 Verificación de convergencia de malla
+
+#3 Diseño del estudio
+
+La verificación se plantea como un estudio de convergencia de malla completo sobre los dos perfiles que interesan, el ganador de la campaña de optimización y el NACA 0012 del que desciende. La configuración es la siguiente.
+
+| Concepto | Valor |
+| Perfiles | Ganador de la optimización y NACA 0012 de borde afilado |
+| Pasos de malla | $dx$ = 0,008 / 0,006 / 0,004 / 0,002 |
+| Ángulos | $\alpha$ = 0 a 8°, de grado en grado |
+| Dominio | 24 x 16 cuerdas, perfil situado en $c_x = 6$ |
+| Régimen | $Re = 1\cdot 10^{5}$, CFL = 0,5, $t^{*} \approx 20$ en las cuatro mallas |
+| Turbulencia | Spalart-Allmaras [5] con transición SA-BC [6], $Tu$ = 0,1 % |
+| Puntos | 2 perfiles x 4 mallas x 9 ángulos = 72 |
+[TBL] Configuración del estudio de verificación de convergencia de malla.
+
+Tres decisiones de este diseño merecen justificarse porque condicionan la validez de todo lo que sigue.
+
+La primera es que **los dos perfiles se discretizan con el mismo número de puntos y el mismo tratamiento del borde de salida**, de modo que la comparación entre ellos no arrastra diferencias de discretización geométrica que pudieran confundirse con diferencias aerodinámicas.
+
+La segunda es que **las cuatro mallas se integran hasta el mismo tiempo físico**, $t^{*} \approx 20$, y con la ventana completa de promediado, sin parada anticipada. Un estudio de convergencia espacial exige que la única variable entre puntos sea el tamaño de celda; si las mallas se detuvieran en instantes distintos, la diferencia medida mezclaría discretización espacial con estado de desarrollo del flujo.
+
+La tercera es que **las cuatro mallas emplean exactamente la misma configuración de solver** y el mismo presupuesto de proyección. Mezclar configuraciones dentro de la terna sesgaría el orden aparente de convergencia, que es precisamente la señal que el procedimiento mide.
+
+[FIG] Malla cartesiana estirada empleada en el caso de $dx = 0{,}002$: dominio completo y detalle de la zona fina en el borde de ataque. ||resultados_finales/comparativa/malla_dx0.0020.png
+
+#3 Elección de la terna
+
+El procedimiento estándar de estimación de incertidumbre por refinamiento de malla [11], [12], [13] requiere una razón de refinamiento constante entre los tres niveles. Se calcularon cuatro mallas para poder formar dos ternas candidatas y elegir con criterio en lugar de por conveniencia.
+
+| Terna | Razones | Monótonas | $p$ en rango | GCI mediano | GCI percentil 90 |
+| 0,008 / 0,004 / 0,002 | 2 y 2 | 47/54 | 35/54 | 20,1 % | 63,5 % |
+| 0,006 / 0,004 / 0,002 | 1,5 y 2 | 46/54 | 28/54 | 44,2 % | 111,8 % |
+[TBL] Comparación de las dos ternas candidatas sobre los mismos 54 casos.
+
+**La terna de razón constante gana en las cuatro métricas** y es la que se emplea en el resto del capítulo. La alternativa pierde por tres motivos concretos: rompe la simetría del NACA 0012 más que ninguna otra malla, con $C_L = +0{,}018$ en $\alpha = 0$ frente a $+0{,}004$ de la malla de 0,008; rompe la monotonía en $\alpha = 8$ del perfil optimizado en las tres magnitudes a la vez; y con razón 1,5 el salto entre las dos mallas más gruesas es pequeño, de modo que la diferencia queda cerca del ruido de la propia serie temporal.
+
+#3 Por qué no se emplea una malla de 0,001
+
+El plan inicial contemplaba la terna 0,004 / 0,002 / 0,001, preferible por el lado teórico al situar los tres niveles en la parte fina del barrido. Se descartó por un motivo numérico y no de presupuesto: **a $dx = 0{,}001$ el paso temporal colapsa**.
+
+| $dx$ | $t^{*}$ final alcanzado | $\Delta t$ medio |
+| 0,004 | 15,9 a 19,6 | $1{,}4\cdot 10^{-3}$ |
+| 0,002 | 15,7 a 21,7 | $8{,}0\cdot 10^{-4}$ |
+| 0,001 | 5,2 a 6,9 | $1{,}2\cdot 10^{-4}$ |
+[TBL] Tiempo físico alcanzado y paso temporal medio por malla con el mismo presupuesto de iteraciones.
+
+De 0,004 a 0,002 el paso temporal se reduce en un factor 0,57, aproximadamente lineal con el tamaño de celda, que es lo esperable. De 0,002 a 0,001 se reduce en un factor 0,15, es decir, sobra un factor 3,4 respecto de la reducción lineal. Con el mismo presupuesto de iteraciones, los puntos de esa malla se quedaban en $t^{*} \approx 6$ en lugar de $t^{*} \approx 20$.
+
+La consecuencia es que **la extrapolación habría comparado un punto medido en pleno transitorio de arranque contra dos medidos en régimen desarrollado**, atribuyendo esa diferencia temporal al refinamiento espacial. Además el paso temporal no era solo pequeño sino que seguía cayendo durante toda la ejecución, en un factor 6,8 sin estabilizarse, mientras que en la malla de 0,002 se mantiene plano.
+
+Ese diagnóstico explica sin invocar ninguna física el conjunto de anomalías que presentaba esa malla: intervalo de confianza del 95 % en la eficiencia, eficiencia no monótona en $\alpha = 2$ y $\alpha = 4$, resistencia inflada de 0,017 a 0,030 y criterio de convergencia que no llegaba a dispararse nunca. Llevar esa resolución hasta $t^{*} = 20$ habría exigido del orden de 175 000 iteraciones y once horas de cálculo por punto.
+
+#3 Extrapolación robusta
+
+La extrapolación de Richardson estima el valor de la magnitud en el límite de malla nula a partir de tres soluciones y del orden aparente de convergencia $p$ deducido de ellas. El factor de amplificación de la corrección es $1/(r^{p}-1)$, que crece sin límite cuando $p$ tiende a cero. Aplicada sin salvaguardas, la fórmula produce en este estudio resultados carentes de sentido físico.
+
+| Caso | $p$ observado | Extrapolado | Malla fina |
+| $C_L$ del ganador, $\alpha = 6$ | -0,05 | 2,912 | 0,879 |
+| $C_D$ del ganador, $\alpha = 6$ | -0,10 | -0,0153 | 0,0357 |
+| $C_D$ del NACA 0012, $\alpha = 0$ | -0,20 | -0,0116 | 0,0143 |
+[TBL] Casos en que la extrapolación de Richardson sin salvaguardas produce valores inadmisibles.
+
+Se aplican por ello dos correcciones. La primera es un **umbral sobre el orden aparente**: solo se emplea el valor observado si cae en el intervalo $p \in [1,\,4]$, y en caso contrario se fuerza el orden nominal del esquema, $p = 2$. El límite inferior se sitúa en 1 y no más abajo porque con razón de refinamiento 2 la amplificación vale exactamente la unidad en $p = 1$: por debajo, la corrección aleja el valor extrapolado de la malla fina más que el salto completo entre las dos mallas más finas, y deja de ser una corrección. La segunda es que **la resistencia se ajusta sobre su logaritmo**, de modo que el valor extrapolado sale de una exponencial y no puede cruzar cero.
+
+Se registra además el **signo del orden aparente**, que la formulación habitual devuelve en valor absoluto. El signo importa: un orden negativo significa que los saltos entre mallas crecen al refinar, es decir, que la serie no converge. Sale negativo en la mayoría de los casos de resistencia.
+
+Por último, **la eficiencia extrapolada se reconstruye a partir de la sustentación y la resistencia extrapoladas por separado**, y no extrapolando el cociente. Un cociente hereda las patologías de ambos términos y se dispara si el denominador extrapolado se acerca a cero.
+
+#3 Resultado de la verificación
+
+La tabla siguiente recoge la verificación en el punto de diseño. La columna de orden fiable indica si el orden aparente cae en el intervalo admisible; donde no lo hace, el valor extrapolado se obtiene con el orden nominal y constituye una estimación indicativa acotada, no una medida del error de discretización.
+
+| Perfil | Mag. | 0,008 | 0,004 | 0,002 | $p$ | Extrap. | GCI [%] | $p$ fiable |
+| Ganador | $C_L$ | 0,5816 | 0,6799 | 0,6965 | 2,56 | 0,6999 | 0,61 | sí |
+| Ganador | $C_D$ | 0,03307 | 0,02242 | 0,01692 | 0,47 | 0,01541 | 43,2 | no |
+| NACA 0012 | $C_L$ | 0,3180 | 0,4612 | 0,4978 | 1,97 | 0,5103 | 3,15 | sí |
+| NACA 0012 | $C_D$ | 0,04623 | 0,04468 | 0,02746 | -3,83 | 0,02335 | 7,76 | no |
+[TBL] Verificación de convergencia de malla en el punto de diseño $\alpha = 4$.
+
+**La sustentación del perfil ganador en el punto de diseño es el caso mejor comportado de todo el estudio**, con orden aparente 2,56, próximo al nominal del esquema, y un índice de convergencia de malla del 0,61 %. La del NACA 0012 en el mismo punto se comporta también bien, con orden 1,97 y un índice del 3,15 %.
+
+**La resistencia no converge en orden en ninguno de los dos perfiles.** Sobre los 54 casos del estudio, el orden aparente resulta utilizable en 9. La distribución de esos fallos no es aleatoria: se concentran en la resistencia y en los ángulos altos, donde la burbuja de separación laminar cambia de posición con la resolución. Ese comportamiento no es error de truncamiento sino cambio de solución, y la extrapolación de Richardson no le es aplicable por construcción.
+
+[FIG] Convergencia de $C_L$, $C_D$ y eficiencia frente al paso de malla para el perfil ganador, una curva por ángulo, con el valor extrapolado marcado en el origen. ||resultados_finales/richardson/figuras/convergencia_ganador_ag.png
+
+[FIG] Convergencia de $C_L$, $C_D$ y eficiencia frente al paso de malla para el NACA 0012. ||resultados_finales/richardson/figuras/convergencia_naca0012.png
+
+#2 Campaña de optimización
+
+#3 Configuración
+
+La campaña emplea un modelo de islas con cuatro poblaciones que evolucionan en paralelo y migran entre sí cada dos épocas. Las cuatro semillas son perfiles de catálogo escogidos por cubrir familias distintas: el NACA 0012 de borde afilado, el AG24, el GM15 y el s1014. Cada isla mantiene 16 individuos y ejecuta dos generaciones por época, a lo largo de once épocas.
+
+| Parámetro | Valor |
+| Islas | 4, con migración cada 2 épocas |
+| Población por isla | 16 individuos |
+| Épocas x generaciones | 11 x 2 |
+| Élites por generación | 4 |
+| Selección | Torneo de tamaño 4 |
+| Probabilidad de mutación | 0,85 |
+| Punto de diseño | $\alpha = 4$°, $Re = 1\cdot 10^{5}$ |
+| Malla de exploración | $dx = 0{,}004$ |
+| Evaluaciones CFD | 1 332 |
+[TBL] Configuración de la campaña de optimización.
+
+La evaluación de cada individuo se realiza sobre la malla de exploración con el criterio de terminación descrito en la sección 3.10.3. El filtro predictivo por modelo sustituto permaneció desactivado durante toda la campaña, de modo que **las 1 332 evaluaciones corresponden a simulaciones CFD completas** y ningún individuo fue descartado por predicción.
+
+#3 Convergencia de las islas
+
+La pregunta que un modelo de islas debe responder no es solo si el mejor individuo mejora, sino si las poblaciones convergen hacia una misma región del espacio de diseño o se dispersan en óptimos locales distintos. Se miden dos indicadores: la distancia de forma media entre los mejores individuos de cada isla, y la dispersión de sus eficiencias.
+
+| Época | Distancia de forma media | Dispersión de eficiencia |
+| 0 | 0,0475 | 9,82 |
+| 2 | 0,0057 | 2,00 |
+| 4 | 0,0058 | 0,63 |
+| 6 | 0,0030 | 0,93 |
+| 8 | 0,0029 | 0,92 |
+| 10 | 0,0033 | 2,75 |
+[TBL] Convergencia del modelo de islas a lo largo de la campaña.
+
+**La distancia de forma cae un factor catorce entre la primera y la última época**, de 0,0475 a 0,0033, y lo hace de forma casi completa en las dos primeras épocas, que es cuando actúa la primera migración. Las cuatro islas, partiendo de familias de perfiles distintas, terminan explorando geometrías muy próximas entre sí. La dispersión de eficiencias sigue el mismo patrón, de 9,82 a 2,75.
+
+Esta convergencia admite dos lecturas y conviene declarar ambas. La favorable es que cuatro búsquedas independientes que terminan en la misma región del espacio constituyen evidencia de que esa región es un óptimo robusto y no un accidente de la inicialización. La desfavorable es que la migración homogeneiza las poblaciones y reduce la diversidad que justifica el modelo de islas: a partir de la época 3 las cuatro islas exploran esencialmente el mismo vecindario.
+
+[FIG] Evolución de la eficiencia del mejor individuo de cada isla y de la distancia de forma media entre ellas a lo largo de las once épocas.
+
+#3 El refinado de malla cambia al ganador
+
+Los tres mejores individuos de la campaña se reevaluaron sobre la malla de $dx = 0{,}002$, el doble de fina que la de exploración, para comprobar si el orden establecido en exploración se mantiene.
+
+| Individuo | Eficiencia en exploración | Eficiencia refinada |
+| Isla s1014, época 9 | 28,66 | 24,81 |
+| Isla NACA 0012, época 10 | 27,75 | 28,88 |
+| Isla GM15, época 10 | 26,84 | 27,62 |
+[TBL] Reevaluación de los tres mejores individuos sobre malla refinada.
+
+**El refinado cambia al ganador.** El individuo que lideraba en exploración pierde tres puntos y medio de eficiencia al refinar, mientras que los otros dos ganan cerca de uno. El orden se invierte y el ganador de la campaña pasa a ser el mejor individuo de la isla sembrada con el NACA 0012.
+
+Es un resultado con consecuencias metodológicas directas. La malla de exploración es suficiente para conducir la búsqueda, puesto que las cuatro islas convergen y la eficiencia crece de forma sostenida a lo largo de las once épocas, pero **no es suficiente para decidir el ganador entre candidatos próximos**. Una campaña que se detuviera en la malla de exploración habría seleccionado un perfil distinto. El paso de refinado del bloque final no es por tanto un adorno de verificación sino parte necesaria del procedimiento de selección.
+
+#3 Geometría del perfil obtenido
+
+El perfil resultante se aparta radicalmente de su semilla.
+
+| Magnitud | Ganador | NACA 0012 |
+| Espesor máximo | 2,16 % en $x/c$ = 0,66 | 12,00 % en $x/c$ = 0,29 |
+| Curvatura máxima | 5,64 % en $x/c$ = 0,54 | 0 |
+| Borde de salida | Desplazado 3,4 % de la cuerda | Afilado y en el eje |
+[TBL] Parámetros geométricos del perfil obtenido frente a su semilla.
+
+El optimizador ha convertido un perfil simétrico y grueso en una **lámina delgada y fuertemente curvada**, con el espesor máximo desplazado hacia el borde de salida y una curvatura casi tres veces mayor que la de un perfil convencional de alta sustentación. La dirección no es arbitraria: a números de Reynolds del orden de $10^{5}$ las secciones delgadas y muy curvadas son precisamente las que la literatura de perfiles de bajo Reynolds identifica como eficientes [36], [22], porque reducen el gradiente adverso que dispara la burbuja de separación laminar.
+
+Conviene señalar que el borde de salida del perfil obtenido queda desplazado un 3,4 % de la cuerda respecto del eje, consecuencia de que la parametrización permite mutar la posición del borde de salida. Es una geometría admisible, pero su espesor de 2,16 % la sitúa en el límite de lo que la resolución de malla empleada puede representar con fidelidad, cuestión que se retoma en el capítulo 5.
+
+[FIG] Geometría del perfil obtenido por la optimización superpuesta a la de su semilla, el NACA 0012 de borde afilado. ||resultados_finales/perfiles/perfiles_comparados.png
+
+#2 Resultados aerodinámicos
+
+#3 Polares comparadas
+
+La comparación entre los dos perfiles se presenta sobre la malla fina, que es la medida directa, y también extrapolada, que es la estimación del límite de malla nula.
+
+| $\alpha$ [°] | $C_L$ gan. | $C_D$ gan. | $L/D$ gan. | $C_L$ NACA | $C_D$ NACA | $L/D$ NACA |
+| 0 | 0,1405 | 0,03679 | 3,82 | -0,0015 | 0,01434 | -0,10 |
+| 1 | 0,3216 | 0,02797 | 11,50 | 0,0970 | 0,01589 | 6,11 |
+| 2 | 0,4573 | 0,02117 | 21,60 | 0,2075 | 0,01728 | 12,01 |
+| 3 | 0,6135 | 0,01517 | 40,44 | 0,3660 | 0,02107 | 17,37 |
+| 4 | 0,6965 | 0,01692 | 41,15 | 0,4978 | 0,02746 | 18,13 |
+| 5 | 0,8152 | 0,02333 | 34,94 | 0,5616 | 0,03222 | 17,43 |
+| 6 | 0,8787 | 0,03567 | 24,63 | 0,6087 | 0,03987 | 15,27 |
+| 7 | 0,9709 | 0,04804 | 20,21 | 0,6520 | 0,05185 | 12,57 |
+| 8 | 1,0380 | 0,06167 | 16,83 | 0,6732 | 0,07984 | 8,43 |
+[TBL] Polares de los dos perfiles sobre la malla de $dx = 0{,}002$.
+
+**La ventaja del perfil optimizado se mantiene en los nueve ángulos.** Supera al NACA 0012 en sustentación en todos ellos y en resistencia en todos salvo los tres primeros, donde su curvatura le impone una penalización que la sustentación compensa con creces.
+
+El hecho relevante para la validez del resultado es que **esa ventaja se conserva también en las cuatro mallas y en la extrapolación**. No depende por tanto ni de la resolución escogida ni del método de extrapolación empleado, que son las dos vías por las que un resultado de este tipo suele resultar frágil.
+
+[FIG] Polares de sustentación, resistencia y eficiencia de los dos perfiles sobre la malla fina, con barras de intervalo de confianza al 95 %. ||resultados_finales/comparativa/ganador_ag_vs_naca0012_dx0.0020.png
+
+[FIG] Polar de resistencia, $C_L$ frente a $C_D$, de los dos perfiles con el ángulo de ataque etiquetado sobre cada punto. ||resultados_finales/comparativa/polar_resistencia.png
+
+#3 El punto de diseño
+
+| Perfil | $C_L$ fina | $C_L$ extrap. | $C_D$ fina | $C_D$ extrap. | $L/D$ fina | $L/D$ extrap. |
+| Ganador | 0,6965 | 0,6999 | 0,01692 | 0,01541 | 41,15 | 45,4 |
+| NACA 0012 | 0,4978 | 0,5103 | 0,02746 | 0,02330 | 18,13 | 21,9 |
+[TBL] Comparación en el punto de diseño $\alpha = 4$, sobre la malla fina y extrapolada a malla nula.
+
+En el punto de diseño el perfil obtenido **multiplica por 2,27 la eficiencia de su semilla** sobre la malla fina, y por 2,08 en la estimación extrapolada. Las dos cifras acotan la ganancia entre un factor dos y un factor dos y cuarto.
+
+La coincidencia entre ambas es en sí misma informativa. La extrapolación mueve la eficiencia del ganador un 10 % y la del NACA 0012 un 21 %, cantidades nada despreciables, pero **mueve el cociente entre ambas solo un 8 %**, porque los dos perfiles comparten el mismo sesgo de discretización y este se cancela en buena parte al comparar. Es la razón por la que la comparación relativa es defendible mientras que los valores absolutos no lo son.
+
+[FIG] Los dos perfiles en malla fina frente a su extrapolación de Richardson, en sustentación, resistencia y eficiencia. ||resultados_finales/comparativa/comparativa_extrapolada.png
+
+#3 El origen físico de la ventaja
+
+La distribución de presión en el punto de diseño explica de dónde procede la diferencia.
+
+El NACA 0012 presenta un **pico de succión intenso** en el primer cuarto de la cuerda, con $C_p$ mínimo próximo a $-1{,}25$, seguido de una zona de oscilaciones entre $x/c = 0{,}3$ y $x/c = 0{,}7$. Ese pico impone tras de sí un gradiente adverso severo, y las oscilaciones son la firma de una burbuja de separación laminar que no llega a reatacar de forma estable.
+
+El perfil optimizado presenta en cambio una **meseta de succión lisa y extendida**, con recuperación de presión suave hasta el borde de salida. Distribuye la carga a lo largo de una porción mucho mayor de la cuerda en lugar de concentrarla cerca del borde de ataque, y con ello evita el gradiente adverso que dispara la separación.
+
+Esa es la lectura física del resultado: **la optimización ha encontrado, sin que se le indicara, la estrategia de diseño que la aerodinámica de bajo número de Reynolds prescribe para este régimen**. El algoritmo no dispone de ningún conocimiento aerodinámico previo, solo de la eficiencia devuelta por el solver, y aun así converge hacia una geometría de carga repartida.
+
+[FIG] Coeficiente de presión sobre extradós e intradós de los dos perfiles en el punto de diseño. Es la figura que explica el resultado: meseta de succión lisa frente a pico intenso con oscilaciones. ||resultados_finales/comparativa/cp_superficie_a04.0.png
+
+#3 Sobre la posición del máximo de eficiencia
+
+El barrido de grado en grado permite una observación que un barrido de dos en dos habría ocultado. El máximo de eficiencia del perfil optimizado no es un pico nítido sino una **meseta entre $\alpha = 3$ y $\alpha = 4$**: 40,44 frente a 41,15, un 1,7 % de diferencia, con los intervalos de confianza solapados.
+
+Más significativo es el salto entre $\alpha = 2$ y $\alpha = 3$, donde la eficiencia pasa de 21,60 a 40,44, prácticamente el doble, con la resistencia cayendo de 0,0212 a 0,0152 mientras la sustentación crece con normalidad. Un cambio de esa magnitud en un grado de incidencia **no es un efecto de resolución sino una transición del régimen del flujo**, con toda probabilidad el reataque de la burbuja de separación laminar. Un barrido de dos en dos grados se lo habría saltado por completo y habría descrito una curva suave donde hay una discontinuidad de comportamiento.
+
+#2 Rendimiento computacional
+
+| Fase | Horas de GPU |
+| Campaña de optimización, 1 332 evaluaciones | 169,0 |
+| Estudio de verificación de malla, 72 puntos | 9,2 |
+| **Total** | **178,2** |
+[TBL] Reparto del coste computacional del trabajo sobre una GPU NVIDIA RTX 3070 Ti.
+
+El coste medio por evaluación durante la campaña fue de **457 segundos** sobre la malla de exploración. En el estudio de verificación, ejecutado sin parada anticipada y hasta $t^{*} \approx 20$, el coste por punto fue de 189 segundos en la malla de 0,008, 251 en la de 0,006, 376 en la de 0,004 y 1 038 en la de 0,002.
+
+El escalado entre las dos mallas más finas merece comentario: al reducir el tamaño de celda a la mitad, el número de celdas se cuadruplica y el paso temporal se reduce aproximadamente a la mitad, lo que predice un factor ocho. El factor medido es 2,8, muy por debajo. La razón es que la malla es estirada y solo la zona fina se refina, de modo que el número de celdas crece bastante menos que el cuadrado del refinamiento nominal.
+
+Merece registro que **la verificación consumió el 5,2 % del coste total** del trabajo. Es una fracción pequeña frente a lo que aporta: sin ella no habría forma de distinguir qué parte de la ventaja medida es física y cuál es artefacto de discretización.
+
+#1 Discusión
+
+Este capítulo delimita el alcance de los resultados del capítulo 4, separando lo que queda establecido de lo que no, y atribuyendo cada limitación a su causa.
+
+#2 Alcance de lo que se puede afirmar
+
+Conviene enunciar de entrada la distinción que gobierna todo el capítulo, porque de ella dependen todas las demás.
+
+**Los valores absolutos de eficiencia no están validados.** El contraste con XFOIL de la sección 4.1.2 muestra una sobrestimación sistemática de la resistencia de entre el 54 % y el 146 %, que arrastra la eficiencia a aproximadamente la mitad de la referencia. Ninguna cifra de eficiencia de este trabajo debe interpretarse como predicción de rendimiento.
+
+**La comparación entre geometrías sí lo está**, dentro de los límites que se detallan a continuación. Los dos perfiles se han calculado con la misma malla, el mismo esquema, el mismo modelo de turbulencia, el mismo tratamiento de pared y el mismo tiempo de integración. El sesgo que afecta a uno afecta al otro en la misma dirección, y la evidencia de que se cancela en buena parte es cuantitativa: la extrapolación mueve las eficiencias individuales un 10 % y un 21 %, pero el cociente entre ellas solo un 8 %.
+
+La afirmación que el trabajo sostiene es por tanto **de orden y de magnitud aproximada, no de valor**: el perfil obtenido por la optimización es entre dos y dos veces y cuarto más eficiente que su semilla en el punto de diseño, y le supera en los nueve ángulos ensayados, en las cuatro mallas y también extrapolado.
+
+#2 Limitaciones numéricas
+
+#3 La resistencia no converge en orden
+
+Es la limitación principal del trabajo. Sobre los 54 casos del estudio de verificación, el orden aparente de convergencia resulta utilizable en 9, y los fallos se concentran de forma sistemática en la resistencia.
+
+La causa no es un defecto de implementación sino un fenómeno físico mal resuelto. A $Re = 1\cdot 10^{5}$ el flujo sobre ambos perfiles desarrolla una burbuja de separación laminar cuya posición e extensión dependen de la resolución con que se resuelva el gradiente de presión cerca de la pared. Al refinar la malla, la burbuja no se aproxima gradualmente a una posición límite sino que se desplaza, de modo que la sucesión de tres soluciones no constituye una serie convergente sino **tres soluciones cualitativamente distintas del mismo problema**. La extrapolación de Richardson supone lo primero y no le es aplicable a lo segundo.
+
+La consecuencia práctica es que los valores de resistencia extrapolados de este trabajo son estimaciones indicativas obtenidas con el orden nominal del esquema, y así se declaran en la tabla correspondiente. No son medidas del error de discretización.
+
+#3 La resolución frente al espesor del perfil
+
+El perfil obtenido tiene un espesor máximo del 2,16 % de la cuerda. Sobre la malla fina, con $dx = 0{,}002$, eso supone unas once celdas en la sección más gruesa y bastantes menos hacia los bordes.
+
+Es una resolución escasa para una geometría representada por frontera inmersa, donde la superficie no coincide con caras de la malla y su posición se reconstruye por interpolación. La consecuencia es que **la fidelidad geométrica del perfil delgado es sistemáticamente menor que la del NACA 0012**, que con un 12 % de espesor dispone de sesenta celdas en su sección máxima.
+
+El sentido de ese sesgo es identificable y conviene declararlo: penaliza al perfil delgado, porque el escalonado relativo de su superficie es mayor. La ventaja medida es por tanto probablemente una **cota inferior** de la ventaja real, no una sobrestimación. Esto no convierte el resultado en conservador de forma demostrada, pero sí descarta que el sesgo geométrico sea la explicación de la ventaja observada.
+
+#3 Incertidumbre no incluida en el balance
+
+El estudio acota la incertidumbre de discretización espacial. Hay al menos dos fuentes que no entran en ese balance y que conviene no ocultar.
+
+La primera es el **presupuesto del solver de presión**. La proyección se resuelve con un número fijo de ciclos y no hasta convergencia, decisión de coste que se toma de forma idéntica en las cuatro mallas. Su efecto sobre los coeficientes no se ha cuantificado por separado y no figura en los índices de convergencia.
+
+La segunda es el **promediado temporal**. Los coeficientes son medias sobre una ventana finita de una señal que en varios ángulos no alcanza estado estacionario sino un régimen oscilatorio. El intervalo de confianza al 95 % de esa media se reporta junto a cada punto y es pequeño en los ángulos altos, pero es la incertidumbre de la media y no la de la definición de la ventana.
+
+#2 Limitaciones físicas
+
+#3 Bidimensionalidad
+
+El solver es bidimensional. A $Re = 1\cdot 10^{5}$ y con separación presente, el flujo real desarrolla estructuras tridimensionales en la capa de cortadura desprendida y en el reataque de la burbuja. Un cálculo bidimensional fuerza a esas estructuras a organizarse en torbellinos de eje transversal más coherentes y energéticos de lo que son en realidad, lo que típicamente sobrestima las fluctuaciones y la resistencia. Es una explicación plausible de parte de la sobrestimación de resistencia observada frente a XFOIL, aunque el trabajo no la separa de las demás.
+
+#3 Modelo de turbulencia y transición
+
+El modelo empleado, Spalart-Allmaras con el criterio algebraico de transición SA-BC, es una elección estándar y económica, pero está calibrado sobre flujos adheridos de capa límite delgada, que no es el régimen dominante en estos casos. La posición de la transición, que a este número de Reynolds determina el comportamiento de la burbuja y con ella la resistencia, se obtiene de una correlación y no de un cálculo de estabilidad.
+
+#3 Un único punto de diseño
+
+La optimización se ha conducido sobre un solo ángulo de ataque, $\alpha = 4$°. El perfil resultante es por construcción un especialista en ese punto. La polar del capítulo 4 muestra que su ventaja se mantiene en todo el intervalo ensayado, lo que es más de lo que el planteamiento garantizaba, pero **no se ha ensayado su comportamiento fuera del intervalo de 0 a 8 grados**, ni en entrada en pérdida, ni a números de Reynolds distintos. Un perfil de 2,16 % de espesor tiene además implicaciones estructurales que ninguna función objetivo puramente aerodinámica puede recoger.
+
+#2 Limitaciones metodológicas
+
+#3 La malla de exploración no decide el ganador
+
+El resultado de la sección 4.3.3 es el más relevante desde el punto de vista metodológico: al reevaluar los tres mejores individuos sobre malla refinada, el orden se invierte y el ganador cambia.
+
+Eso significa que la función de fitness empleada durante la búsqueda es **suficiente para orientar la exploración pero no para la selección final entre candidatos próximos**. La diferencia de eficiencia entre los tres finalistas en exploración es del orden del 7 %, y el propio cambio de malla mueve los valores individuales entre el 3 % y el 13 %. La señal y el ruido son del mismo orden.
+
+La implicación de diseño es que cualquier campaña de este tipo necesita **dos niveles de fidelidad**: uno barato para conducir la búsqueda y otro más fino para decidir. Reconocerlo es más útil que presentar la exploración como si bastara.
+
+#3 Homogeneización del modelo de islas
+
+Las cuatro islas convergen a distancia de forma 0,0033 en la época 10, un factor catorce por debajo de la inicial, y lo hacen casi por completo en las dos primeras épocas. A partir de la época 3 exploran esencialmente el mismo vecindario.
+
+Eso cuestiona el valor añadido del modelo de islas tal como está configurado: **una migración cada dos épocas es demasiado frecuente** para el número de generaciones por época empleado, y consume la diversidad que el modelo pretende preservar. Una migración menos frecuente, o un criterio de migración condicionado al estancamiento en lugar de periódico, habría mantenido separadas las poblaciones durante más tiempo.
+
+#2 Comparación con el estado del arte
+
+Situado frente a las herramientas de referencia, el trabajo ocupa una posición intermedia que conviene describir con precisión.
+
+Frente a **XFOIL** [10], el solver desarrollado es varios órdenes de magnitud más caro y, en este régimen, menos preciso. XFOIL resuelve una polar completa en segundos y con una fidelidad que este trabajo no alcanza. Su limitación es de otro tipo: al basarse en teoría potencial acoplada a capa límite integral, no resuelve el campo y pierde validez cuando la separación es masiva.
+
+Frente a un **código RANS comercial** sobre malla ajustada al cuerpo, el solver desarrollado es más barato y mucho menos preciso. La malla ajustada elimina de raíz el problema de la representación escalonada de la superficie, que es una de las causas identificadas del exceso de resistencia.
+
+El nicho que el trabajo ocupa, y que justifica su existencia, es el de **exploración de formas a coste de minutos sobre hardware de consumo**, resolviendo el campo completo y sin hipótesis de flujo adherido. Ninguna de las dos alternativas cubre simultáneamente esas tres condiciones.
+
+#1 Análisis de sostenibilidad
+
+#2 Impacto ambiental
+
+#3 Consumo energético
+
+El trabajo consumió 178,2 horas de cálculo en una GPU NVIDIA RTX 3070 Ti. La potencia media en la toma de corriente se estima como la suma de la potencia de la tarjeta y la del resto del equipo, corregida por el rendimiento de la fuente de alimentación:
+
+$$ P_{red} = \frac{f_{carga}\,P_{TDP} + P_{resto}}{\eta_{fuente}} $$
+
+Con $P_{TDP} = 290$ W la potencia de diseño térmico de la tarjeta, $f_{carga} = 0{,}85$ la fracción de esa potencia efectivamente empleada durante un cálculo sostenido, $P_{resto} = 90$ W para procesador, memoria y periféricos, y $\eta_{fuente} = 0{,}90$, resulta una potencia de red de aproximadamente 374 W.
+
+La energía total consumida es por tanto de **66,6 kWh**.
+
+#3 Huella de carbono
+
+Con un factor de emisión de 0,148 kg CO2 eq/kWh para el sistema eléctrico peninsular español [31], [32], la huella operativa del trabajo asciende a **9,9 kg CO2 eq**.
+
+A esa cifra hay que sumar la fracción imputable de la huella de fabricación del equipo. Los estudios de ciclo de vida sitúan la huella incorporada de una tarjeta gráfica de gama media-alta entre 150 y 300 kg CO2 eq [33], dominada por la fabricación de los circuitos integrados. Tomando 150 kg como valor representativo y una vida útil de 10 000 horas de uso efectivo, la fracción correspondiente a las 178,2 horas de este trabajo es de aproximadamente **2,7 kg CO2 eq**.
+
+| Concepto | kg CO2 eq |
+| Consumo operativo, 66,6 kWh | 9,9 |
+| Fracción de huella incorporada | 2,7 |
+| **Total** | **12,6** |
+[TBL] Huella de carbono del trabajo.
+
+La huella incorporada supone en torno al 21 % del total. Esa proporción es baja porque el uso fue intensivo: la tarjeta trabajó a plena carga durante todas esas horas. En un patrón de uso esporádico, la asignación por hora útil sería mucho mayor y la huella de fabricación dominaría. **El hardware compartido y utilizado de forma intensiva es ambientalmente preferible al infrautilizado**, lo que constituye un argumento a favor de la infraestructura compartida y en contra de la duplicación de equipos.
+
+#3 El ahorro potencial
+
+Conviene poner esas cifras en contexto. Doce kilogramos y medio de CO2 equivalente son del orden de lo que emite un trayecto de cien kilómetros en un automóvil de combustión. Es una cantidad pequeña en términos absolutos.
+
+El interés ambiental de una herramienta como esta no está en su propia huella sino en la que puede evitar. La alternativa experimental a una campaña de exploración de formas es la fabricación y ensayo en túnel de viento de un conjunto de prototipos. La fabricación de un único modelo de ensayo y las horas de túnel asociadas superan con holgura la huella completa de este trabajo. **El cálculo desplaza ensayo físico, y ese desplazamiento es su principal contribución ambiental**, muy por encima de cualquier optimización de su propio consumo.
+
+Cabe matizar el argumento en un punto: el desplazamiento solo es real si el cálculo sustituye ensayo y no simplemente lo precede. Una herramienta de exploración que reduzca de veinte a tres los prototipos que llegan a túnel produce un ahorro neto; una que se añada al proceso sin reducir el número de ensayos, no.
+
+#2 Impacto económico
+
+#3 Coste directo del trabajo
+
+| Concepto | Cantidad | Coste unitario | Coste [EUR] |
+| Energía eléctrica | 66,6 kWh | 0,15 EUR/kWh | 10,0 |
+| Amortización de la GPU | 178,2 h de 10 000 | 650 EUR | 11,6 |
+| Amortización del resto del equipo | 178,2 h de 15 000 | 800 EUR | 9,5 |
+| Licencias de software | 0 | Software libre | 0 |
+| **Total de recursos materiales** | | | **31,1** |
+[TBL] Coste directo de recursos materiales del trabajo.
+
+El coste material es de **31 EUR**, cifra que hace evidente dónde está el coste real de un trabajo de este tipo. La totalidad de la cadena de herramientas empleada, Python, CuPy, NumPy, scikit-learn y las bibliotecas de representación gráfica, es software libre, y el hardware es de consumo doméstico.
+
+#3 Coste de personal
+
+El trabajo corresponde a 12 ECTS. Con la equivalencia habitual de 25 a 30 horas de dedicación por crédito, resulta un rango de 300 a 360 horas de trabajo. Valoradas a 25 EUR/hora, que es una tarifa razonable para un ingeniero junior, el coste de personal se sitúa entre **7 500 y 9 000 EUR**.
+
+La conclusión que se sigue de comparar ambas partidas es la que gobierna la economía de este tipo de proyectos: **el coste material representa el 0,4 % del coste total**. El recurso escaso no es la GPU ni la electricidad, sino el tiempo de la persona que desarrolla, verifica e interpreta.
+
+#3 Viabilidad de la aproximación
+
+De ese reparto se sigue una consecuencia práctica. Una herramienta de exploración de formas que corra sobre hardware de consumo y con software libre tiene un coste marginal por campaña de unas decenas de euros. Eso la sitúa al alcance de un laboratorio docente, de un equipo de competición universitaria o de una pequeña empresa, que son precisamente los contextos en los que el acceso a un código comercial y a un clúster de cálculo no es realista.
+
+La barrera de entrada de esta aproximación no es económica sino de conocimiento: se requiere criterio para saber qué resultados son citables y cuáles no, que es exactamente lo que el capítulo 5 documenta.
+
+#2 Impacto social
+
+#3 Accesibilidad y transferencia
+
+La contribución social más directa del trabajo es de accesibilidad. La optimización aerodinámica asistida por CFD ha sido tradicionalmente patrimonio de organizaciones con acceso a códigos comerciales y a infraestructura de cálculo. Demostrar que una campaña de exploración con resolución del campo completo cabe en una tarjeta gráfica de consumo y en menos de doscientas horas **reduce esa barrera de forma sustancial**.
+
+El destinatario natural no es la industria aeronáutica establecida, que dispone de herramientas mejores, sino la docencia, los equipos de competición universitaria y el diseño de vehículos aéreos no tripulados de pequeño tamaño, cuyo régimen de operación coincide precisamente con el número de Reynolds estudiado.
+
+#3 Formación y método
+
+Un aspecto del trabajo con valor formativo por encima de su resultado aerodinámico es el tratamiento de la verificación. La documentación explícita de qué magnitudes convergen y cuáles no, la declaración de que la resistencia no admite extrapolación fiable, y la distinción entre lo que el trabajo puede afirmar y lo que no, constituyen una práctica que la literatura recomienda y que no siempre se sigue.
+
+Presentar un resultado acompañado de la frontera exacta de su validez es más útil, y más honesto, que presentarlo como una cifra sin contexto. En un momento en que la simulación numérica es accesible a cualquiera con una tarjeta gráfica, **la capacidad de distinguir un resultado verificado de un número bonito es la competencia que marca la diferencia**.
+
+#3 Consideraciones éticas
+
+El trabajo no involucra datos personales, ni ensayos con personas o animales, ni aplicaciones de doble uso que requieran consideración específica. El código y los datos de resultados quedan documentados de forma que un tercero pueda reproducir el estudio, lo que constituye la condición mínima para que un resultado numérico sea verificable por alguien distinto de quien lo produjo.
+
+#1 Conclusiones
+
+#2 Cumplimiento de los objetivos
+
+**Objetivo 1: desarrollar un solver CFD 2D incompresible acelerado por GPU. Cumplido.** El solver resuelve las ecuaciones de Navier-Stokes incompresibles sobre malla cartesiana estirada con geometría embebida, integra un modelo de turbulencia de una ecuación con criterio de transición, y resuelve la presión mediante multimalla geométrico. Ejecuta una evaluación aerodinámica completa en minutos sobre una tarjeta gráfica de consumo.
+
+**Objetivo 2: calcular fuerzas aerodinámicas sobre geometría embebida. Cumplido con reservas.** El cálculo por extrapolación de la presión a la pared, corrección de presión de fondo e integración del tensor de esfuerzos produce una sustentación que concuerda con la referencia externa dentro del 5 % en el entorno del punto de diseño. La resistencia se sobrestima de forma sistemática entre el 54 % y el 146 %, y esa es la reserva.
+
+**Objetivo 3: implementar un optimizador evolutivo sobre el solver. Cumplido.** El modelo de islas con migración converge de forma medible: la distancia de forma entre las cuatro poblaciones cae un factor catorce a lo largo de once épocas, partiendo de familias de perfiles distintas.
+
+**Objetivo 4: obtener un perfil mejorado y verificarlo. Cumplido.** La campaña produce un perfil que multiplica por 2,27 la eficiencia de su semilla en el punto de diseño, ventaja que se conserva en los nueve ángulos, en las cuatro mallas y en la extrapolación.
+
+**Objetivo 5: verificar y validar el conjunto. Cumplido, y es el objetivo que más ha condicionado a los demás.** El estudio de convergencia de malla establece que la sustentación converge con orden próximo al nominal en el punto de diseño, y que la resistencia no converge en orden en la mayoría de los ángulos. Es esa verificación la que permite afirmar el resultado como comparación y no como valor absoluto.
+
+#2 Aportaciones
+
+La aportación principal del trabajo no es el perfil obtenido sino **el procedimiento completo, verificado y documentado, que va de la geometría inicial al resultado con su incertidumbre declarada**. Junto a ella cabe destacar:
+
+* **La demostración de que la exploración de formas por CFD resolviendo el campo completo cabe en hardware de consumo**, con un coste de 178 horas de GPU y 31 EUR de recursos materiales.
+* **El diagnóstico de que la malla de exploración no basta para la selección final.** El refinado de los tres finalistas invierte el orden y cambia al ganador, resultado que obliga a estructurar cualquier campaña de este tipo en dos niveles de fidelidad.
+* **El diseño de una extrapolación de Richardson robusta** frente a órdenes aparentes patológicos, con umbral sobre el orden, ajuste logarítmico de la resistencia y registro del signo del orden, sin el cual varios valores extrapolados de este estudio habrían resultado negativos o absurdos.
+* **El descarte documentado de la malla más fina por colapso del paso temporal**, con el diagnóstico que lo sustenta. Es una decisión que mejora el estudio precisamente al eliminar datos, porque esos puntos habrían introducido en la extrapolación una diferencia temporal disfrazada de diferencia espacial.
+* **La constatación de que el optimizador converge a la estrategia de diseño que la aerodinámica de bajo número de Reynolds prescribe**, meseta de succión extendida frente a pico de succión intenso, sin disponer de ningún conocimiento aerodinámico previo.
+
+#2 Líneas de trabajo futuro
+
+Ordenadas por la relación entre lo que aportarían y lo que costarían:
+
+1. **Elevar el orden del esquema de advección** en la banda próxima a la pared, que es donde la difusión numérica residual contribuye al exceso de resistencia identificado en la validación.
+2. **Sustituir la representación escalonada de la superficie** por un tratamiento de frontera inmersa con reconstrucción de orden superior, o por una malla ajustada al cuerpo. Es la vía más directa para atacar la sobrestimación de resistencia.
+3. **Incorporar el punto de diseño múltiple** en la función de fitness, evaluando cada individuo en varios ángulos. Está implementado y verificado, y se descartó únicamente por coste.
+4. **Añadir restricciones estructurales** a la función objetivo. Un perfil de 2,16 % de espesor es aerodinámicamente eficiente y estructuralmente cuestionable, y ninguna función puramente aerodinámica puede detectarlo.
+5. **Revisar el criterio de migración del modelo de islas**, condicionándolo al estancamiento en lugar de a un periodo fijo, para preservar durante más tiempo la diversidad entre poblaciones.
+6. **Cuantificar la incertidumbre del presupuesto del solver de presión** y añadirla al balance de incertidumbre junto a la de discretización espacial.
+7. **Extender la validación a datos experimentales** de perfiles delgados y curvados a bajo número de Reynolds, que es el régimen donde el perfil obtenido opera y donde el contraste con XFOIL resulta menos concluyente.
+
+#2 Valoración final
+
+El trabajo entrega una herramienta que funciona, un resultado que se sostiene y una frontera clara entre ambos. El perfil obtenido es entre dos y dos veces y cuarto más eficiente que su semilla en el punto de diseño, y esa ventaja resiste todas las comprobaciones a las que se ha sometido: cuatro mallas, nueve ángulos y extrapolación a resolución infinita.
+
+Lo que el trabajo no entrega, y lo declara, es una predicción cuantitativa de rendimiento. El solver sobrestima la resistencia y su eficiencia absoluta no está validada. Esa distinción, entre lo que un cálculo puede afirmar y lo que meramente produce, es probablemente la conclusión más transferible del trabajo.

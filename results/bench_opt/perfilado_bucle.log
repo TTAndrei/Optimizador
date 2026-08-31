@@ -1,0 +1,73 @@
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/1000 [00:00<?, ?it/s] 74%|███████▍  | 744/1000 [01:00<00:20, 12.39it/s]100%|██████████| 1000/1000 [01:19<00:00, 12.54it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 500] nu_efectiva muy alta: 2.51e-04 (25.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 500] gamma min=0.002 media=0.198
+\n[Iter 500] Convergencia a steady: u=1.17e-02, v=4.85e-01, p=1.05e+00
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 1000 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.0797 s
+Pasos simulados: 1000
+Tiempo total simulación: 79.71 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     0.45 s  (  0.6%)
+  Advección.....................    23.93 s  ( 30.0%)
+  Difusión......................     4.93 s  (  6.2%)
+  Proyección....................    48.49 s  ( 60.8%)
+  Guardado/fuerzas..............     1.77 s  (  2.2%)
+  Otros (overhead)..............     0.14 s  (  0.2%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 48.49 s (60.8% del tiempo total)
+   Tiempo promedio por paso: 0.0485 s
+   Ciclos MG por paso: media=5.49  p95=6.00  max=6
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.044009   0.445577     10.125
+[perfil] bucle de 1000 iteraciones terminado, sin diagnosticos
+Collecting data...
+Generating '/tmp/nsys-report-638e.qdstrm'
+[1/1] [0%                          ] bucle.nsys-rep[1/1] [0%                          ] bucle.nsys-rep[1/1] [===23%                      ] bucle.nsys-rep[1/1] [====26%                     ] bucle.nsys-rep[1/1] [====28%                     ] bucle.nsys-rep[1/1] [==21%                       ] bucle.nsys-rep[1/1] [===22%                      ] bucle.nsys-rep[1/1] [===23%                      ] bucle.nsys-rep[1/1] [==19%                       ] bucle.nsys-rep[1/1] [=15%                        ] bucle.nsys-rep[1/1] [====28%                     ] bucle.nsys-rep[1/1] [===24%                      ] bucle.nsys-rep[1/1] [==21%                       ] bucle.nsys-rep[1/1] [==19%                       ] bucle.nsys-rep[1/1] [=17%                        ] bucle.nsys-rep[1/1] [=15%                        ] bucle.nsys-rep[1/1] [14%                         ] bucle.nsys-rep[1/1] [13%                         ] bucle.nsys-rep[1/1] [12%                         ] bucle.nsys-rep[1/1] [11%                         ] bucle.nsys-rep[1/1] [10%                         ] bucle.nsys-rep[1/1] [9%                          ] bucle.nsys-rep[1/1] [8%                          ] bucle.nsys-rep[1/1] [7%                          ] bucle.nsys-rep[1/1] [6%                          ] bucle.nsys-rep[1/1] [5%                          ] bucle.nsys-rep[1/1] [0%                          ] bucle.nsys-rep[1/1] [5%                          ] bucle.nsys-rep[1/1] [6%                          ] bucle.nsys-rep[1/1] [7%                          ] bucle.nsys-rep[1/1] [8%                          ] bucle.nsys-rep[1/1] [9%                          ] bucle.nsys-rep[1/1] [10%                         ] bucle.nsys-rep[1/1] [11%                         ] bucle.nsys-rep[1/1] [12%                         ] bucle.nsys-rep[1/1] [13%                         ] bucle.nsys-rep[1/1] [14%                         ] bucle.nsys-rep[1/1] [=15%                        ] bucle.nsys-rep[1/1] [=16%                        ] bucle.nsys-rep[1/1] [=17%                        ] bucle.nsys-rep[1/1] [==18%                       ] bucle.nsys-rep[1/1] [==19%                       ] bucle.nsys-rep[1/1] [==20%                       ] bucle.nsys-rep[1/1] [==21%                       ] bucle.nsys-rep[1/1] [===22%                      ] bucle.nsys-rep[1/1] [===23%                      ] bucle.nsys-rep[1/1] [===24%                      ] bucle.nsys-rep[1/1] [====25%                     ] bucle.nsys-rep[1/1] [====26%                     ] bucle.nsys-rep[1/1] [====27%                     ] bucle.nsys-rep[1/1] [====28%                     ] bucle.nsys-rep[1/1] [=====29%                    ] bucle.nsys-rep[1/1] [=====30%                    ] bucle.nsys-rep[1/1] [=====31%                    ] bucle.nsys-rep[1/1] [=====32%                    ] bucle.nsys-rep[1/1] [======33%                   ] bucle.nsys-rep[1/1] [======34%                   ] bucle.nsys-rep[1/1] [======35%                   ] bucle.nsys-rep[1/1] [=======36%                  ] bucle.nsys-rep[1/1] [=======37%                  ] bucle.nsys-rep[1/1] [=======38%                  ] bucle.nsys-rep[1/1] [=======39%                  ] bucle.nsys-rep[1/1] [========40%                 ] bucle.nsys-rep[1/1] [========41%                 ] bucle.nsys-rep[1/1] [========42%                 ] bucle.nsys-rep[1/1] [=========43%                ] bucle.nsys-rep[1/1] [=========44%                ] bucle.nsys-rep[1/1] [=========45%                ] bucle.nsys-rep[1/1] [=========46%                ] bucle.nsys-rep[1/1] [==========47%               ] bucle.nsys-rep[1/1] [==========48%               ] bucle.nsys-rep[1/1] [==========49%               ] bucle.nsys-rep[1/1] [===========50%              ] bucle.nsys-rep[1/1] [===========51%              ] bucle.nsys-rep[1/1] [===========52%              ] bucle.nsys-rep[1/1] [===========53%              ] bucle.nsys-rep[1/1] [============54%             ] bucle.nsys-rep[1/1] [============55%             ] bucle.nsys-rep[1/1] [============56%             ] bucle.nsys-rep[1/1] [============57%             ] bucle.nsys-rep[1/1] [=============58%            ] bucle.nsys-rep[1/1] [=============59%            ] bucle.nsys-rep[1/1] [=============60%            ] bucle.nsys-rep[1/1] [==============61%           ] bucle.nsys-rep[1/1] [==============62%           ] bucle.nsys-rep[1/1] [==============63%           ] bucle.nsys-rep[1/1] [==============64%           ] bucle.nsys-rep[1/1] [===============65%          ] bucle.nsys-rep[1/1] [===============66%          ] bucle.nsys-rep[1/1] [===============67%          ] bucle.nsys-rep[1/1] [================68%         ] bucle.nsys-rep[1/1] [================69%         ] bucle.nsys-rep[1/1] [================70%         ] bucle.nsys-rep[1/1] [================71%         ] bucle.nsys-rep[1/1] [=================72%        ] bucle.nsys-rep[1/1] [=================73%        ] bucle.nsys-rep[1/1] [=================74%        ] bucle.nsys-rep[1/1] [==================75%       ] bucle.nsys-rep[1/1] [==================76%       ] bucle.nsys-rep[1/1] [========================100%] bucle.nsys-rep[1/1] [========================100%] bucle.nsys-rep
+Generated:
+	/home/ttandrei/Proyectos/Optimizador/Optimizador/results/bench_opt/perfil/bucle.nsys-rep

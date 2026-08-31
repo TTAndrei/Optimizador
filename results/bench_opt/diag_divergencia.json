@@ -1,0 +1,63 @@
+{
+  "malla": [
+    1772,
+    713
+  ],
+  "iters": 400,
+  "reparto": {
+    "borde": [
+      0.035372160375118256,
+      0.78808376685617
+    ],
+    "interfaz_1_3": [
+      21.499469757080078,
+      0.2395857239626224
+    ],
+    "cerca_4_12": [
+      15.153611183166504,
+      0.7368630867249497
+    ],
+    "lejos": [
+      63.311553955078125,
+      98.23546742245625
+    ]
+  },
+  "compatibilidad_operadores": {
+    "suave/centered+masked": {
+      "error_relativo": 0.25418,
+      "escala": -0.70348
+    },
+    "suave/centered+face_flux": {
+      "error_relativo": 0.9985,
+      "escala": 0.19915
+    },
+    "suave/one_sided+masked": {
+      "error_relativo": 0.24717,
+      "escala": -0.70619
+    },
+    "suave/one_sided+face_flux": {
+      "error_relativo": 0.99506,
+      "escala": 0.33059
+    },
+    "ruido/centered+masked": {
+      "error_relativo": 0.62409,
+      "escala": 3.12498
+    },
+    "ruido/centered+face_flux": {
+      "error_relativo": 0.62381,
+      "escala": 3.12548
+    },
+    "ruido/one_sided+masked": {
+      "error_relativo": 0.6239,
+      "escala": 3.12373
+    },
+    "ruido/one_sided+face_flux": {
+      "error_relativo": 0.62362,
+      "escala": 3.12235
+    }
+  },
+  "estructura_divergencia": {
+    "fraccion_tablero": 0.4625,
+    "fraccion_suave": 0.8866
+  }
+}

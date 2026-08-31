@@ -189,6 +189,60 @@ def orden_observado(f1, f2, f3, r21, r32):
     return float(p), float(e21), float(e32)
 
 
+P_NOMINAL = 2.0
+# P_MIN=1.0 y no 0.5: la amplificacion del ajuste es 1/(r^p - 1), que en r=2 vale
+# 1.0 justo en p=1 y se dispara por debajo. Con p<1 el extrapolado se aleja de la
+# malla fina MAS que el salto entero entre las dos mallas mas finas, y deja de ser
+# una correccion. Caso medido: Cd del ganador en alpha=3 tenia p=0.762
+# (amplificacion 1.44) y bajaba el Cd un 37%, lo que inventaba un pico de L/D en
+# alpha=3 que NINGUNA de las tres mallas tiene: las tres dan el maximo en alpha=4.
+P_MIN, P_MAX = 1.0, 4.0
+
+
+def orden_con_signo(f1, f2, f3, r21, r32):
+    """Orden observado CONSERVANDO EL SIGNO. f1 = malla fina.
+
+    orden_observado() devuelve abs(p) siguiendo la formula de Celik, y eso
+    esconde el caso que mas importa detectar: p<0 significa que los saltos
+    CRECEN al refinar, o sea que la serie diverge y no hay nada que extrapolar.
+    """
+    e21, e32 = f2 - f1, f3 - f2
+    if abs(e21) < 1e-30 or np.sign(e21) != np.sign(e32):
+        return np.nan
+    return float(np.log(abs(e32 / e21)) / np.log(r21))
+
+
+def extrapola_robusto(f1, f2, f3, h1, h2, h3, log=False):
+    """Extrapolacion a malla nula que no explota cuando la serie no converge.
+
+    El problema: f_ext = f1 + (f1-f2)/(r^p - 1). Si los saltos apenas encogen,
+    p tiende a 0, el denominador tambien, y el resultado se dispara. Caso real
+    de este repo: Cl del ganador en alpha=6 daba 0.7335/0.8048/0.8787, saltos
+    -0.0713 y -0.0739 (razon 0.965), p = -0.05 y f_ext = 2.91 con la malla mas
+    fina en 0.879. La amplificacion era x27.5.
+
+    Cuando p no es fiable se fuerza P_NOMINAL, el orden del esquema. Deja de ser
+    una medida del error y pasa a ser una estimacion indicativa, pero acotada.
+
+    log=True hace el ajuste sobre log(f), lo que garantiza f_ext>0. Es lo que
+    hace falta para el Cd, que al extrapolar en lineal cruzaba a negativo.
+
+    Devuelve (f_ext, p_usado, p_observado, fiable).
+    """
+    r21 = h2 / h1
+    if log:
+        if min(f1, f2, f3) <= 0:
+            return np.nan, np.nan, np.nan, False
+        g1, g2, g3 = np.log(f1), np.log(f2), np.log(f3)
+    else:
+        g1, g2, g3 = f1, f2, f3
+    p_obs = orden_con_signo(g1, g2, g3, r21, h3 / h2)
+    fiable = bool(np.isfinite(p_obs) and P_MIN <= p_obs <= P_MAX)
+    p = p_obs if fiable else P_NOMINAL
+    g_ext = g1 + (g1 - g2) / (r21 ** p - 1.0)
+    return (float(np.exp(g_ext)) if log else float(g_ext)), p, p_obs, fiable
+
+
 def gci_triplete(f1, f2, f3, h1, h2, h3, Fs=1.25):
     """f1/h1 = malla fina. Devuelve dict con p, extrapolado y GCI fino/grueso."""
     r21, r32 = h2 / h1, h3 / h2

@@ -1,0 +1,983 @@
+{
+  "0.008": {
+    "terna": "0.008",
+    "n": 54,
+    "monotonas": 47,
+    "buenos": 35,
+    "gci_mediano": 20.1162,
+    "gci_p90": 63.52896,
+    "p_mediano": 1.1605,
+    "signo_malo": 2,
+    "casos": [
+      [
+        "ganador_ag",
+        "0.0"
+      ],
+      [
+        "ganador_ag",
+        "1.0"
+      ],
+      [
+        "ganador_ag",
+        "2.0"
+      ],
+      [
+        "ganador_ag",
+        "3.0"
+      ],
+      [
+        "ganador_ag",
+        "4.0"
+      ],
+      [
+        "ganador_ag",
+        "5.0"
+      ],
+      [
+        "ganador_ag",
+        "6.0"
+      ],
+      [
+        "ganador_ag",
+        "7.0"
+      ],
+      [
+        "ganador_ag",
+        "8.0"
+      ],
+      [
+        "naca0012",
+        "0.0"
+      ],
+      [
+        "naca0012",
+        "1.0"
+      ],
+      [
+        "naca0012",
+        "2.0"
+      ],
+      [
+        "naca0012",
+        "3.0"
+      ],
+      [
+        "naca0012",
+        "4.0"
+      ],
+      [
+        "naca0012",
+        "5.0"
+      ],
+      [
+        "naca0012",
+        "6.0"
+      ],
+      [
+        "naca0012",
+        "7.0"
+      ],
+      [
+        "naca0012",
+        "8.0"
+      ]
+    ]
+  },
+  "0.006": {
+    "terna": "0.006",
+    "n": 54,
+    "monotonas": 46,
+    "buenos": 28,
+    "gci_mediano": 44.18295,
+    "gci_p90": 111.76334000000001,
+    "p_mediano": 0.9259,
+    "signo_malo": 2,
+    "casos": [
+      [
+        "ganador_ag",
+        "0.0"
+      ],
+      [
+        "ganador_ag",
+        "1.0"
+      ],
+      [
+        "ganador_ag",
+        "2.0"
+      ],
+      [
+        "ganador_ag",
+        "3.0"
+      ],
+      [
+        "ganador_ag",
+        "4.0"
+      ],
+      [
+        "ganador_ag",
+        "5.0"
+      ],
+      [
+        "ganador_ag",
+        "6.0"
+      ],
+      [
+        "ganador_ag",
+        "7.0"
+      ],
+      [
+        "ganador_ag",
+        "8.0"
+      ],
+      [
+        "naca0012",
+        "0.0"
+      ],
+      [
+        "naca0012",
+        "1.0"
+      ],
+      [
+        "naca0012",
+        "2.0"
+      ],
+      [
+        "naca0012",
+        "3.0"
+      ],
+      [
+        "naca0012",
+        "4.0"
+      ],
+      [
+        "naca0012",
+        "5.0"
+      ],
+      [
+        "naca0012",
+        "6.0"
+      ],
+      [
+        "naca0012",
+        "7.0"
+      ],
+      [
+        "naca0012",
+        "8.0"
+      ]
+    ]
+  },
+  "ganadora": "0.008",
+  "detalle_ganadora": [
+    {
+      "perfil": "ganador_ag",
+      "alpha": "0.0",
+      "mag": "cl",
+      "p": 2.1267,
+      "gci": 12.5644,
+      "mono": true,
+      "signo_ok": false,
+      "f_ext": 0.154616,
+      "f": [
+        -0.114713,
+        0.092944,
+        0.140494
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "0.0",
+      "mag": "cd",
+      "p": 1.9442,
+      "gci": 11.6226,
+      "mono": false,
+      "signo_ok": false,
+      "f_ext": 0.033371,
+      "f": [
+        0.044004,
+        0.046536,
+        0.036792
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "0.0",
+      "mag": "ld",
+      "p": 1.3379,
+      "gci": 39.0256,
+      "mono": true,
+      "signo_ok": false,
+      "f_ext": 5.010787,
+      "f": [
+        -2.6069,
+        1.9972,
+        3.8186
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "1.0",
+      "mag": "cl",
+      "p": 1.4262,
+      "gci": 20.1162,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.373345,
+      "f": [
+        0.201764,
+        0.23426,
+        0.321591
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "1.0",
+      "mag": "cd",
+      "p": 4.1247,
+      "gci": 2.7595,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.02735,
+      "f": [
+        0.038702,
+        0.03812,
+        0.027967
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "1.0",
+      "mag": "ld",
+      "p": 2.5219,
+      "gci": 12.2687,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 12.627401,
+      "f": [
+        5.2132,
+        6.1453,
+        11.4988
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "2.0",
+      "mag": "cl",
+      "p": 1.3978,
+      "gci": 16.0291,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.515964,
+      "f": [
+        0.32505,
+        0.361438,
+        0.457321
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "2.0",
+      "mag": "cd",
+      "p": 1.5696,
+      "gci": 31.4017,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.015854,
+      "f": [
+        0.035169,
+        0.031642,
+        0.021173
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "2.0",
+      "mag": "ld",
+      "p": 2.2226,
+      "gci": 16.0584,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 24.374103,
+      "f": [
+        9.2426,
+        11.4229,
+        21.5993
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "3.0",
+      "mag": "cl",
+      "p": 1.0569,
+      "gci": 7.7898,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.651752,
+      "f": [
+        0.486264,
+        0.572208,
+        0.613518
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "3.0",
+      "mag": "cd",
+      "p": 1.3927,
+      "gci": 28.8055,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.011676,
+      "f": [
+        0.035781,
+        0.020857,
+        0.015173
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "3.0",
+      "mag": "ld",
+      "p": 0.0907,
+      "gci": 619.1621,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 240.727505,
+      "f": [
+        13.5901,
+        27.435,
+        40.436
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "4.0",
+      "mag": "cl",
+      "p": 2.563,
+      "gci": 0.6077,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.699867,
+      "f": [
+        0.581626,
+        0.679858,
+        0.696481
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "4.0",
+      "mag": "cd",
+      "p": 0.9561,
+      "gci": 43.1559,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.011081,
+      "f": [
+        0.033074,
+        0.022417,
+        0.016924
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "4.0",
+      "mag": "ld",
+      "p": 0.2349,
+      "gci": 186.0205,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 102.399379,
+      "f": [
+        17.5854,
+        30.3271,
+        41.1546
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "5.0",
+      "mag": "cl",
+      "p": 0.4269,
+      "gci": 37.1014,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 1.057189,
+      "f": [
+        0.619867,
+        0.731893,
+        0.815222
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "5.0",
+      "mag": "cd",
+      "p": 0.8986,
+      "gci": 61.7799,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.011801,
+      "f": [
+        0.038645,
+        0.033299,
+        0.023333
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "5.0",
+      "mag": "ld",
+      "p": 1.1256,
+      "gci": 39.2264,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 45.902472,
+      "f": [
+        16.0401,
+        21.9793,
+        34.9384
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "6.0",
+      "mag": "cl",
+      "p": 0.0515,
+      "gci": 289.2837,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 2.912295,
+      "f": [
+        0.733515,
+        0.804819,
+        0.878714
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "6.0",
+      "mag": "cd",
+      "p": 0.3198,
+      "gci": 178.6552,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": -0.015313,
+      "f": [
+        0.06412,
+        0.048327,
+        0.035674
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "6.0",
+      "mag": "ld",
+      "p": 0.6137,
+      "gci": 76.3696,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 39.680438,
+      "f": [
+        11.4397,
+        16.6536,
+        24.6316
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "7.0",
+      "mag": "cl",
+      "p": 1.0707,
+      "gci": 6.8894,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 1.024436,
+      "f": [
+        0.788348,
+        0.912036,
+        0.970923
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "7.0",
+      "mag": "cd",
+      "p": 0.6628,
+      "gci": 96.4153,
+      "mono": false,
+      "signo_ok": true,
+      "f_ext": 0.010986,
+      "f": [
+        0.056001,
+        0.06965,
+        0.048042
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "7.0",
+      "mag": "ld",
+      "p": 2.8558,
+      "gci": 7.0538,
+      "mono": false,
+      "signo_ok": true,
+      "f_ext": 21.350144,
+      "f": [
+        14.0775,
+        13.0946,
+        20.2097
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "8.0",
+      "mag": "cl",
+      "p": 0.7825,
+      "gci": 16.5171,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 1.175188,
+      "f": [
+        0.769379,
+        0.939261,
+        1.038026
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "8.0",
+      "mag": "cd",
+      "p": 2.3174,
+      "gci": 21.3385,
+      "mono": false,
+      "signo_ok": true,
+      "f_ext": 0.05114,
+      "f": [
+        0.095195,
+        0.10361,
+        0.061667
+      ]
+    },
+    {
+      "perfil": "ganador_ag",
+      "alpha": "8.0",
+      "mag": "ld",
+      "p": 2.9819,
+      "gci": 8.3594,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 17.95839,
+      "f": [
+        8.0821,
+        9.0653,
+        16.8327
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "0.0",
+      "mag": "cl",
+      "p": 0.3244,
+      "gci": 825.4041,
+      "mono": true,
+      "signo_ok": false,
+      "f_ext": -0.011101,
+      "f": [
+        0.004015,
+        0.000971,
+        -0.00146
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "0.0",
+      "mag": "cd",
+      "p": 0.3819,
+      "gci": 225.733,
+      "mono": true,
+      "signo_ok": false,
+      "f_ext": -0.011556,
+      "f": [
+        0.032417,
+        0.022189,
+        0.01434
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "0.0",
+      "mag": "ld",
+      "p": 0.8593,
+      "gci": 219.4252,
+      "mono": true,
+      "signo_ok": false,
+      "f_ext": -0.2805,
+      "f": [
+        0.1239,
+        0.0437,
+        -0.1018
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "1.0",
+      "mag": "cl",
+      "p": 1.1109,
+      "gci": 9.0977,
+      "mono": false,
+      "signo_ok": true,
+      "f_ext": 0.104097,
+      "f": [
+        0.106535,
+        0.088844,
+        0.097035
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "1.0",
+      "mag": "cd",
+      "p": 1.0527,
+      "gci": 64.695,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.007665,
+      "f": [
+        0.043046,
+        0.024721,
+        0.015887
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "1.0",
+      "mag": "ld",
+      "p": 1.1677,
+      "gci": 41.2724,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 8.124471,
+      "f": [
+        2.4749,
+        3.5939,
+        6.1078
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "2.0",
+      "mag": "cl",
+      "p": 2.7863,
+      "gci": 0.6052,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.208517,
+      "f": [
+        0.160705,
+        0.201586,
+        0.207512
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "2.0",
+      "mag": "cd",
+      "p": 0.8182,
+      "gci": 122.9026,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.00029,
+      "f": [
+        0.037595,
+        0.030242,
+        0.017277
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "2.0",
+      "mag": "ld",
+      "p": 1.1605,
+      "gci": 45.0289,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 16.337329,
+      "f": [
+        4.2746,
+        6.6657,
+        12.0107
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "3.0",
+      "mag": "cl",
+      "p": 1.8467,
+      "gci": 4.3959,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.378838,
+      "f": [
+        0.212346,
+        0.332548,
+        0.365968
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "3.0",
+      "mag": "cd",
+      "p": 1.6209,
+      "gci": 44.1143,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.013636,
+      "f": [
+        0.041529,
+        0.03651,
+        0.021073
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "3.0",
+      "mag": "ld",
+      "p": 1.0477,
+      "gci": 55.6991,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 25.105609,
+      "f": [
+        5.1132,
+        9.1083,
+        17.367
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "4.0",
+      "mag": "cl",
+      "p": 1.9697,
+      "gci": 3.1472,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.510332,
+      "f": [
+        0.318034,
+        0.461239,
+        0.497799
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "4.0",
+      "mag": "cd",
+      "p": 3.472,
+      "gci": 7.7646,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.025754,
+      "f": [
+        0.046233,
+        0.044681,
+        0.02746
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "4.0",
+      "mag": "ld",
+      "p": 1.1803,
+      "gci": 42.5027,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 24.291783,
+      "f": [
+        6.879,
+        10.323,
+        18.1279
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "5.0",
+      "mag": "cl",
+      "p": 1.1338,
+      "gci": 16.493,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.635705,
+      "f": [
+        0.278885,
+        0.4731,
+        0.561605
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "5.0",
+      "mag": "cd",
+      "p": 2.4592,
+      "gci": 17.7751,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.027642,
+      "f": [
+        0.056589,
+        0.05284,
+        0.032224
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "5.0",
+      "mag": "ld",
+      "p": 1.0741,
+      "gci": 54.9849,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 25.094797,
+      "f": [
+        4.9283,
+        8.9535,
+        17.4284
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "6.0",
+      "mag": "cl",
+      "p": 0.3408,
+      "gci": 96.3558,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 1.077889,
+      "f": [
+        0.325357,
+        0.483675,
+        0.608686
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "6.0",
+      "mag": "cd",
+      "p": 3.2388,
+      "gci": 8.9102,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.037029,
+      "f": [
+        0.066399,
+        0.063858,
+        0.039871
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "6.0",
+      "mag": "ld",
+      "p": 1.5243,
+      "gci": 33.5641,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 19.365882,
+      "f": [
+        4.9,
+        7.5742,
+        15.2666
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "7.0",
+      "mag": "cl",
+      "p": 0.5476,
+      "gci": 68.0532,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 1.006958,
+      "f": [
+        0.376002,
+        0.488118,
+        0.651995
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "7.0",
+      "mag": "cd",
+      "p": 1.9588,
+      "gci": 34.5284,
+      "mono": false,
+      "signo_ok": true,
+      "f_ext": 0.037531,
+      "f": [
+        0.082573,
+        0.093212,
+        0.051855
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "7.0",
+      "mag": "ld",
+      "p": 3.425,
+      "gci": 7.4883,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 13.326631,
+      "f": [
+        4.5536,
+        5.2367,
+        12.5734
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "8.0",
+      "mag": "cl",
+      "p": 0.6288,
+      "gci": 56.7848,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 0.978955,
+      "f": [
+        0.398071,
+        0.506105,
+        0.673155
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "8.0",
+      "mag": "cd",
+      "p": 1.2424,
+      "gci": 40.2369,
+      "mono": false,
+      "signo_ok": true,
+      "f_ext": 0.054137,
+      "f": [
+        0.100103,
+        0.11494,
+        0.079836
+      ]
+    },
+    {
+      "perfil": "naca0012",
+      "alpha": "8.0",
+      "mag": "ld",
+      "p": 3.2393,
+      "gci": 7.0733,
+      "mono": true,
+      "signo_ok": true,
+      "f_ext": 8.908924,
+      "f": [
+        3.9766,
+        4.4032,
+        8.4318
+      ]
+    }
+  ]
+}

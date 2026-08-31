@@ -1,0 +1,28 @@
+{
+  "fina_estabilidad": {
+    "estado": "OK",
+    "cl": 0.548856,
+    "cd": 0.051153,
+    "ld": 10.7297,
+    "cl_ci95": 0.355527,
+    "cd_ci95": 0.031347,
+    "iters_efectivas": 3000,
+    "dx": 0.001,
+    "alpha": 4.0,
+    "iters": 3000,
+    "wall_s": 483.0
+  },
+  "media_exactitud": {
+    "estado": "OK",
+    "cl": 0.696481,
+    "cd": 0.016924,
+    "ld": 41.1546,
+    "cl_ci95": 0.001455,
+    "cd_ci95": 0.000156,
+    "iters_efectivas": 26000,
+    "dx": 0.002,
+    "alpha": 4.0,
+    "iters": 26000,
+    "wall_s": 1075.9
+  }
+}

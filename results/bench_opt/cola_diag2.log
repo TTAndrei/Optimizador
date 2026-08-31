@@ -1,0 +1,151 @@
+=== diagnostico de divergencia, segundo intento 06:48:34 ===
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/400 [00:00<?, ?it/s] 80%|████████  | 320/400 [01:00<00:15,  5.33it/s]100%|██████████| 400/400 [01:14<00:00,  5.35it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 250] nu_efectiva muy alta: 1.40e-04 (14.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 250] gamma min=0.003 media=0.196
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 400 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.1869 s
+Pasos simulados: 400
+Tiempo total simulación: 74.75 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     0.16 s  (  0.2%)
+  Advección.....................     9.12 s  ( 12.2%)
+  Difusión......................     1.66 s  (  2.2%)
+  Proyección....................    62.45 s  ( 83.5%)
+  Guardado/fuerzas..............     1.33 s  (  1.8%)
+  Otros (overhead)..............     0.04 s  (  0.1%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 62.45 s (83.5% del tiempo total)
+   Tiempo promedio por paso: 0.1561 s
+   Ciclos MG por paso: media=27.78  p95=40.00  max=40
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.051839   0.374060      7.216
+  [save_state] sim_last.npz  (82 arrays, 56 escalares)
+
+--- Resultados (Re=100000, t=0.2651s) ---
+  Cl medio = 0.421211   Cd medio = 0.058063   L/D = 7.25
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.025096      0.210859  N/m
+    Presión                 0.021164      0.211036  N/m
+    Viscosa (fricción)      0.003932     -0.000177  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.050192
+    Cd presión              0.042329  (84.3%)
+    Cd fricción             0.007863  (15.7%)
+  Cl total                  0.421719
+    Cl presión              0.422072  (100.1%)
+    Cl fricción            -0.000353  (-0.1%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.004,7.000] c=0.996  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.86,   7.15]  [   7.82,   8.20]    -0.08449    +0.1697
+   0.40c  [   5.61,   7.40]  [   7.57,   8.45]    -0.00000    +0.0000
+   0.80c  [   5.21,   7.80]  [   7.20,   8.86]    -0.00001    +0.0000
+   1.50c  [   4.58,   8.49]  [   6.53,   9.57]    +0.00001    -0.0000
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.4217
+  Cl (circulación, lazo interior) = +0.1697
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +1.4904
+    ΔCp_TE (extr−intr, x/c≥0.95) = -2.1252  (→0 si Kutta cierra)
+    pico succión Cp_min = -2.384 en x/c=0.875
+────────────────────────────────────────────────────
+
+==================================================================
+REPARTO DE LA DIVERGENCIA RESIDUAL   malla 1772x713, 400 iters
+==================================================================
+zona                                % de |div|   % de celdas
+------------------------------------------------------------------
+borde del dominio (2 capas)              0.04%         0.79%
+interfaz del perfil (1-3 celdas)        21.50%         0.24%
+cerca del perfil (4-12 celdas)          15.15%         0.74%
+interior lejano (>12 celdas)            63.31%        98.24%
+------------------------------------------------------------------
+borde + interfaz                        21.53%         1.03%
+
+Lectura: si 'borde + interfaz' concentra la mayor parte de |div| en una
+fraccion pequena de celdas, la proyeccion esta haciendo su trabajo y el
+x1.76 mide celdas que nadie corrige (caso A). Si el interior lejano pesa
+mucho, el solver no esta anulando la divergencia (caso B).
+
+==================================================================
+COMPATIBILIDAD DE OPERADORES:  ||L·p - a·D(G(p))|| / ||L·p||
+==================================================================
+  suave/one_sided+masked     error =   0.2472   escala =   -0.7062
+  suave/centered+masked      error =   0.2542   escala =   -0.7035
+  ruido/one_sided+face_flux  error =   0.6236   escala =    3.1223
+  ruido/centered+face_flux   error =   0.6238   escala =    3.1255
+  ruido/one_sided+masked     error =   0.6239   escala =    3.1237
+  ruido/centered+masked      error =   0.6241   escala =    3.1250
+  suave/one_sided+face_flux  error =   0.9951   escala =    0.3306
+  suave/centered+face_flux   error =   0.9985   escala =    0.1991
+
+La combinacion que usa produccion es one_sided+face_flux
+(wall_treatment='consistent'). Lo que cuenta es la fila 'suave/': el
+campo de presion real no tiene contenido en Nyquist. La fila 'ruido/'
+es la cota superior y mide cuanto pesa el desacoplamiento par-impar.
+
+==================================================================
+ESTRUCTURA DE LA DIVERGENCIA RESIDUAL
+==================================================================
+  parte tablero (par-impar) : 46.2%
+  parte suave               : 88.7%
+
+Si domina la parte tablero, el suelo de divergencia no lo fija el
+solver iterativo sino la discretizacion colocada, y gastar mas ciclos
+de multigrid no puede bajarlo.
+
+guardado: /home/ttandrei/Proyectos/Optimizador/Optimizador/results/bench_opt/diag_divergencia.json
+=== DIAGNOSTICO COMPLETO 06:49:52 ===

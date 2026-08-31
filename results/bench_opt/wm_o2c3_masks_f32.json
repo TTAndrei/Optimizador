@@ -1,0 +1,40 @@
+{
+  "name": "wm_o2c3_masks_f32",
+  "opts": [
+    "warm_start",
+    "coarse_mask_majority",
+    "fast_masks",
+    "interp_float32"
+  ],
+  "overrides": {
+    "dx_min": 0.002,
+    "mg_max_outer": 2,
+    "mg_cycles_per_outer": 3
+  },
+  "dx": 0.002,
+  "iters": 4000,
+  "wall_s": 173.1,
+  "it_s": 23.112,
+  "s_paso": 0.04327,
+  "gpu_util_media": 68.5,
+  "gpu_util_p95": 74.0,
+  "gpu_util_n": 168,
+  "cl": 0.580031,
+  "cd": 0.027693,
+  "ld": 20.9453,
+  "cl_std": 0.052717,
+  "cd_std": 0.005458,
+  "n_samples": 32,
+  "mg_cycles_media": 5.12,
+  "mg_cycles_p95": 6.0,
+  "mg_cycles_total": 20491,
+  "div_mean": 0.00713557,
+  "div_max": 148.873,
+  "outers_media": 2.0,
+  "outers_p95": 2.0,
+  "outers_max": 2,
+  "frac_converge": 0.0,
+  "div_before_media": 0.004123,
+  "div_after_media": 0.001699,
+  "reduccion_div": 2.43
+}

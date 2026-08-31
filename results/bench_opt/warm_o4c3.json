@@ -1,0 +1,37 @@
+{
+  "name": "warm_o4c3",
+  "opts": [
+    "warm_start"
+  ],
+  "overrides": {
+    "dx_min": 0.002,
+    "mg_max_outer": 4,
+    "mg_cycles_per_outer": 3
+  },
+  "dx": 0.002,
+  "iters": 4000,
+  "wall_s": 330.1,
+  "it_s": 12.118,
+  "s_paso": 0.08252,
+  "gpu_util_media": 54.5,
+  "gpu_util_p95": 64.0,
+  "gpu_util_n": 322,
+  "cl": 0.578086,
+  "cd": 0.026959,
+  "ld": 21.4433,
+  "cl_std": 0.050081,
+  "cd_std": 0.005418,
+  "n_samples": 32,
+  "mg_cycles_media": 7.02,
+  "mg_cycles_p95": 9.0,
+  "mg_cycles_total": 28090,
+  "div_mean": 0.00700497,
+  "div_max": 155.226,
+  "outers_media": 4.0,
+  "outers_p95": 4.0,
+  "outers_max": 4,
+  "frac_converge": 0.0,
+  "div_before_media": 0.003654,
+  "div_after_media": 0.001192,
+  "reduccion_div": 3.07
+}

@@ -1,0 +1,113 @@
+[17:09:42] geometrias en /home/ttandrei/Proyectos/Optimizador/Optimizador/results/formas/geom: circulo (area 0.7854), cuadrado (area 1.0000), gota (area 0.2076)
+[17:22:46] geometrias en /home/ttandrei/Proyectos/Optimizador/Optimizador/results/formas/geom: circulo (area 0.7854), cuadrado (area 1.0000), gota (area 0.2076)
+[17:22:46] === formas: 12 puntos, fases A ===
+[17:22:46] [1/12] circulo Re=1e+03 dx=0.004
+[17:22:46]   modelo=laminar (Re<=1e3, laminar por decreto)
+[17:23:53]   dt=1.090e-03 -> iters=18000 (t~20.0), frame cada 100
+[17:25:58] geometrias en /home/ttandrei/Proyectos/Optimizador/Optimizador/results/formas/geom: circulo (area 0.7854), cuadrado (area 1.0000), gota (area 0.2076)
+[17:25:58] === formas: 12 puntos, fases A ===
+[17:25:58] [1/12] circulo Re=1e+03 dx=0.004
+[17:25:58]   modelo=laminar (Re<=1e3, laminar por decreto)
+[17:27:05]   dt=1.090e-03 -> iters=18000 (t~20.0), frame cada 100
+[17:36:30] geometrias en /home/ttandrei/Proyectos/Optimizador/Optimizador/results/formas/geom: circulo (area 0.7854), cuadrado (area 1.0000), gota (area 0.2076)
+[17:36:30] === formas: 12 puntos, fases A ===
+[17:36:30] [1/12] circulo Re=1e+03 dx=0.004
+[17:36:30]   modelo=laminar (Re<=1e3, laminar por decreto)
+[17:37:36]   dt=1.090e-03 -> iters=18000 (t~20.0), frame cada 100
+[17:45:18]   -> Cd=0.8227±0.003058  Cl=+0.0032  St=None  t=19.184  (462.0s)
+[17:45:18] [2/12] cuadrado Re=1e+03 dx=0.004
+[17:45:18]   modelo=laminar (Re<=1e3, laminar por decreto)
+[17:46:23]   dt=9.412e-04 -> iters=21000 (t~20.0), frame cada 100
+[17:55:09]   -> Cd=1.1486±0.007202  Cl=+0.0254  St=None  t=20.536  (525.8s)
+[17:55:09] [3/12] gota Re=1e+03 dx=0.004
+[17:55:09]   modelo=laminar (Re<=1e3, laminar por decreto)
+[17:56:13]   dt=1.247e-03 -> iters=16000 (t~20.0), frame cada 100
+[18:02:56]   -> Cd=0.3771±0.000747  Cl=+0.0233  St=None  t=19.728  (402.6s)
+[18:02:56] [4/12] circulo Re=1e+04 dx=0.004
+[18:02:56]   sonda SA-BC (2500 it)...
+[18:04:12]   modelo=sa+sa_bc (dt estable)
+[18:04:12]   dt=7.878e-04 -> iters=25000 (t~20.0), frame cada 100
+[18:16:47]   -> Cd=1.1815±0.00106  Cl=+0.0261  St=None  t=6.145  (755.1s)
+[18:16:47] [5/12] cuadrado Re=1e+04 dx=0.004
+[18:16:47]   sonda SA-BC (2500 it)...
+[18:18:04]   modelo=laminar (dt colapsa)
+[18:19:10]   dt=7.170e-04 -> iters=28000 (t~20.0), frame cada 150
+[18:31:25]   -> Cd=1.3579±0.053453  Cl=-0.5730  St=0.1002  t=19.699  (734.1s)
+[18:31:25] [6/12] gota Re=1e+04 dx=0.004
+[18:31:25]   sonda SA-BC (2500 it)...
+[18:32:38]   modelo=sa+sa_bc (dt estable)
+[18:32:38]   dt=9.728e-04 -> iters=21000 (t~20.0), frame cada 100
+[18:43:12]   -> Cd=0.4413±0.000289  Cl=+0.0146  St=None  t=8.759  (633.5s)
+[18:43:12] [7/12] circulo Re=1e+05 dx=0.004
+[18:43:12]   sonda SA-BC (2500 it)...
+[18:44:29]   modelo=laminar (dt colapsa)
+[18:45:36]   dt=6.923e-04 -> iters=29000 (t~20.0), frame cada 150
+[18:58:41]   -> Cd=1.9532±0.078214  Cl=+0.4350  St=0.2814  t=21.495  (784.8s)
+[18:58:41] [8/12] cuadrado Re=1e+05 dx=0.004
+[18:58:41]   sonda SA-BC (2500 it)...
+[18:59:59]   modelo=laminar (dt colapsa)
+[19:01:07]   dt=7.337e-04 -> iters=27000 (t~20.0), frame cada 150
+[19:13:18]   -> Cd=1.6034±0.049478  Cl=-0.7877  St=0.214  t=18.324  (731.3s)
+[19:13:18] [9/12] gota Re=1e+05 dx=0.004
+[19:13:18]   sonda SA-BC (2500 it)...
+[19:14:35]   modelo=sa+sa_bc (dt estable)
+[19:14:35]   dt=9.467e-04 -> iters=21000 (t~20.0), frame cada 100
+[19:25:13]   -> Cd=0.4330±0.000209  Cl=-0.0001  St=None  t=9.378  (638.2s)
+[19:25:13] [10/12] circulo Re=1e+06 dx=0.004
+[19:25:13]   sonda SA-BC (2500 it)...
+[19:26:31]   modelo=laminar (dt colapsa)
+[19:27:38]   dt=5.835e-04 -> iters=34000 (t~20.0), frame cada 150
+[19:42:57]   -> Cd=1.4910±0.055428  Cl=-0.0287  St=0.1594  t=23.767  (919.0s)
+[19:42:57] [11/12] cuadrado Re=1e+06 dx=0.004
+[19:42:57]   sonda SA-BC (2500 it)...
+[19:44:15]   modelo=laminar (dt colapsa)
+[19:45:23]   dt=6.916e-04 -> iters=29000 (t~20.0), frame cada 150
+[19:58:26]   -> Cd=2.1249±0.067617  Cl=+0.4645  St=0.105  t=18.86  (782.8s)
+[19:58:26] [12/12] gota Re=1e+06 dx=0.004
+[19:58:26]   sonda SA-BC (2500 it)...
+[19:59:44]   modelo=sa+sa_bc (dt estable)
+[19:59:44]   dt=9.853e-04 -> iters=20000 (t~20.0), frame cada 100
+[20:09:56]   -> Cd=0.4207±0.000204  Cl=-0.0003  St=None  t=9.279  (611.3s)
+[20:09:56] === fin: 12/12 puntos en 2.56 h ===
+[20:40:19] geometrias en /home/ttandrei/Proyectos/Optimizador/Optimizador/results/formas/geom: circulo (area 0.7854), cuadrado (area 1.0000), gota (area 0.2076)
+[20:40:19] === formas: 6 puntos, fases C ===
+[20:40:19] [1/6] circulo Re=1e+04 dx=0.002
+[20:40:19]   sonda SA-BC (2500 it)...
+[20:42:03]   modelo=sa+sa_bc (dt estable)
+[20:42:03]   dt=4.488e-04 -> iters=45000 (t~20.0), frame cada 200
+[20:53:38] geometrias en /home/ttandrei/Proyectos/Optimizador/Optimizador/results/formas/geom: circulo (area 0.7854), cuadrado (area 1.0000), gota (area 0.2076)
+[20:53:38] === formas: 12 puntos, fases A ===
+[20:53:38] [1/12] circulo Re=1e+03 dx=0.004 YA HECHO
+[20:53:38] [2/12] cuadrado Re=1e+03 dx=0.004 YA HECHO
+[20:53:38] [3/12] gota Re=1e+03 dx=0.004 YA HECHO
+[20:53:38] [4/12] circulo Re=1e+04 dx=0.004
+[20:53:38]   modelo=laminar (heredado de dx=0.004)
+[20:54:46]   dt=8.267e-04 -> iters=24000 (t~20.0), frame cada 100
+[21:05:10]   -> Cd=2.4185±0.05075  Cl=+0.0103  St=0.0998  t=20.245  (623.4s)
+[21:05:10] [5/12] cuadrado Re=1e+04 dx=0.004 YA HECHO
+[21:05:10] [6/12] gota Re=1e+04 dx=0.004
+[21:05:10]   modelo=laminar (heredado de dx=0.004)
+[21:06:15]   dt=9.683e-04 -> iters=21000 (t~20.0), frame cada 100
+[21:15:19]   -> Cd=0.5325±0.009995  Cl=+0.5204  St=0.1097  t=18.514  (542.9s)
+[21:15:19] [7/12] circulo Re=1e+05 dx=0.004 YA HECHO
+[21:15:19] [8/12] cuadrado Re=1e+05 dx=0.004 YA HECHO
+[21:15:19] [9/12] gota Re=1e+05 dx=0.004
+[21:15:19]   modelo=laminar (heredado de dx=0.004)
+[21:16:26]   dt=8.379e-04 -> iters=24000 (t~20.0), frame cada 100
+[21:27:13]   -> Cd=0.4503±0.011187  Cl=+0.3100  St=0.8621  t=18.621  (647.2s)
+[21:27:13] [10/12] circulo Re=1e+06 dx=0.004 YA HECHO
+[21:27:13] [11/12] cuadrado Re=1e+06 dx=0.004 YA HECHO
+[21:27:13] [12/12] gota Re=1e+06 dx=0.004
+[21:27:13]   modelo=laminar (heredado de dx=0.004)
+[21:28:21]   dt=6.691e-04 -> iters=30000 (t~20.0), frame cada 150
+[21:41:45]   -> Cd=0.3314±0.006515  Cl=-0.0569  St=0.0862  t=23.363  (804.0s)
+[21:41:45] === fin: 12/12 puntos en 0.80 h ===
+[21:41:46] geometrias en /home/ttandrei/Proyectos/Optimizador/Optimizador/results/formas/geom: circulo (area 0.7854), cuadrado (area 1.0000), gota (area 0.2076)
+[21:41:46] === formas: 3 puntos, fases C ===
+[21:41:46] [1/3] circulo Re=1e+05 dx=0.002
+[21:41:46]   modelo=laminar (heredado de dx=0.004)
+[21:43:18]   dt=4.736e-04 -> iters=42000 (t~20.0), frame cada 200
+[22:07:52]   -> Cd=1.6894±0.064374  Cl=+1.0230  St=0.2505  t=16.267  (1473.5s)
+[22:07:52] [2/3] cuadrado Re=1e+05 dx=0.002
+[22:07:52]   modelo=laminar (heredado de dx=0.004)
+[22:09:21]   dt=3.472e-04 -> iters=58000 (t~20.0), frame cada 300

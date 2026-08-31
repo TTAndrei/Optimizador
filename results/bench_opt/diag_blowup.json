@@ -1,0 +1,30 @@
+{
+  "opt_2x3": {
+    "estado": "ABORTADA",
+    "wall_s": 43.9,
+    "iters_efectivas": null,
+    "cl": null,
+    "cd": null
+  },
+  "opt_8x5": {
+    "estado": "OK",
+    "wall_s": 124.8,
+    "iters_efectivas": 2000,
+    "cl": 0.135687,
+    "cd": 0.045945
+  },
+  "sin_2x3": {
+    "estado": "OK",
+    "wall_s": 97.9,
+    "iters_efectivas": 2000,
+    "cl": 0.103067,
+    "cd": 0.048782
+  },
+  "sin_8x5": {
+    "estado": "OK",
+    "wall_s": 249.2,
+    "iters_efectivas": 2000,
+    "cl": 0.126887,
+    "cd": 0.04692
+  }
+}

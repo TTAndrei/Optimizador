@@ -137,7 +137,11 @@ CONFIG = {
     'min_te_height_factor': 1.0,        # perfiles con TE afilado
     'wake_refinement_mode': 'long_fine_x',
     'mg_niveles_max': 2,
-    'mg_max_outer': 8,
+    # 2x3 en vez de 8x5: con la semilla de presion activada por defecto
+    # (opt_solver), 5 ciclos por paso dejan menos divergencia que los 35 de
+    # antes. Validado a t=20 en results/polar_optimizada.
+    'mg_max_outer': 2,
+    'mg_cycles_per_outer': 3,
     'divergencia': 0.02,                # tolerancia de la proyección
     'stop_on_clcd_convergence': True,   # parada temprana cuando Cl/Cd se estacionan
 
@@ -1303,7 +1307,11 @@ def simular_perfil(filepath_temp, alpha_deg, config):
             'min_te_height_factor': config.get('min_te_height_factor', 1.0),
             'wake_refinement_mode': config.get('wake_refinement_mode', 'long_fine_x'),
             'mg_niveles_max': config.get('mg_niveles_max', 2),
-            'mg_max_outer': config.get('mg_max_outer', 8),
+            'mg_max_outer': config.get('mg_max_outer', 2),
+            # Sin esta clave el valor de CONFIG se perdia: simular_perfil arma
+            # sim_params con una lista explicita y lo que no este en ella no
+            # llega al simulador, que aplicaria su propio default.
+            'mg_cycles_per_outer': config.get('mg_cycles_per_outer', 3),
             'divergencia': config.get('divergencia', 0.02),
             'stop_on_clcd_convergence': config.get('stop_on_clcd_convergence', True),
             'graficos': False,

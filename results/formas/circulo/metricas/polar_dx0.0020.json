@@ -1,0 +1,71 @@
+{
+  "1e+05": {
+    "cl": 1.023016,
+    "cd": 1.689375,
+    "ld": 0.6056,
+    "cl_raw": 1.023016,
+    "cl_audit_inst": -1.070924,
+    "cl_std": 0.878358,
+    "cd_std": 0.425707,
+    "n_samples": 168,
+    "cl_ci95": 0.132823,
+    "cd_ci95": 0.064374,
+    "ld_ci95": 0.0819,
+    "converged_clcd": false,
+    "t_conv_clcd": null,
+    "iters_efectivas": 42000,
+    "cl_cp_discrepancy": 1.10971,
+    "cl_cp_discrepancy_flag": true,
+    "wall_s": 1473.5,
+    "dx": 0.002,
+    "iters_programadas": 42000,
+    "alpha": 0.0,
+    "Re": 100000.0,
+    "forma": "circulo",
+    "t_final": 16.267,
+    "dt_medio": 0.0003872999463762556,
+    "dt_sonda": 0.0004735914866129557,
+    "modelo_turbulencia": "laminar",
+    "veredicto_sa": {
+      "colapso": true,
+      "motivo": "heredado de dx=0.004",
+      "sonda_heredada": {
+        "dt_ini": 0.0008701663904099001,
+        "dt_fin": 0.000512491332160102,
+        "dt_cfl": 0.001,
+        "razon_cfl": 0.5124913321601019,
+        "razon_tendencia": 0.5889578565757844,
+        "colapso": true,
+        "motivo": "dt colapsa",
+        "dx": 0.004
+      },
+      "sonda_laminar": {
+        "dt_ini": 0.0004856278830104404,
+        "dt_fin": 0.0004735914866129557,
+        "dt_cfl": 0.0005,
+        "razon_cfl": 0.9471829732259114,
+        "razon_tendencia": 0.9752147748953988,
+        "colapso": false
+      }
+    },
+    "strouhal": 0.2505,
+    "cl_amplitud": 1.45658,
+    "pico_espectral": 4133.9,
+    "parada_offline_cd": null,
+    "campos_volcados": 210,
+    "Lx": 24.0,
+    "Ly": 16.0,
+    "cx": 6.0,
+    "optimizaciones": [
+      "coarse_mask_majority",
+      "fast_masks",
+      "interp_float32",
+      "warm_start",
+      "warm_start_filtered"
+    ],
+    "presupuesto": {
+      "mg_max_outer": 2,
+      "mg_cycles_per_outer": 3
+    }
+  }
+}

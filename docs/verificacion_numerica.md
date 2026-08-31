@@ -1,5 +1,22 @@
 # Verificación numérica del solver
 
+> ## ⚠ DOCUMENTO CONGELADO — leer antes de citar
+>
+> **Congelado el 2026-08-03. No incorpora nada de lo que vino después:** el fix
+> del bug de mezcla de ventanas del fitness, el recalibrado del criterio de
+> parada sobre CI95, el estudio de independencia de dominio, la optimización del
+> solver de presión, `warm_start_filtered`, ni el **estudio final del
+> 2026-08-26**.
+>
+> **La verificación de malla que se presenta en el TFG es la de
+> [`resultados_finales/`](../resultados_finales/README.md)** — 72 puntos, terna
+> 0.008/0.004/0.002 con r=2, 9 ángulos, extrapolación robusta. De este documento
+> siguen siendo válidos el diagnóstico del criterio de parada (secciones 1-2), la
+> re-evaluación de ganadores, el contraste con XFOIL y el análisis del ranking del
+> GA. **Su sección de convergencia de malla está superada.**
+>
+> Actualizarlo es el punto 3 de los próximos pasos en `RESUMEN.md`.
+
 Fecha: 2026-08-02, revisado 2026-08-03. Datos y figuras en `results/verificacion_numerica/`.
 La campaña anterior está archivada en `results/1eraGranOptimizacion/`.
 

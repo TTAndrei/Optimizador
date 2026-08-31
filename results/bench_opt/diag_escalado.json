@@ -1,0 +1,32 @@
+{
+  "warm": {
+    "estado": "ABORTADA",
+    "wall_s": 43.8
+  },
+  "warm_escalado": {
+    "estado": "ABORTADA",
+    "wall_s": 59.6
+  },
+  "warm_filtrado": {
+    "estado": "OK",
+    "cl": 0.092944,
+    "cd": 0.046536,
+    "ld": 1.9972,
+    "cl_ci95": 0.002372,
+    "cd_ci95": 0.000104,
+    "iters_efectivas": 13000,
+    "wall_s": 387.0,
+    "div_media_2a_mitad": 0.13923953473567963
+  },
+  "warm_filt_esc": {
+    "estado": "OK",
+    "cl": 0.091174,
+    "cd": 0.046638,
+    "ld": 1.9549,
+    "cl_ci95": 0.002625,
+    "cd_ci95": 8.8e-05,
+    "iters_efectivas": 13000,
+    "wall_s": 385.3,
+    "div_media_2a_mitad": 0.14296431839466095
+  }
+}

@@ -1,0 +1,104 @@
+=== t20_full terminado, re-perfilando 12:58:42 ===
+[perfil] opciones activas: ['coarse_mask_majority', 'fast_masks', 'interp_float32', 'warm_start']
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/1000 [00:00<?, ?it/s]100%|██████████| 1000/1000 [00:48<00:00, 20.74it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 500] nu_efectiva muy alta: 2.51e-04 (25.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 500] gamma min=0.002 media=0.198
+\n[Iter 500] Convergencia a steady: u=1.17e-02, v=4.85e-01, p=1.05e+00
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 1000 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.0482 s
+Pasos simulados: 1000
+Tiempo total simulación: 48.20 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     0.44 s  (  0.9%)
+  Advección.....................    17.17 s  ( 35.6%)
+  Difusión......................     4.84 s  ( 10.0%)
+  Proyección....................    24.09 s  ( 50.0%)
+  Guardado/fuerzas..............     1.53 s  (  3.2%)
+  Otros (overhead)..............     0.13 s  (  0.3%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 24.09 s (50.0% del tiempo total)
+   Tiempo promedio por paso: 0.0241 s
+   Ciclos MG por paso: media=5.49  p95=6.00  max=6
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.044014   0.445588     10.124
+[perfil] bucle de 1000 iteraciones terminado, sin diagnosticos
+Collecting data...
+Generating '/tmp/nsys-report-a763.qdstrm'
+[1/1] [0%                          ] nuevo.nsys-rep[1/1] [0%                          ] nuevo.nsys-rep[1/1] [5%                          ] nuevo.nsys-rep[1/1] [6%                          ] nuevo.nsys-rep[1/1] [=====30%                    ] nuevo.nsys-rep[1/1] [===23%                      ] nuevo.nsys-rep[1/1] [==18%                       ] nuevo.nsys-rep[1/1] [======33%                   ] nuevo.nsys-rep[1/1] [====27%                     ] nuevo.nsys-rep[1/1] [===23%                      ] nuevo.nsys-rep[1/1] [==21%                       ] nuevo.nsys-rep[1/1] [==18%                       ] nuevo.nsys-rep[1/1] [=16%                        ] nuevo.nsys-rep[1/1] [=15%                        ] nuevo.nsys-rep[1/1] [14%                         ] nuevo.nsys-rep[1/1] [13%                         ] nuevo.nsys-rep[1/1] [12%                         ] nuevo.nsys-rep[1/1] [11%                         ] nuevo.nsys-rep[1/1] [10%                         ] nuevo.nsys-rep[1/1] [9%                          ] nuevo.nsys-rep[1/1] [8%                          ] nuevo.nsys-rep[1/1] [7%                          ] nuevo.nsys-rep[1/1] [6%                          ] nuevo.nsys-rep[1/1] [5%                          ] nuevo.nsys-rep[1/1] [0%                          ] nuevo.nsys-rep[1/1] [5%                          ] nuevo.nsys-rep[1/1] [6%                          ] nuevo.nsys-rep[1/1] [7%                          ] nuevo.nsys-rep[1/1] [8%                          ] nuevo.nsys-rep[1/1] [9%                          ] nuevo.nsys-rep[1/1] [10%                         ] nuevo.nsys-rep[1/1] [11%                         ] nuevo.nsys-rep[1/1] [12%                         ] nuevo.nsys-rep[1/1] [13%                         ] nuevo.nsys-rep[1/1] [14%                         ] nuevo.nsys-rep[1/1] [=15%                        ] nuevo.nsys-rep[1/1] [=16%                        ] nuevo.nsys-rep[1/1] [=17%                        ] nuevo.nsys-rep[1/1] [==18%                       ] nuevo.nsys-rep[1/1] [==19%                       ] nuevo.nsys-rep[1/1] [==20%                       ] nuevo.nsys-rep[1/1] [==21%                       ] nuevo.nsys-rep[1/1] [===22%                      ] nuevo.nsys-rep[1/1] [===23%                      ] nuevo.nsys-rep[1/1] [===24%                      ] nuevo.nsys-rep[1/1] [====25%                     ] nuevo.nsys-rep[1/1] [====26%                     ] nuevo.nsys-rep[1/1] [====27%                     ] nuevo.nsys-rep[1/1] [====28%                     ] nuevo.nsys-rep[1/1] [=====29%                    ] nuevo.nsys-rep[1/1] [=====30%                    ] nuevo.nsys-rep[1/1] [=====31%                    ] nuevo.nsys-rep[1/1] [=====32%                    ] nuevo.nsys-rep[1/1] [======33%                   ] nuevo.nsys-rep[1/1] [======34%                   ] nuevo.nsys-rep[1/1] [======35%                   ] nuevo.nsys-rep[1/1] [=======36%                  ] nuevo.nsys-rep[1/1] [=======37%                  ] nuevo.nsys-rep[1/1] [=======38%                  ] nuevo.nsys-rep[1/1] [=======39%                  ] nuevo.nsys-rep[1/1] [========40%                 ] nuevo.nsys-rep[1/1] [========41%                 ] nuevo.nsys-rep[1/1] [========42%                 ] nuevo.nsys-rep[1/1] [=========43%                ] nuevo.nsys-rep[1/1] [=========44%                ] nuevo.nsys-rep[1/1] [=========45%                ] nuevo.nsys-rep[1/1] [=========46%                ] nuevo.nsys-rep[1/1] [==========47%               ] nuevo.nsys-rep[1/1] [==========48%               ] nuevo.nsys-rep[1/1] [==========49%               ] nuevo.nsys-rep[1/1] [===========50%              ] nuevo.nsys-rep[1/1] [===========51%              ] nuevo.nsys-rep[1/1] [===========52%              ] nuevo.nsys-rep[1/1] [===========53%              ] nuevo.nsys-rep[1/1] [============54%             ] nuevo.nsys-rep[1/1] [============55%             ] nuevo.nsys-rep[1/1] [============56%             ] nuevo.nsys-rep[1/1] [============57%             ] nuevo.nsys-rep[1/1] [=============58%            ] nuevo.nsys-rep[1/1] [=============59%            ] nuevo.nsys-rep[1/1] [=============60%            ] nuevo.nsys-rep[1/1] [==============61%           ] nuevo.nsys-rep[1/1] [==============62%           ] nuevo.nsys-rep[1/1] [==============63%           ] nuevo.nsys-rep[1/1] [==============64%           ] nuevo.nsys-rep[1/1] [===============65%          ] nuevo.nsys-rep[1/1] [===============66%          ] nuevo.nsys-rep[1/1] [===============67%          ] nuevo.nsys-rep[1/1] [================68%         ] nuevo.nsys-rep[1/1] [================69%         ] nuevo.nsys-rep[1/1] [================70%         ] nuevo.nsys-rep[1/1] [================71%         ] nuevo.nsys-rep[1/1] [=================72%        ] nuevo.nsys-rep[1/1] [=================73%        ] nuevo.nsys-rep[1/1] [=================74%        ] nuevo.nsys-rep[1/1] [==================75%       ] nuevo.nsys-rep[1/1] [========================100%] nuevo.nsys-rep[1/1] [========================100%] nuevo.nsys-rep
+Generated:
+	/home/ttandrei/Proyectos/Optimizador/Optimizador/results/bench_opt/perfil/nuevo.nsys-rep
+
+=== kernels, configuracion NUEVA ===
+| Time (%) | Total Time (ns) | Instances | Avg (ns)  | Med (ns)  | Min (ns) | Max (ns) | StdDev (ns) |                                                 Name                                                 |
+|     14,0 |   3.553.290.092 |   232.419 |  15.288,0 |  20.288,0 |    1.087 |  115.455 |    12.618,0 | cupy_multiply__float32_float32_float32                                                               |
+|     13,0 |   3.516.152.082 |   351.424 |  10.005,0 |   3.168,0 |    2.912 |   84.607 |    12.538,0 | rb_gs_sor                                                                                            |
+|     12,0 |   3.071.979.172 |   204.158 |  15.047,0 |   1.312,0 |    1.247 |  400.798 |    21.365,0 | cupy_prepare_array_indexing                                                                          |
+|     10,0 |   2.550.079.930 |   131.447 |  19.400,0 |  29.567,0 |    1.087 |  163.871 |    14.098,0 | cupy_add__float32_float32_float32                                                                    |
+|      6,0 |   1.572.052.920 |    90.085 |  17.450,0 |   1.632,0 |    1.439 |  358.911 |    17.288,0 | cupy_take                                                                                            |
+|      5,0 |   1.408.886.710 |    91.737 |  15.357,0 |   5.664,0 |    1.087 |  357.694 |    14.893,0 | cupy_subtract__float32_float32_float32                                                               |
+|      3,0 |     854.344.874 |   130.730 |   6.535,0 |   1.632,0 |    1.471 |   35.328 |     8.993,0 | cupy_scan_naive                                                                                      |
+|      2,0 |     558.940.884 |   123.926 |   4.510,0 |   1.440,0 |    1.120 |  112.480 |     7.079,0 | cupy_copy__float32_float32                                                                           |
+|      2,0 |     524.099.012 |    71.974 |   7.281,0 |   1.088,0 |    1.024 |   25.727 |     8.800,0 | cupy_subtract__float_float32_float32                                                                 |
+|      1,0 |     480.323.538 |   148.257 |   3.239,0 |   1.504,0 |    1.247 |   16.768 |     3.947,0 | cupy_copy_where__float32_bool_float32                                                                |
+|      1,0 |     448.604.056 |    28.626 |  15.671,0 |  20.256,0 |    1.119 |   39.552 |    13.024,0 | cupy_true_divide__float32_float32_float32                                                            |
+|      1,0 |     435.588.089 |    56.041 |   7.772,0 |   1.248,0 |    1.055 |   25.472 |     8.908,0 | cupy_clip__float32_float_float_float32                                                               |
+|      1,0 |     328.592.585 |    31.049 |  10.583,0 |  11.520,0 |    1.312 |   13.344 |     2.985,0 | cupy_scatter_update_mask                                                                             |
+|      1,0 |     328.171.633 |    80.470 |   4.078,0 |   1.408,0 |    1.279 |   17.536 |     3.494,0 | cupy_bsum_shfl                                                                                       |
+|      1,0 |     325.884.583 |    39.078 |   8.339,0 |   1.088,0 |    1.024 |  376.478 |     9.390,0 | cupy_floor__float32_float32                                                                          |
+
+=== API de CUDA, configuracion NUEVA ===
+| Time (%) | Total Time (ns) | Num Calls |  Avg (ns)   | Med (ns) | Min (ns) |  Max (ns)  | StdDev (ns)  |              Name              |
+|     49,0 |   9.853.534.271 |   137.048 |    71.898,0 | 10.800,0 |    4.038 |  7.455.859 |    464.214,0 | cudaMemcpyAsync                |
+|     42,0 |   8.538.141.558 | 2.307.301 |     3.700,0 |  3.487,0 |    2.404 |    286.858 |      1.524,0 | cuLaunchKernel                 |
+|      5,0 |   1.166.713.929 |   244.857 |     4.764,0 |  4.940,0 |    1.914 |    260.218 |      1.727,0 | cudaMemsetAsync                |
+|      0,0 |     161.833.915 |    36.350 |     4.452,0 |  4.578,0 |    2.775 |     56.015 |      1.393,0 | cudaLaunchKernel               |
+|      0,0 |     102.433.890 |        94 | 1.089.722,0 | 70.026,0 |    2.164 | 97.134.413 | 10.012.852,0 | cudaMalloc                     |
+|      0,0 |      97.688.598 |    84.061 |     1.162,0 |  1.152,0 |      521 |     21.370 |        301,0 | cudaStreamSynchronize          |
+|      0,0 |      69.866.347 |       157 |   445.008,0 | 56.416,0 |   23.494 |  5.352.144 |  1.214.482,0 | cuModuleLoadData               |
+=== REPERFILADO COMPLETO 13:00:11 ===

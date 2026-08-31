@@ -1,0 +1,25 @@
+{
+  "0.0": {
+    "cl": 0.103052,
+    "cd": 0.040581,
+    "ld": 2.5394,
+    "cl_raw": 0.103052,
+    "cl_audit_inst": 0.088151,
+    "cl_std": 0.023431,
+    "cd_std": 0.001591,
+    "n_samples": 104,
+    "cl_ci95": 0.004503,
+    "cd_ci95": 0.000306,
+    "ld_ci95": 0.1126,
+    "converged_clcd": false,
+    "t_conv_clcd": null,
+    "iters_efectivas": 26000,
+    "cl_cp_discrepancy": 0.02775,
+    "cl_cp_discrepancy_flag": false,
+    "wall_s": 1110.9,
+    "dx": 0.002,
+    "iters_programadas": 26000,
+    "alpha": 0.0,
+    "Re": 100000.0
+  }
+}

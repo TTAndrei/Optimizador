@@ -1,0 +1,95 @@
+{
+ "referencia": "meseta del ajuste cuadratico, media de N=7,8,9",
+ "por_N": {
+  "1": {
+   "desvio_mediano_pct": 5.597,
+   "desvio_p90_pct": 13.017,
+   "n_casos": 27
+  },
+  "2": {
+   "desvio_mediano_pct": 2.389,
+   "desvio_p90_pct": 6.763,
+   "n_casos": 27
+  },
+  "3": {
+   "desvio_mediano_pct": 1.643,
+   "desvio_p90_pct": 3.807,
+   "n_casos": 27
+  },
+  "4": {
+   "desvio_mediano_pct": 1.644,
+   "desvio_p90_pct": 2.771,
+   "n_casos": 27
+  },
+  "5": {
+   "desvio_mediano_pct": 2.556,
+   "desvio_p90_pct": 4.114,
+   "n_casos": 27
+  },
+  "6": {
+   "desvio_mediano_pct": 3.799,
+   "desvio_p90_pct": 6.233,
+   "n_casos": 27
+  },
+  "7": {
+   "desvio_mediano_pct": 5.324,
+   "desvio_p90_pct": 8.604,
+   "n_casos": 27
+  },
+  "8": {
+   "desvio_mediano_pct": 7.49,
+   "desvio_p90_pct": 11.333,
+   "n_casos": 27
+  },
+  "9": {
+   "desvio_mediano_pct": 9.887,
+   "desvio_p90_pct": 14.258,
+   "n_casos": 27
+  },
+  "10": {
+   "desvio_mediano_pct": 11.454,
+   "desvio_p90_pct": 17.274,
+   "n_casos": 27
+  },
+  "11": {
+   "desvio_mediano_pct": 12.72,
+   "desvio_p90_pct": 20.414,
+   "n_casos": 27
+  },
+  "12": {
+   "desvio_mediano_pct": 14.057,
+   "desvio_p90_pct": 23.896,
+   "n_casos": 27
+  }
+ },
+ "N_optimo_por_caso": {
+  "dx0.0080_a0.0": 4,
+  "dx0.0080_a1.0": 3,
+  "dx0.0080_a2.0": 4,
+  "dx0.0080_a3.0": 2,
+  "dx0.0080_a4.0": 4,
+  "dx0.0080_a5.0": 4,
+  "dx0.0080_a6.0": 4,
+  "dx0.0080_a7.0": 1,
+  "dx0.0080_a8.0": 3,
+  "dx0.0040_a0.0": 3,
+  "dx0.0040_a1.0": 3,
+  "dx0.0040_a2.0": 3,
+  "dx0.0040_a3.0": 3,
+  "dx0.0040_a4.0": 3,
+  "dx0.0040_a5.0": 3,
+  "dx0.0040_a6.0": 3,
+  "dx0.0040_a7.0": 3,
+  "dx0.0040_a8.0": 2,
+  "dx0.0020_a0.0": 4,
+  "dx0.0020_a1.0": 5,
+  "dx0.0020_a2.0": 4,
+  "dx0.0020_a3.0": 4,
+  "dx0.0020_a4.0": 4,
+  "dx0.0020_a5.0": 4,
+  "dx0.0020_a6.0": 4,
+  "dx0.0020_a7.0": 3,
+  "dx0.0020_a8.0": 3
+ },
+ "N_optimo_mediano": 3
+}

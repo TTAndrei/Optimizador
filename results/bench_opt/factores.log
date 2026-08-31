@@ -1,0 +1,353 @@
+[02:37:36] --- fac_compatible  opts=-  overrides={'dx_min': 0.002, 'mg_pre_suavizado': 1, 'mg_post_suavizado': 1, 'projection_variant': 'compatible_flux'}
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/400 [00:00<?, ?it/s] 64%|██████▎   | 254/400 [01:00<00:34,  4.22it/s] 64%|██████▎   | 254/400 [01:20<00:34,  4.22it/s]100%|██████████| 400/400 [01:34<00:00,  4.23it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[SA-BC] [Iter 250] gamma min=0.002 media=0.212
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 400 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.2367 s
+Pasos simulados: 400
+Tiempo total simulación: 94.67 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     0.17 s  (  0.2%)
+  Advección.....................     9.20 s  (  9.7%)
+  Difusión......................     1.68 s  (  1.8%)
+  Proyección....................    82.23 s  ( 86.9%)
+  Guardado/fuerzas..............     1.34 s  (  1.4%)
+  Otros (overhead)..............     0.04 s  (  0.0%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 82.23 s (86.9% del tiempo total)
+   Tiempo promedio por paso: 0.2056 s
+   Ciclos MG por paso: media=40.00  p95=40.00  max=40
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.071945   0.392121      5.450
+  [save_state] sim_last.npz  (82 arrays, 56 escalares)
+
+--- Resultados (Re=100000, t=0.3338s) ---
+  Cl medio = 0.456041   Cd medio = 0.084105   L/D = 5.42
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.032031      0.199660  N/m
+    Presión                 0.029341      0.199738  N/m
+    Viscosa (fricción)      0.002690     -0.000078  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.064062
+    Cd presión              0.058682  (91.6%)
+    Cd fricción             0.005380  (8.4%)
+  Cl total                  0.399320
+    Cl presión              0.399475  (100.0%)
+    Cl fricción            -0.000156  (-0.0%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.004,7.000] c=0.996  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.86,   7.15]  [   7.82,   8.20]    -0.07621    +0.1530
+   0.40c  [   5.61,   7.40]  [   7.57,   8.45]    -0.00192    +0.0039
+   0.80c  [   5.21,   7.80]  [   7.20,   8.86]    +0.00032    -0.0006
+   1.50c  [   4.58,   8.49]  [   6.53,   9.57]    -0.00037    +0.0007
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.3993
+  Cl (circulación, lazo interior) = +0.1530
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +1.2237
+    ΔCp_TE (extr−intr, x/c≥0.95) = -1.7981  (→0 si Kutta cierra)
+    pico succión Cp_min = -1.977 en x/c=0.905
+────────────────────────────────────────────────────
+[02:39:14] fac_compatible: 4.101 it/s  gpu=40.2%  cyc=40.0  outers=8.0  conv=0.0  Cl=0.391775  Cd=0.069435  div=0.012  (97.5s)
+[02:39:14] --- fac_noibm  opts=-  overrides={'dx_min': 0.002, 'mg_pre_suavizado': 1, 'mg_post_suavizado': 1, 'mg_apply_ibm_each_outer': False}
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/400 [00:00<?, ?it/s] 82%|████████▏ | 328/400 [01:00<00:13,  5.47it/s]100%|██████████| 400/400 [01:13<00:00,  5.45it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 250] nu_efectiva muy alta: 1.39e-04 (13.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 250] gamma min=0.003 media=0.196
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 400 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.1836 s
+Pasos simulados: 400
+Tiempo total simulación: 73.45 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     0.17 s  (  0.2%)
+  Advección.....................     9.25 s  ( 12.6%)
+  Difusión......................     1.70 s  (  2.3%)
+  Proyección....................    60.94 s  ( 83.0%)
+  Guardado/fuerzas..............     1.36 s  (  1.8%)
+  Otros (overhead)..............     0.04 s  (  0.1%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 60.94 s (83.0% del tiempo total)
+   Tiempo promedio por paso: 0.1524 s
+   Ciclos MG por paso: media=31.42  p95=40.00  max=40
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.052332   0.380890      7.278
+  [save_state] sim_last.npz  (82 arrays, 56 escalares)
+
+--- Resultados (Re=100000, t=0.2657s) ---
+  Cl medio = 0.440482   Cd medio = 0.059545   L/D = 7.40
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.025588      0.218399  N/m
+    Presión                 0.021668      0.218571  N/m
+    Viscosa (fricción)      0.003920     -0.000173  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.051176
+    Cd presión              0.043336  (84.7%)
+    Cd fricción             0.007840  (15.3%)
+  Cl total                  0.436797
+    Cl presión              0.437143  (100.1%)
+    Cl fricción            -0.000345  (-0.1%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.004,7.000] c=0.996  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.86,   7.15]  [   7.82,   8.20]    -0.08485    +0.1704
+   0.40c  [   5.61,   7.40]  [   7.57,   8.45]    -0.00000    +0.0000
+   0.80c  [   5.21,   7.80]  [   7.20,   8.86]    -0.00000    +0.0000
+   1.50c  [   4.58,   8.49]  [   6.53,   9.57]    -0.00000    +0.0000
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.4368
+  Cl (circulación, lazo interior) = +0.1704
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +1.2220
+    ΔCp_TE (extr−intr, x/c≥0.95) = -1.7785  (→0 si Kutta cierra)
+    pico succión Cp_min = -1.902 en x/c=0.905
+────────────────────────────────────────────────────
+[02:40:30] fac_noibm: 5.248 it/s  gpu=38.5%  cyc=31.42  outers=8.0  conv=0.0  Cl=0.388942  Cd=0.051822  div=0.0142  (76.2s)
+[02:40:31] --- fac_adj  opts=-  overrides={'dx_min': 0.002, 'mg_pre_suavizado': 1, 'mg_post_suavizado': 1, 'usar_adjoint_correction': True}
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/400 [00:00<?, ?it/s]  0%|          | 0/400 [00:00<?, ?it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+======================================================================
+[ERROR] Blowup de velocidad (50.0 m/s) en iteración 0 — simulación inestable
+======================================================================
+   |u|_max=50.00, umbral=50.00
+   dt_use=1.00e-03
+Traceback (most recent call last):
+  File "/home/ttandrei/Proyectos/Optimizador/Optimizador/scripts/agent_tests/bench_opt.py", line 622, in <module>
+    main()
+    ~~~~^^
+  File "/home/ttandrei/Proyectos/Optimizador/Optimizador/scripts/agent_tests/bench_opt.py", line 615, in main
+    run_variant(a.run, opts=a.opt, iters=a.iters, factor=a.factor, **ov)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ttandrei/Proyectos/Optimizador/Optimizador/scripts/agent_tests/bench_opt.py", line 307, in run_variant
+    mesh = Simulador2D.main(**params)
+  File "/home/ttandrei/Proyectos/Optimizador/Optimizador/Simulador2D.py", line 8300, in main
+    raise RuntimeError(f"Simulación abortada: {motivo} en iteración {it}")
+RuntimeError: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 0
+[02:40:32] --- fac_maskmaj  opts=['coarse_mask_majority']  overrides={'dx_min': 0.002, 'mg_pre_suavizado': 1, 'mg_post_suavizado': 1}
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/400 [00:00<?, ?it/s] 82%|████████▏ | 328/400 [01:00<00:13,  5.47it/s]100%|██████████| 400/400 [01:12<00:00,  5.49it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 250] nu_efectiva muy alta: 1.39e-04 (13.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 250] gamma min=0.003 media=0.196
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 400 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.1821 s
+Pasos simulados: 400
+Tiempo total simulación: 72.83 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     0.17 s  (  0.2%)
+  Advección.....................     9.24 s  ( 12.7%)
+  Difusión......................     1.70 s  (  2.3%)
+  Proyección....................    60.33 s  ( 82.8%)
+  Guardado/fuerzas..............     1.35 s  (  1.9%)
+  Otros (overhead)..............     0.04 s  (  0.1%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 60.33 s (82.8% del tiempo total)
+   Tiempo promedio por paso: 0.1508 s
+   Ciclos MG por paso: media=28.03  p95=40.00  max=40
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.051974   0.378010      7.273
+  [save_state] sim_last.npz  (82 arrays, 56 escalares)
+
+--- Resultados (Re=100000, t=0.2652s) ---
+  Cl medio = 0.422917   Cd medio = 0.058073   L/D = 7.28
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.025044      0.210609  N/m
+    Presión                 0.021108      0.210788  N/m
+    Viscosa (fricción)      0.003936     -0.000179  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.050088
+    Cd presión              0.042216  (84.3%)
+    Cd fricción             0.007872  (15.7%)
+  Cl total                  0.421218
+    Cl presión              0.421576  (100.1%)
+    Cl fricción            -0.000358  (-0.1%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.004,7.000] c=0.996  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.86,   7.15]  [   7.82,   8.20]    -0.08464    +0.1700
+   0.40c  [   5.61,   7.40]  [   7.57,   8.45]    -0.00000    +0.0000
+   0.80c  [   5.21,   7.80]  [   7.20,   8.86]    -0.00001    +0.0000
+   1.50c  [   4.58,   8.49]  [   6.53,   9.57]    +0.00001    -0.0000
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.4212
+  Cl (circulación, lazo interior) = +0.1700
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +1.7377
+    ΔCp_TE (extr−intr, x/c≥0.95) = -2.3719  (→0 si Kutta cierra)
+    pico succión Cp_min = -2.774 en x/c=0.875
+────────────────────────────────────────────────────
+[02:41:48] fac_maskmaj: 5.291 it/s  gpu=39.7%  cyc=28.03  outers=8.0  conv=0.0  Cl=0.385728  Cd=0.051444  div=0.0142  (75.6s)

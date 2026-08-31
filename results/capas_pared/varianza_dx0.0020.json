@@ -1,0 +1,56 @@
+{
+ "dx": 0.002,
+ "alpha": 4.0,
+ "sigma_capa1": 0.007750338968748929,
+ "corr_capa1_capa2": 0.8486618517808867,
+ "N": {
+  "1": {
+   "factor_teorico": 1.0,
+   "factor_empirico": 1.0
+  },
+  "2": {
+   "factor_teorico": 2.5,
+   "factor_empirico": 1.2581
+  },
+  "3": {
+   "factor_teorico": 1.4583,
+   "factor_empirico": 1.2003
+  },
+  "4": {
+   "factor_teorico": 1.05,
+   "factor_empirico": 1.1337
+  },
+  "5": {
+   "factor_teorico": 0.825,
+   "factor_empirico": 1.0829
+  },
+  "6": {
+   "factor_teorico": 0.681,
+   "factor_empirico": 1.0344
+  },
+  "7": {
+   "factor_teorico": 0.5804,
+   "factor_empirico": 0.9896
+  },
+  "8": {
+   "factor_teorico": 0.506,
+   "factor_empirico": 0.9478
+  },
+  "9": {
+   "factor_teorico": 0.4486,
+   "factor_empirico": 0.9097
+  },
+  "10": {
+   "factor_teorico": 0.403,
+   "factor_empirico": 0.8751
+  },
+  "11": {
+   "factor_teorico": 0.3659,
+   "factor_empirico": 0.8444
+  },
+  "12": {
+   "factor_teorico": 0.3351,
+   "factor_empirico": 0.817
+  }
+ }
+}

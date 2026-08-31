@@ -1,0 +1,39 @@
+{
+  "name": "linesy_o2c2",
+  "opts": [
+    "line_smoother_y"
+  ],
+  "overrides": {
+    "dx_min": 0.002,
+    "mg_max_outer": 2,
+    "mg_cycles_per_outer": 2,
+    "mg_pre_suavizado": 1,
+    "mg_post_suavizado": 1
+  },
+  "dx": 0.002,
+  "iters": 4000,
+  "wall_s": 1669.4,
+  "it_s": 2.396,
+  "s_paso": 0.41734,
+  "gpu_util_media": 94.1,
+  "gpu_util_p95": 100.0,
+  "gpu_util_n": 1631,
+  "cl": 0.480489,
+  "cd": 0.034009,
+  "ld": 14.1284,
+  "cl_std": 0.087371,
+  "cd_std": 0.006013,
+  "n_samples": 32,
+  "mg_cycles_media": 4.0,
+  "mg_cycles_p95": 4.0,
+  "mg_cycles_total": 16000,
+  "div_mean": 0.0132698,
+  "div_max": 147.756,
+  "outers_media": 2.0,
+  "outers_p95": 2.0,
+  "outers_max": 2,
+  "frac_converge": 0.0,
+  "div_before_media": 0.008679,
+  "div_after_media": 0.006703,
+  "reduccion_div": 1.29
+}

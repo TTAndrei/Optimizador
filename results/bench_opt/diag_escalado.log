@@ -1,0 +1,122 @@
+
+=== warm  dx=0.004 alpha=0.0 13000 iters {'mg_max_outer': 2, 'mg_cycles_per_outer': 3}
+    activas=['coarse_mask_majority', 'fast_masks', 'interp_float32', 'warm_start'] ===
+Malla variable: 918 x 387 nodos
+  X: dx_min=0.003452, dx_max=0.200000
+  Y: dy_min=0.004000, dy_max=0.200000
+  [Ghost-cell] 4 image points corregidos | 1 irreparables (forzados a 0) | total ghost=485
+dt = 0.002000 s  (CFL=0.5)
+Malla: 918 x 387 (355,266 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/13000 [00:00<?, ?it/s] 10%|█         | 1340/13000 [00:43<06:17, 30.87it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 500] nu_efectiva muy alta: 5.05e-04 (50.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 500] gamma min=0.002 media=0.205
+\n[Iter 500] Convergencia a steady: u=1.21e-02, v=5.39e-01, p=1.41e+00
+
+[ADVERTENCIA] [Iter 1000] nu_efectiva muy alta: 7.60e-04 (76.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1000] gamma min=0.003 media=0.236
+\n[Iter 1000] Convergencia a steady: u=3.05e-01, v=1.16e+00, p=1.12e+00
+
+======================================================================
+[ERROR] Blowup de velocidad (50.0 m/s) en iteración 1340 — simulación inestable
+======================================================================
+   |u|_max=50.00, umbral=50.00
+   dt_use=3.45e-05
+   [!] Error simulación @ alpha=0.0°: Simulación abortada: Blowup de velocidad (50.0 m/s) en iteración 1340
+[warm] {'estado': 'ABORTADA', 'wall_s': 43.8}
+
+=== warm_escalado  dx=0.004 alpha=0.0 13000 iters {'mg_max_outer': 2, 'mg_cycles_per_outer': 3}
+    activas=['coarse_mask_majority', 'fast_masks', 'interp_float32', 'warm_start', 'warm_start_scaled'] ===
+Malla variable: 918 x 387 nodos
+  X: dx_min=0.003452, dx_max=0.200000
+  Y: dy_min=0.004000, dy_max=0.200000
+  [Ghost-cell] 4 image points corregidos | 1 irreparables (forzados a 0) | total ghost=485
+dt = 0.002000 s  (CFL=0.5)
+Malla: 918 x 387 (355,266 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/13000 [00:00<?, ?it/s] 14%|█▍        | 1800/13000 [00:59<06:09, 30.28it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 500] nu_efectiva muy alta: 5.05e-04 (50.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 500] gamma min=0.002 media=0.205
+\n[Iter 500] Convergencia a steady: u=1.19e-02, v=5.38e-01, p=1.40e+00
+
+[ADVERTENCIA] [Iter 1000] nu_efectiva muy alta: 7.61e-04 (76.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1000] gamma min=0.004 media=0.236
+\n[Iter 1000] Convergencia a steady: u=1.68e-01, v=9.80e-01, p=1.17e+00
+
+[ADVERTENCIA] [Iter 1500] nu_efectiva muy alta: 7.59e-04 (75.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1500] gamma min=0.005 media=0.258
+\n[Iter 1500] Convergencia a steady: u=5.97e-01, v=1.09e+00, p=1.08e+00
+
+======================================================================
+[ERROR] Blowup de velocidad (49.6 m/s) en iteración 1800 — simulación inestable
+======================================================================
+   |u|_max=49.56, umbral=50.00
+   dt_use=3.54e-05
+   [!] Error simulación @ alpha=0.0°: Simulación abortada: Blowup de velocidad (49.6 m/s) en iteración 1800
+[warm_escalado] {'estado': 'ABORTADA', 'wall_s': 59.6}
+
+=== sin_warm  dx=0.004 alpha=0.0 13000 iters {'mg_max_outer': 2, 'mg_cycles_per_outer': 3}
+    activas=['coarse_mask_majority', 'fast_masks', 'interp_float32'] ===
+Malla variable: 918 x 387 nodos
+  X: dx_min=0.003452, dx_max=0.200000
+  Y: dy_min=0.004000, dy_max=0.200000
+  [Ghost-cell] 4 image points corregidos | 1 irreparables (forzados a 0) | total ghost=485
+dt = 0.002000 s  (CFL=0.5)
+Malla: 918 x 387 (355,266 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/13000 [00:00<?, ?it/s] 15%|█▌        | 1993/13000 [01:00<05:31, 33.20it/s] 15%|█▌        | 1993/13000 [01:16<05:31, 33.20it/s] 31%|███       | 4000/13000 [02:00<04:29, 33.34it/s] 31%|███       | 4000/13000 [02:16<04:29, 33.34it/s] 46%|████▌     | 6007/13000 [03:00<03:29, 33.39it/s] 46%|████▌     | 6007/13000 [03:16<03:29, 33.39it/s]/usr/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-161690-3mawyi7g'}
+  warnings.warn(
+/usr/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 3 leaked shared_memory objects to clean up at shutdown: {'/sim2d_meta', '/sim2d_coords', '/sim2d_live'}
+  warnings.warn(

@@ -1,0 +1,199 @@
+=== perfilando 1000 iteraciones de la config ganadora ===
+[11:46:41] --- perfil_tmp  opts=['warm_start', 'coarse_mask_majority']  overrides={'dx_min': 0.002, 'mg_max_outer': 2, 'mg_cycles_per_outer': 3, 'guardado': 50}
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/1000 [00:00<?, ?it/s] 73%|███████▎  | 729/1000 [01:00<00:22, 12.14it/s] 73%|███████▎  | 729/1000 [01:20<00:22, 12.14it/s]100%|██████████| 1000/1000 [01:21<00:00, 12.33it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 500] nu_efectiva muy alta: 2.51e-04 (25.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 500] gamma min=0.002 media=0.198
+\n[Iter 500] Convergencia a steady: u=1.17e-02, v=4.85e-01, p=1.05e+00
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 1000 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.0811 s
+Pasos simulados: 1000
+Tiempo total simulación: 81.11 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     0.46 s  (  0.6%)
+  Advección.....................    23.99 s  ( 29.6%)
+  Difusión......................     5.01 s  (  6.2%)
+  Proyección....................    49.75 s  ( 61.3%)
+  Guardado/fuerzas..............     1.76 s  (  2.2%)
+  Otros (overhead)..............     0.14 s  (  0.2%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 49.75 s (61.3% del tiempo total)
+   Tiempo promedio por paso: 0.0497 s
+   Ciclos MG por paso: media=5.49  p95=6.00  max=6
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.044009   0.445577     10.125
+  [save_state] sim_last.npz  (83 arrays, 56 escalares)
+
+--- Resultados (Re=100000, t=0.7060s) ---
+  Cl medio = 0.466783   Cd medio = 0.048598   L/D = 9.60
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.020119      0.246431  N/m
+    Presión                 0.017090      0.246514  N/m
+    Viscosa (fricción)      0.003030     -0.000083  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.040239
+    Cd presión              0.034180  (84.9%)
+    Cd fricción             0.006059  (15.1%)
+  Cl total                  0.492861
+    Cl presión              0.493028  (100.0%)
+    Cl fricción            -0.000166  (-0.0%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.004,7.000] c=0.996  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.86,   7.15]  [   7.82,   8.20]    -0.15335    +0.3079
+   0.40c  [   5.61,   7.40]  [   7.57,   8.45]    -0.12717    +0.2554
+   0.80c  [   5.21,   7.80]  [   7.20,   8.86]    -0.00002    +0.0000
+   1.50c  [   4.58,   8.49]  [   6.53,   9.57]    +0.00001    -0.0000
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.4929
+  Cl (circulación, lazo interior) = +0.3079
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +0.7757
+    ΔCp_TE (extr−intr, x/c≥0.95) = -1.1026  (→0 si Kutta cierra)
+    pico succión Cp_min = -1.117 en x/c=0.950
+────────────────────────────────────────────────────
+[11:48:06] perfil_tmp: 11.835 it/s  gpu=50.7%  cyc=5.49  outers=2.0  conv=0.0  Cl=0.464409  Cd=0.042766  div=0.00995  (84.5s)
+Collecting data...
+Generating '/tmp/nsys-report-ddef.qdstrm'
+[1/1] [0%                          ] paso.nsys-rep[1/1] [0%                          ] paso.nsys-rep[1/1] [=15%                        ] paso.nsys-rep[1/1] [=16%                        ] paso.nsys-rep[1/1] [13%                         ] paso.nsys-rep[1/1] [12%                         ] paso.nsys-rep[1/1] [==21%                       ] paso.nsys-rep[1/1] [==19%                       ] paso.nsys-rep[1/1] [=17%                        ] paso.nsys-rep[1/1] [=15%                        ] paso.nsys-rep[1/1] [14%                         ] paso.nsys-rep[1/1] [13%                         ] paso.nsys-rep[1/1] [12%                         ] paso.nsys-rep[1/1] [11%                         ] paso.nsys-rep[1/1] [10%                         ] paso.nsys-rep[1/1] [9%                          ] paso.nsys-rep[1/1] [8%                          ] paso.nsys-rep[1/1] [7%                          ] paso.nsys-rep[1/1] [6%                          ] paso.nsys-rep[1/1] [5%                          ] paso.nsys-rep[1/1] [0%                          ] paso.nsys-rep[1/1] [5%                          ] paso.nsys-rep[1/1] [6%                          ] paso.nsys-rep[1/1] [7%                          ] paso.nsys-rep[1/1] [8%                          ] paso.nsys-rep[1/1] [9%                          ] paso.nsys-rep[1/1] [10%                         ] paso.nsys-rep[1/1] [11%                         ] paso.nsys-rep[1/1] [12%                         ] paso.nsys-rep[1/1] [13%                         ] paso.nsys-rep[1/1] [14%                         ] paso.nsys-rep[1/1] [=15%                        ] paso.nsys-rep[1/1] [=16%                        ] paso.nsys-rep[1/1] [=17%                        ] paso.nsys-rep[1/1] [==18%                       ] paso.nsys-rep[1/1] [==19%                       ] paso.nsys-rep[1/1] [==20%                       ] paso.nsys-rep[1/1] [==21%                       ] paso.nsys-rep[1/1] [===22%                      ] paso.nsys-rep[1/1] [===23%                      ] paso.nsys-rep[1/1] [===24%                      ] paso.nsys-rep[1/1] [====25%                     ] paso.nsys-rep[1/1] [====26%                     ] paso.nsys-rep[1/1] [====27%                     ] paso.nsys-rep[1/1] [====28%                     ] paso.nsys-rep[1/1] [=====29%                    ] paso.nsys-rep[1/1] [=====30%                    ] paso.nsys-rep[1/1] [=====31%                    ] paso.nsys-rep[1/1] [=====32%                    ] paso.nsys-rep[1/1] [======33%                   ] paso.nsys-rep[1/1] [======34%                   ] paso.nsys-rep[1/1] [======35%                   ] paso.nsys-rep[1/1] [=======36%                  ] paso.nsys-rep[1/1] [=======37%                  ] paso.nsys-rep[1/1] [=======38%                  ] paso.nsys-rep[1/1] [=======39%                  ] paso.nsys-rep[1/1] [========40%                 ] paso.nsys-rep[1/1] [========41%                 ] paso.nsys-rep[1/1] [========42%                 ] paso.nsys-rep[1/1] [=========43%                ] paso.nsys-rep[1/1] [=========44%                ] paso.nsys-rep[1/1] [=========45%                ] paso.nsys-rep[1/1] [=========46%                ] paso.nsys-rep[1/1] [==========47%               ] paso.nsys-rep[1/1] [==========48%               ] paso.nsys-rep[1/1] [==========49%               ] paso.nsys-rep[1/1] [===========50%              ] paso.nsys-rep[1/1] [===========51%              ] paso.nsys-rep[1/1] [===========52%              ] paso.nsys-rep[1/1] [===========53%              ] paso.nsys-rep[1/1] [============54%             ] paso.nsys-rep[1/1] [============55%             ] paso.nsys-rep[1/1] [============56%             ] paso.nsys-rep[1/1] [============57%             ] paso.nsys-rep[1/1] [=============58%            ] paso.nsys-rep[1/1] [=============59%            ] paso.nsys-rep[1/1] [=============60%            ] paso.nsys-rep[1/1] [==============61%           ] paso.nsys-rep[1/1] [==============62%           ] paso.nsys-rep[1/1] [==============63%           ] paso.nsys-rep[1/1] [==============64%           ] paso.nsys-rep[1/1] [===============65%          ] paso.nsys-rep[1/1] [===============66%          ] paso.nsys-rep[1/1] [===============67%          ] paso.nsys-rep[1/1] [================68%         ] paso.nsys-rep[1/1] [================69%         ] paso.nsys-rep[1/1] [================70%         ] paso.nsys-rep[1/1] [================71%         ] paso.nsys-rep[1/1] [=================72%        ] paso.nsys-rep[1/1] [=================73%        ] paso.nsys-rep[1/1] [=================74%        ] paso.nsys-rep[1/1] [==================75%       ] paso.nsys-rep[1/1] [==================76%       ] paso.nsys-rep[1/1] [========================100%] paso.nsys-rep[1/1] [========================100%] paso.nsys-rep
+Generated:
+	/home/ttandrei/Proyectos/Optimizador/Optimizador/results/bench_opt/perfil/paso.nsys-rep
+
+=== resumen de kernels (donde trabaja la GPU) ===
+Generating SQLite file results/bench_opt/perfil/paso.sqlite from results/bench_opt/perfil/paso.nsys-rep
+Processing [results/bench_opt/perfil/paso.sqlite] with [/opt/nvidia/nsight-systems/2025.5.2/host-linux-x64/reports/cuda_gpu_kern_sum.py]... 
+
+ ** CUDA GPU Kernel Summary (cuda_gpu_kern_sum):
+
++----------+-----------------+-----------+-----------+-----------+----------+-----------+-------------+------------------------------------------------------------------------------------------------------+
+| Time (%) | Total Time (ns) | Instances | Avg (ns)  | Med (ns)  | Min (ns) | Max (ns)  | StdDev (ns) |                                                 Name                                                 |
++----------+-----------------+-----------+-----------+-----------+----------+-----------+-------------+------------------------------------------------------------------------------------------------------+
+|     10,0 |   3.513.058.334 |   351.424 |   9.996,0 |   3.008,0 |    2.880 |    89.056 |    12.651,0 | rb_gs_sor                                                                                            |
+|      9,0 |   3.096.552.879 |   204.254 |  15.160,0 |   1.312,0 |    1.247 |   367.807 |    22.138,0 | cupy_prepare_array_indexing                                                                          |
+|      8,0 |   2.740.497.252 |   102.116 |  26.837,0 |   1.216,0 |    1.151 |   380.191 |    29.927,0 | cupy_multiply__float64_float64_float64                                                               |
+|      6,0 |   2.108.897.392 |     3.003 | 702.263,0 | 695.006,0 |  691.615 | 1.105.789 |    48.587,0 | cupy_power__float64_float_float64                                                                    |
+|      6,0 |   2.071.124.673 |    70.779 |  29.261,0 |   1.216,0 |    1.151 |   387.807 |    29.583,0 | cupy_add__float64_float64_float64                                                                    |
+|      5,0 |   2.022.001.309 |   592.025 |   3.415,0 |   1.600,0 |    1.471 |   348.191 |     5.968,0 | cupy_scan_naive                                                                                      |
+|      5,0 |   1.818.356.166 |    90.133 |  20.174,0 |   1.664,0 |    1.440 |   371.839 |    21.841,0 | cupy_take                                                                                            |
+|      4,0 |   1.408.860.435 |    58.739 |  23.985,0 |  29.664,0 |    1.088 |   321.951 |    12.257,0 | cupy_add__float32_float32_float32                                                                    |
+|      3,0 |   1.267.346.852 |    57.786 |  21.931,0 |  20.800,0 |    1.151 |   340.671 |     5.941,0 | cupy_multiply__float32_float32_float32                                                               |
+|      2,0 |   1.006.654.639 |    72.022 |  13.977,0 |   1.120,0 |    1.087 |   361.439 |    18.953,0 | cupy_subtract__float_float64_float64                                                                 |
+|      2,0 |     928.985.114 |    52.674 |  17.636,0 |  29.248,0 |    1.087 |   160.480 |    14.995,0 | cupy_subtract__float32_float32_float32                                                               |
+|      2,0 |     768.267.171 |    54.654 |  14.056,0 |   1.216,0 |    1.151 |   375.359 |    22.156,0 | cupy_multiply__float64_float32_float64                                                               |
+|      2,0 |     760.235.026 |   283.667 |   2.680,0 |   1.344,0 |    1.279 |    32.672 |     2.712,0 | cupy_bsum_shfl                                                                                       |
+|      2,0 |     716.027.861 |    18.012 |  39.752,0 |  39.072,0 |   37.344 |   347.487 |    10.192,0 | cupy_multiply__float32_float64_float64                                                               |
+|      2,0 |     707.334.696 |   151.853 |   4.658,0 |   1.504,0 |    1.312 |    41.504 |     4.543,0 | cupy_scatter_update_mask                                                                             |
+|      1,0 |     458.752.954 |    35.010 |  13.103,0 |   1.248,0 |    1.184 |    49.984 |    17.539,0 | cupy_subtract__float32_int32_float64                                                                 |
+|      1,0 |     384.642.041 |    42.063 |   9.144,0 |   1.280,0 |    1.055 |   329.311 |     9.355,0 | cupy_clip__float32_float_float_float32                                                               |
+
+=== resumen de la API de CUDA (donde espera el host) ===
+
+NOTICE: Existing SQLite export found: results/bench_opt/perfil/paso.sqlite
+        It is assumed file was previously exported from: results/bench_opt/perfil/paso.nsys-rep
+        Consider using --force-export=true if needed.
+
+Processing [results/bench_opt/perfil/paso.sqlite] with [/opt/nvidia/nsight-systems/2025.5.2/host-linux-x64/reports/cuda_api_sum.py]... 
+
+ ** CUDA API Summary (cuda_api_sum):
+
++----------+-----------------+-----------+-------------+-----------+----------+-------------+--------------+--------------------------------+
+| Time (%) | Total Time (ns) | Num Calls |  Avg (ns)   | Med (ns)  | Min (ns) |  Max (ns)   | StdDev (ns)  |              Name              |
++----------+-----------------+-----------+-------------+-----------+----------+-------------+--------------+--------------------------------+
+|     58,0 |  20.891.867.326 |   393.275 |    53.122,0 |  11.021,0 |    4.068 |  10.229.895 |    436.866,0 | cudaMemcpyAsync                |
+|     35,0 |  12.790.369.769 | 3.198.853 |     3.998,0 |   3.657,0 |    2.384 |     545.262 |      1.627,0 | cuLaunchKernel                 |
+|      3,0 |   1.228.539.994 |   244.933 |     5.015,0 |   5.260,0 |    1.974 |     660.528 |      2.118,0 | cudaMemsetAsync                |
+|      1,0 |     378.982.897 |   342.275 |     1.107,0 |   1.072,0 |      511 |      56.406 |        309,0 | cudaStreamSynchronize          |
+|      0,0 |     171.263.843 |    36.384 |     4.707,0 |   4.699,0 |    2.634 |      75.241 |      1.611,0 | cudaLaunchKernel               |
+|      0,0 |     155.587.190 |   342.409 |       454,0 |     441,0 |      200 |      20.929 |        167,0 | cudaStreamIsCapturing_v10000   |
+|      0,0 |     107.999.168 |        88 | 1.227.263,0 |  71.899,0 |    2.013 | 102.938.951 | 10.967.216,0 | cudaMalloc                     |
+|      0,0 |      77.704.777 |       193 |   402.615,0 |  56.336,0 |   23.735 |   5.812.210 |  1.156.068,0 | cuModuleLoadData               |
+|      0,0 |      25.812.860 |        94 |   274.604,0 |  30.427,0 |    6.993 |   2.485.852 |    712.840,0 | cuModuleUnload                 |
+|      0,0 |      16.330.154 |        88 |   185.569,0 | 180.443,0 |    1.122 |     701.355 |    178.355,0 | cudaFree                       |
+|      0,0 |       5.703.358 |    36.384 |       156,0 |     170,0 |       70 |       7.283 |         96,0 | cuKernelGetName                |
+|      0,0 |       2.268.604 |         6 |   378.100,0 |   9.643,0 |    3.246 |   1.167.840 |    575.823,0 | cudaHostAlloc                  |
+|      0,0 |         415.171 |       135 |     3.075,0 |   2.865,0 |    2.054 |      12.724 |      1.164,0 | cudaEventRecord                |
+
+=== transferencias de memoria (cada una es una sincronizacion) ===
+
+NOTICE: Existing SQLite export found: results/bench_opt/perfil/paso.sqlite
+        It is assumed file was previously exported from: results/bench_opt/perfil/paso.nsys-rep
+        Consider using --force-export=true if needed.
+
+Processing [results/bench_opt/perfil/paso.sqlite] with [/opt/nvidia/nsight-systems/2025.5.2/host-linux-x64/reports/cuda_gpu_mem_time_sum.py]... 
+
+ ** CUDA GPU MemOps Summary (by Time) (cuda_gpu_mem_time_sum):
+
++----------+-----------------+---------+----------+----------+----------+-----------+-------------+--------------------------------+
+| Time (%) | Total Time (ns) |  Count  | Avg (ns) | Med (ns) | Min (ns) | Max (ns)  | StdDev (ns) |           Operation            |
++----------+-----------------+---------+----------+----------+----------+-----------+-------------+--------------------------------+
+|     50,0 |   1.046.617.460 | 244.933 |  4.273,0 |  1.088,0 |      319 |   281.056 |     6.660,0 | [CUDA memset]                  |
+|     29,0 |     609.166.071 |  50.866 | 11.975,0 | 19.072,0 |      992 |   258.400 |    10.483,0 | [CUDA memcpy Device-to-Device] |
+|     20,0 |     422.023.461 | 342.274 |  1.233,0 |  1.152,0 |      448 | 1.187.517 |     7.908,0 | [CUDA memcpy Device-to-Host]   |
+
+=== kernels + memops juntos, para el total de GPU ocupada ===
+
+NOTICE: Existing SQLite export found: results/bench_opt/perfil/paso.sqlite
+        It is assumed file was previously exported from: results/bench_opt/perfil/paso.nsys-rep
+        Consider using --force-export=true if needed.
+
+Processing [results/bench_opt/perfil/paso.sqlite] with [/opt/nvidia/nsight-systems/2025.5.2/host-linux-x64/reports/cuda_gpu_sum.py]... 
+
+ ** CUDA GPU Summary (Kernels/MemOps) (cuda_gpu_sum):
+
++----------+-----------------+-----------+-----------+-----------+----------+-----------+-------------+-------------+------------------------------------------------------------------------------------------------------+
+| Time (%) | Total Time (ns) | Instances | Avg (ns)  | Med (ns)  | Min (ns) | Max (ns)  | StdDev (ns) |  Category   |                                              Operation                                               |
++----------+-----------------+-----------+-----------+-----------+----------+-----------+-------------+-------------+------------------------------------------------------------------------------------------------------+
+
+traza en results/bench_opt/perfil/paso.nsys-rep

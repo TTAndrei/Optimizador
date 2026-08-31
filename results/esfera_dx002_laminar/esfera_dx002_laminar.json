@@ -1,0 +1,48 @@
+{
+  "cl": 0.389722,
+  "cd": 1.644447,
+  "ld": 0.237,
+  "cl_raw": 0.389722,
+  "cl_audit_inst": -1.657815,
+  "cl_std": 1.301787,
+  "cd_std": 0.387685,
+  "n_samples": 176,
+  "cl_ci95": 0.192327,
+  "cd_ci95": 0.057277,
+  "ld_ci95": 0.1172,
+  "converged_clcd": false,
+  "t_conv_clcd": null,
+  "iters_efectivas": 44000,
+  "cl_cp_discrepancy": 1.66441,
+  "cl_cp_discrepancy_flag": true,
+  "wall_s": 1526.2,
+  "dx": 0.002,
+  "iters_programadas": 44000,
+  "alpha": 0.0,
+  "Re": 100000.0,
+  "Lx": 24.0,
+  "Ly": 16.0,
+  "cx": 6.0,
+  "geometria": "cilindro D=1 (seccion de esfera)",
+  "t_final": 16.958,
+  "dt_medio": 0.0003854037495329976,
+  "dt_sonda": 0.00045072774092356366,
+  "cl_amplitud": 1.07166,
+  "strouhal": 0.2358,
+  "parada_offline_cd": null,
+  "modelo": {
+    "turb_model": "none",
+    "transition_model": "none"
+  },
+  "optimizaciones": [
+    "warm_start",
+    "warm_start_filtered",
+    "coarse_mask_majority",
+    "fast_masks",
+    "interp_float32"
+  ],
+  "paradas": {
+    "stop_on_clcd_convergence": true,
+    "stop_on_convergence": false
+  }
+}

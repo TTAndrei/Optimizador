@@ -1,0 +1,55 @@
+{
+  "caso": "T1",
+  "Lx": 30.0,
+  "Ly": 1.0,
+  "Re": 100.0,
+  "dx": 0.01,
+  "sa": false,
+  "t_obj": 55.0,
+  "tipo": "validacion",
+  "nu": 0.01,
+  "iters": 16000,
+  "wall_s": 287.8,
+  "t_final": 39.88,
+  "dt_medio": 0.002492529696907392,
+  "modelo": "laminar",
+  "Le_medida": 6.599999904632568,
+  "Le_teorica_005ReH": 5.0,
+  "desarrollado": true,
+  "u_centro_salida": 1.4882,
+  "u_centro_teorico": 1.5,
+  "dpdx_medido": -0.12323559682376153,
+  "dpdx_teorico": -0.12,
+  "err_dpdx_pct": 2.7,
+  "u_pared_max": 0.0,
+  "perfiles": {
+    "x/H=1": {
+      "u_centro": 1.2397,
+      "err_rms_vs_poiseuille": 0.1484,
+      "caudal": 0.992
+    },
+    "x/H=2": {
+      "u_centro": 1.3761,
+      "err_rms_vs_poiseuille": 0.0644,
+      "caudal": 0.9921
+    },
+    "x/H=5": {
+      "u_centro": 1.4772,
+      "err_rms_vs_poiseuille": 0.0118,
+      "caudal": 0.9921
+    },
+    "x/H=10": {
+      "u_centro": 1.488,
+      "err_rms_vs_poiseuille": 0.0086,
+      "caudal": 0.9921
+    },
+    "x/H=20": {
+      "u_centro": 1.4882,
+      "err_rms_vs_poiseuille": 0.0086,
+      "caudal": 0.9921
+    }
+  },
+  "Le_relativa": 4.610000133514404,
+  "celdas_a_lo_ancho": 100,
+  "err_u_centro_pct": -0.784
+}

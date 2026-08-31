@@ -1,0 +1,35 @@
+{
+  "name": "masknone",
+  "opts": [
+    "coarse_mask_none"
+  ],
+  "overrides": {
+    "dx_min": 0.002
+  },
+  "dx": 0.002,
+  "iters": 4000,
+  "wall_s": 824.5,
+  "it_s": 4.852,
+  "s_paso": 0.20611,
+  "gpu_util_media": 42.4,
+  "gpu_util_p95": 50.0,
+  "gpu_util_n": 805,
+  "cl": 0.559538,
+  "cd": 0.029402,
+  "ld": 19.0304,
+  "cl_std": 0.051993,
+  "cd_std": 0.005208,
+  "n_samples": 32,
+  "mg_cycles_media": 32.23,
+  "mg_cycles_p95": 40.0,
+  "mg_cycles_total": 128914,
+  "div_mean": 0.00840847,
+  "div_max": 158.553,
+  "outers_media": 8.0,
+  "outers_p95": 8.0,
+  "outers_max": 8,
+  "frac_converge": 0.0,
+  "div_before_media": 0.004662,
+  "div_after_media": 0.002109,
+  "reduccion_div": 2.21
+}

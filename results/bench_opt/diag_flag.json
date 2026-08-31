@@ -1,0 +1,26 @@
+{
+  "sin_warm_start": {
+    "estado": "OK",
+    "wall_s": 63.1,
+    "cl": 0.118365,
+    "cd": 0.047368
+  },
+  "sin_coarse_mask_majority": {
+    "estado": "ABORTADA",
+    "wall_s": 41.8,
+    "cl": null,
+    "cd": null
+  },
+  "sin_fast_masks": {
+    "estado": "ABORTADA",
+    "wall_s": 67.2,
+    "cl": null,
+    "cd": null
+  },
+  "sin_interp_float32": {
+    "estado": "ABORTADA",
+    "wall_s": 44.2,
+    "cl": null,
+    "cd": null
+  }
+}

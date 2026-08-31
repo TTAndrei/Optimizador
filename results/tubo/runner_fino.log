@@ -1,0 +1,289 @@
+=== T7 22:28:54 ===
+[22:28:54] === tubo: 1 casos ===
+[22:28:54] T7: 16x0.2 Re=1e+03 dx=0.005 laminar -> 48000 iters (t_obj=80)
+Malla variable: 3156 x 41 nodos
+  X: dx_min=0.005000, dx_max=0.014567
+  Y: dy_min=0.005000, dy_max=0.005000
+dt = 0.002500 s  (CFL=0.5)
+Malla: 3156 x 41 (129,396 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/48000 [00:00<?, ?it/s]\n[Iter 500] Convergencia a steady: u=1.07e-01, v=6.54e-01, p=4.11e-01
+\n[Iter 1000] Convergencia a steady: u=1.90e-01, v=2.68e-01, p=2.44e-01
+\n[Iter 1500] Convergencia a steady: u=1.75e-01, v=5.95e-01, p=5.97e-02
+\n[Iter 2000] Convergencia a steady: u=6.46e-02, v=1.28e-01, p=2.78e-01
+\n[Iter 2500] Convergencia a steady: u=8.11e-02, v=1.83e-01, p=5.96e-01
+\n[Iter 3000] Convergencia a steady: u=1.57e-02, v=3.14e-02, p=1.20e+00
+  7%|▋         | 3170/48000 [01:00<14:08, 52.82it/s]\n[Iter 3500] Convergencia a steady: u=7.81e-02, v=1.25e-01, p=3.29e-01
+\n[Iter 4000] Convergencia a steady: u=6.04e-02, v=1.06e-01, p=7.48e-02
+  7%|▋         | 3170/48000 [01:20<14:08, 52.82it/s]\n[Iter 4500] Convergencia a steady: u=5.44e-02, v=1.00e-01, p=6.98e-02
+\n[Iter 5000] Convergencia a steady: u=4.47e-02, v=9.36e-02, p=2.48e-01
+\n[Iter 5500] Convergencia a steady: u=9.93e-03, v=2.58e-02, p=1.46e+00
+\n[Iter 6000] Convergencia a steady: u=1.62e-02, v=3.85e-02, p=1.68e+00
+ 13%|█▎        | 6398/48000 [02:00<12:59, 53.39it/s]\n[Iter 6500] Convergencia a steady: u=2.33e-02, v=4.03e-02, p=1.88e-01
+\n[Iter 7000] Convergencia a steady: u=3.04e-02, v=4.53e-02, p=6.22e-02
+ 13%|█▎        | 6398/48000 [02:20<12:59, 53.39it/s]\n[Iter 7500] Convergencia a steady: u=2.59e-02, v=3.80e-02, p=9.31e-02
+\n[Iter 8000] Convergencia a steady: u=1.28e-02, v=2.30e-02, p=4.46e-01
+\n[Iter 8500] Convergencia a steady: u=3.71e-03, v=2.06e-02, p=6.42e-01
+\n[Iter 9000] Convergencia a steady: u=6.65e-03, v=1.38e-02, p=3.80e-01
+\n[Iter 9500] Convergencia a steady: u=1.29e-02, v=2.02e-02, p=2.99e-01
+ 20%|██        | 9685/48000 [03:00<11:49, 54.02it/s]\n[Iter 10000] Convergencia a steady: u=1.29e-02, v=1.95e-02, p=6.60e-03
+\n[Iter 10500] Convergencia a steady: u=9.74e-03, v=1.59e-02, p=2.35e-01
+ 20%|██        | 9685/48000 [03:20<11:49, 54.02it/s]\n[Iter 11000] Convergencia a steady: u=5.53e-03, v=1.06e-02, p=2.22e-01
+\n[Iter 11500] Convergencia a steady: u=9.46e-04, v=5.70e-03, p=5.66e-01
+\n[Iter 12000] Convergencia a steady: u=4.06e-03, v=8.71e-03, p=1.39e+00
+\n[Iter 12500] Convergencia a steady: u=5.69e-03, v=8.99e-03, p=7.49e-02
+\n[Iter 13000] Convergencia a steady: u=5.71e-03, v=8.68e-03, p=7.28e-02
+ 27%|██▋       | 13101/48000 [04:00<10:32, 55.16it/s]\n[Iter 13500] Convergencia a steady: u=4.23e-03, v=6.75e-03, p=8.79e-02
+\n[Iter 14000] Convergencia a steady: u=1.86e-03, v=3.75e-03, p=4.25e-01
+ 27%|██▋       | 13101/48000 [04:20<10:32, 55.16it/s]\n[Iter 14500] Convergencia a steady: u=6.02e-04, v=2.94e-03, p=2.32e-01
+\n[Iter 15000] Convergencia a steady: u=2.01e-03, v=3.64e-03, p=1.08e-01
+\n[Iter 15500] Convergencia a steady: u=2.74e-03, v=4.20e-03, p=1.41e-01
+\n[Iter 16000] Convergencia a steady: u=2.54e-03, v=3.86e-03, p=1.81e-02
+\n======================================================================
+[OK] ESTADO ESTACIONARIO ALCANZADO en iteracion 16050
+======================================================================
+  Cambio relativo u: 2.51e-03 < 1.00e-02
+  Cambio relativo v: 3.86e-03 < 1.00e-02
+  Cambio relativo p: 6.73e-03 < 1.00e-02
+  Tiempo simulado: 27.6558 s
+  [INFO] Continuando hasta completar iteraciones (stop_on_convergence=False)
+======================================================================\n
+\n[Iter 16500] Convergencia a steady: u=1.71e-03, v=2.80e-03, p=1.43e-01
+ 35%|███▍      | 16748/48000 [05:00<09:06, 57.18it/s]\n[Iter 17000] Convergencia a steady: u=6.78e-04, v=1.79e-03, p=9.41e-02
+\n[Iter 17500] Convergencia a steady: u=4.02e-04, v=1.67e-03, p=9.21e-02
+ 35%|███▍      | 16748/48000 [05:20<09:06, 57.18it/s]\n[Iter 18000] Convergencia a steady: u=1.04e-03, v=1.91e-03, p=7.93e-02
+\n[Iter 18500] Convergencia a steady: u=1.26e-03, v=2.22e-03, p=1.49e-02
+\n[Iter 19000] Convergencia a steady: u=1.11e-03, v=1.96e-03, p=2.53e-02
+\n[Iter 19500] Convergencia a steady: u=7.05e-04, v=1.44e-03, p=3.73e-02
+\n[Iter 20000] Convergencia a steady: u=2.20e-04, v=1.31e-03, p=5.33e-02
+ 42%|████▏     | 20395/48000 [06:00<07:52, 58.40it/s]\n[Iter 20500] Convergencia a steady: u=2.52e-04, v=1.10e-03, p=4.43e-02
+\n[Iter 21000] Convergencia a steady: u=5.08e-04, v=1.38e-03, p=2.27e-02
+ 42%|████▏     | 20395/48000 [06:20<07:52, 58.40it/s]\n[Iter 22000] Convergencia a steady: u=4.83e-04, v=1.22e-03, p=1.04e-02
+\n[Iter 22500] Convergencia a steady: u=2.82e-04, v=1.23e-03, p=2.27e-02
+\n[Iter 23000] Convergencia a steady: u=6.74e-05, v=9.64e-04, p=2.26e-02
+\n[Iter 23500] Convergencia a steady: u=1.43e-04, v=1.01e-03, p=1.79e-02
+ 50%|████▉     | 23984/48000 [07:00<06:48, 58.86it/s]\n[Iter 24000] Convergencia a steady: u=2.47e-04, v=9.95e-04, p=1.04e-02
+ 50%|████▉     | 23984/48000 [07:20<06:48, 58.86it/s]\n[Iter 26000] Convergencia a steady: u=2.08e-05, v=8.62e-04, p=1.04e-02
+ 57%|█████▋    | 27574/48000 [08:00<05:45, 59.17it/s] 57%|█████▋    | 27574/48000 [08:20<05:45, 59.17it/s] 65%|██████▌   | 31202/48000 [09:00<04:41, 59.57it/s] 65%|██████▌   | 31202/48000 [09:20<04:41, 59.57it/s] 73%|███████▎  | 34849/48000 [10:00<03:39, 59.94it/s] 73%|███████▎  | 34849/48000 [10:20<03:39, 59.94it/s] 80%|████████  | 38528/48000 [11:00<02:36, 60.36it/s] 80%|████████  | 38528/48000 [11:20<02:36, 60.36it/s] 88%|████████▊ | 42184/48000 [12:00<01:36, 60.53it/s] 88%|████████▊ | 42184/48000 [12:20<01:36, 60.53it/s] 96%|█████████▌| 45855/48000 [13:00<00:35, 60.73it/s] 96%|█████████▌| 45855/48000 [13:20<00:35, 60.73it/s]100%|██████████| 48000/48000 [13:34<00:00, 58.90it/s]
+
+======================================================================
+[OK] SIMULACIÓN CONVERGIÓ A ESTADO ESTACIONARIO
+======================================================================
+  La simulación alcanzó convergencia antes de completar
+  todas las iteraciones programadas.
+  Los resultados representan un estado estacionario válido.
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.0170 s
+Pasos simulados: 48000
+Tiempo total simulación: 814.86 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................    11.96 s  (  1.5%)
+  Advección.....................   198.80 s  ( 24.4%)
+  Difusión......................    46.17 s  (  5.7%)
+  Proyección....................   524.65 s  ( 64.4%)
+  Guardado/fuerzas..............    28.08 s  (  3.4%)
+  Otros (overhead)..............     5.19 s  (  0.6%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 524.65 s (64.4% del tiempo total)
+   Tiempo promedio por paso: 0.0109 s
+   Ciclos MG por paso: media=4.41  p95=6.00  max=6
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    0.00   0.000000   0.000000        nan
+  [save_state] sim_last.npz  (69 arrays, 45 escalares)
+
+--- Resultados (Re=5000, t=81.4663s) ---
+  Cl medio = 0.000000   Cd medio = 0.000000   L/D = 0.00
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.000000      0.000000  N/m
+    Presión                 0.000000      0.000000  N/m
+    Viscosa (fricción)      0.000000      0.000000  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.000000
+    Cd presión              0.000000  (0.0%)
+    Cd fricción             0.000000  (0.0%)
+  Cl total                  0.000000
+    Cl presión              0.000000  (0.0%)
+    Cl fricción             0.000000  (0.0%)
+────────────────────────────────────────────────────
+[22:42:30]   -> t=81.466  Le=None (teo 10.0)  u_c salida=1.4837  desarrollado=False  err dp/dx=None%  (815.3s)
+[22:42:30] === fin tubo en 0.23 h ===
+=== T8 22:42:30 ===
+[22:42:30] === tubo: 1 casos ===
+[22:42:30] T8: 16x0.2 Re=1e+03 dx=0.002 laminar -> 120000 iters (t_obj=80)
+Malla variable: 7841 x 101 nodos
+  X: dx_min=0.002000, dx_max=0.011653
+  Y: dy_min=0.002000, dy_max=0.002000
+dt = 0.001000 s  (CFL=0.5)
+Malla: 7841 x 101 (791,941 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/120000 [00:00<?, ?it/s]\n[Iter 500] Convergencia a steady: u=1.92e-01, v=8.33e-01, p=1.92e-01
+\n[Iter 1000] Convergencia a steady: u=6.52e-02, v=5.62e-01, p=2.47e-01
+\n[Iter 1500] Convergencia a steady: u=5.62e-02, v=3.59e-01, p=2.39e-01
+\n[Iter 2000] Convergencia a steady: u=1.12e-01, v=1.87e-01, p=1.46e-01
+\n[Iter 2500] Convergencia a steady: u=1.40e-01, v=2.34e-01, p=5.74e-01
+  2%|▏         | 2633/120000 [01:00<44:34, 43.88it/s]\n[Iter 3000] Convergencia a steady: u=1.13e-01, v=4.29e-01, p=2.79e-02
+\n[Iter 3500] Convergencia a steady: u=3.43e-02, v=1.73e-01, p=2.80e-01
+  2%|▏         | 2633/120000 [01:20<44:34, 43.88it/s]\n[Iter 4000] Convergencia a steady: u=3.73e-02, v=1.25e-01, p=1.70e-01
+\n[Iter 4500] Convergencia a steady: u=7.75e-02, v=1.12e-01, p=1.33e-01
+\n[Iter 5000] Convergencia a steady: u=7.13e-02, v=1.30e-01, p=3.41e-01
+  4%|▍         | 5258/120000 [02:00<43:39, 43.80it/s]\n[Iter 5500] Convergencia a steady: u=6.22e-02, v=1.49e-01, p=5.77e-02
+\n[Iter 6000] Convergencia a steady: u=9.71e-03, v=1.87e-02, p=5.16e-01
+  4%|▍         | 5258/120000 [02:20<43:39, 43.80it/s]\n[Iter 6500] Convergencia a steady: u=3.84e-02, v=9.38e-02, p=9.38e-02
+\n[Iter 7000] Convergencia a steady: u=6.08e-02, v=1.11e-01, p=1.37e-01
+\n[Iter 7500] Convergencia a steady: u=4.05e-02, v=9.48e-02, p=2.59e-01
+  7%|▋         | 7902/120000 [03:00<42:32, 43.92it/s]\n[Iter 8000] Convergencia a steady: u=4.15e-02, v=8.01e-02, p=5.86e-02
+\n[Iter 8500] Convergencia a steady: u=1.06e-02, v=4.37e-02, p=8.30e-01
+  7%|▋         | 7902/120000 [03:20<42:32, 43.92it/s]\n[Iter 9000] Convergencia a steady: u=3.76e-02, v=9.04e-02, p=4.27e-02
+\n[Iter 9500] Convergencia a steady: u=3.84e-02, v=6.77e-02, p=1.95e-01
+\n[Iter 10000] Convergencia a steady: u=3.23e-02, v=1.09e-01, p=1.80e-01
+\n[Iter 10500] Convergencia a steady: u=3.09e-02, v=5.86e-02, p=5.07e-02
+  9%|▉         | 10551/120000 [04:00<41:28, 43.98it/s]\n[Iter 11000] Convergencia a steady: u=8.81e-03, v=3.44e-02, p=1.26e+00
+  9%|▉         | 10551/120000 [04:20<41:28, 43.98it/s]\n[Iter 11500] Convergencia a steady: u=3.12e-02, v=5.37e-02, p=3.65e-02
+\n[Iter 12000] Convergencia a steady: u=2.03e-02, v=2.83e-02, p=3.13e-01
+\n[Iter 12500] Convergencia a steady: u=2.95e-02, v=5.77e-02, p=1.17e-01
+\n[Iter 13000] Convergencia a steady: u=2.18e-02, v=4.14e-02, p=6.86e-02
+ 11%|█         | 13198/120000 [05:00<40:26, 44.02it/s]\n[Iter 13500] Convergencia a steady: u=7.46e-03, v=1.90e-02, p=5.52e-01
+\n[Iter 14000] Convergencia a steady: u=2.58e-02, v=3.61e-02, p=3.25e-02
+ 11%|█         | 13198/120000 [05:20<40:26, 44.02it/s]\n[Iter 14500] Convergencia a steady: u=1.02e-02, v=2.36e-02, p=6.65e-01
+\n[Iter 15000] Convergencia a steady: u=2.44e-02, v=3.76e-02, p=7.54e-02
+\n[Iter 15500] Convergencia a steady: u=1.42e-02, v=2.46e-02, p=1.07e-01
+ 13%|█▎        | 15851/120000 [06:00<39:23, 44.06it/s]\n[Iter 16000] Convergencia a steady: u=8.50e-03, v=1.48e-02, p=2.99e-01
+\n[Iter 16500] Convergencia a steady: u=2.07e-02, v=3.00e-02, p=3.95e-02
+ 13%|█▎        | 15851/120000 [06:20<39:23, 44.06it/s]\n[Iter 17000] Convergencia a steady: u=4.54e-03, v=1.99e-02, p=1.94e+00
+\n[Iter 17500] Convergencia a steady: u=1.89e-02, v=2.73e-02, p=4.79e-02
+\n[Iter 18000] Convergencia a steady: u=8.68e-03, v=1.45e-02, p=1.54e-01
+\n[Iter 18500] Convergencia a steady: u=9.25e-03, v=1.60e-02, p=1.91e-01
+ 15%|█▌        | 18524/120000 [07:00<38:14, 44.22it/s]\n[Iter 19000] Convergencia a steady: u=1.54e-02, v=2.32e-02, p=6.66e-02
+ 15%|█▌        | 18524/120000 [07:20<38:14, 44.22it/s]\n[Iter 19500] Convergencia a steady: u=3.36e-03, v=1.57e-02, p=4.94e-01
+\n[Iter 20000] Convergencia a steady: u=1.43e-02, v=2.09e-02, p=2.52e-02
+\n[Iter 20500] Convergencia a steady: u=4.93e-03, v=9.68e-03, p=2.18e-01
+\n[Iter 21000] Convergencia a steady: u=8.93e-03, v=1.44e-02, p=1.31e-01
+ 18%|█▊        | 21222/120000 [08:00<37:02, 44.45it/s]\n[Iter 21500] Convergencia a steady: u=1.07e-02, v=1.59e-02, p=1.10e-01
+\n[Iter 22000] Convergencia a steady: u=4.37e-03, v=1.15e-02, p=2.58e-01
+ 18%|█▊        | 21222/120000 [08:20<37:02, 44.45it/s]\n[Iter 22500] Convergencia a steady: u=1.07e-02, v=1.55e-02, p=7.57e-03
+\n[Iter 23000] Convergencia a steady: u=2.37e-03, v=6.56e-03, p=3.16e-01
+\n[Iter 23500] Convergencia a steady: u=7.96e-03, v=1.19e-02, p=9.17e-02
+ 20%|█▉        | 23941/120000 [09:00<35:48, 44.72it/s]\n[Iter 24000] Convergencia a steady: u=6.96e-03, v=1.07e-02, p=1.82e-01
+\n[Iter 24500] Convergencia a steady: u=4.79e-03, v=8.96e-03, p=1.64e-01
+ 20%|█▉        | 23941/120000 [09:20<35:48, 44.72it/s]\n[Iter 25000] Convergencia a steady: u=7.79e-03, v=1.16e-02, p=2.15e-02
+\n[Iter 25500] Convergencia a steady: u=8.96e-04, v=4.28e-03, p=4.81e-01
+\n[Iter 26000] Convergencia a steady: u=6.74e-03, v=1.15e-02, p=6.03e-02
+\n[Iter 26500] Convergencia a steady: u=4.24e-03, v=7.63e-03, p=3.47e-01
+ 22%|██▏       | 26671/120000 [10:00<34:35, 44.96it/s]\n[Iter 27000] Convergencia a steady: u=4.58e-03, v=7.66e-03, p=1.10e-01
+\n======================================================================
+[OK] ESTADO ESTACIONARIO ALCANZADO en iteracion 27350
+======================================================================
+  Cambio relativo u: 6.32e-03 < 1.00e-02
+  Cambio relativo v: 9.22e-03 < 1.00e-02
+  Cambio relativo p: 3.18e-03 < 1.00e-02
+  Tiempo simulado: 19.0303 s
+  [INFO] Continuando hasta completar iteraciones (stop_on_convergence=False)
+======================================================================\n
+\n[Iter 27500] Convergencia a steady: u=5.53e-03, v=8.68e-03, p=4.13e-02
+ 22%|██▏       | 26671/120000 [10:20<34:35, 44.96it/s]\n[Iter 28000] Convergencia a steady: u=1.00e-03, v=4.67e-03, p=7.70e-01
+\n[Iter 28500] Convergencia a steady: u=5.48e-03, v=8.09e-03, p=3.00e-02
+\n[Iter 29000] Convergencia a steady: u=2.33e-03, v=5.17e-03, p=1.31e+00
+ 25%|██▍       | 29451/120000 [11:00<33:16, 45.36it/s]\n[Iter 29500] Convergencia a steady: u=4.08e-03, v=6.01e-03, p=7.58e-02
+\n[Iter 30000] Convergencia a steady: u=3.80e-03, v=7.91e-03, p=5.97e-02
+ 25%|██▍       | 29451/120000 [11:20<33:16, 45.36it/s]\n[Iter 30500] Convergencia a steady: u=1.45e-03, v=3.38e-03, p=1.18e+00
+\n[Iter 31500] Convergencia a steady: u=1.06e-03, v=3.63e-03, p=5.60e-01
+\n[Iter 32000] Convergencia a steady: u=3.46e-03, v=5.50e-03, p=4.88e-02
+ 27%|██▋       | 32300/120000 [12:00<31:46, 46.00it/s]\n[Iter 32500] Convergencia a steady: u=2.50e-03, v=4.33e-03, p=7.56e-02
+\n[Iter 33000] Convergencia a steady: u=1.65e-03, v=3.19e-03, p=1.11e+00
+ 27%|██▋       | 32300/120000 [12:20<31:46, 46.00it/s]\n[Iter 33500] Convergencia a steady: u=3.23e-03, v=4.87e-03, p=6.15e-02
+\n[Iter 34000] Convergencia a steady: u=3.82e-04, v=2.78e-03, p=2.44e-01
+\n[Iter 34500] Convergencia a steady: u=2.83e-03, v=4.39e-03, p=2.86e-02
+\n[Iter 35000] Convergencia a steady: u=1.54e-03, v=3.00e-03, p=8.84e-02
+ 29%|██▉       | 35166/120000 [13:00<30:23, 46.53it/s]\n[Iter 35500] Convergencia a steady: u=1.68e-03, v=3.16e-03, p=8.02e-01
+\n[Iter 36000] Convergencia a steady: u=2.32e-03, v=3.64e-03, p=2.12e-01
+ 29%|██▉       | 35166/120000 [13:20<30:23, 46.53it/s]\n[Iter 36500] Convergencia a steady: u=4.47e-04, v=1.99e-03, p=1.44e-01
+\n[Iter 37000] Convergencia a steady: u=2.25e-03, v=3.45e-03, p=1.19e-02
+\n[Iter 37500] Convergencia a steady: u=8.61e-04, v=2.19e-03, p=9.62e-02
+\n[Iter 38000] Convergencia a steady: u=1.56e-03, v=2.56e-03, p=4.71e-01
+ 32%|███▏      | 38080/120000 [14:00<28:57, 47.14it/s]\n[Iter 38500] Convergencia a steady: u=1.61e-03, v=2.68e-03, p=3.92e-01
+\n[Iter 39000] Convergencia a steady: u=6.41e-04, v=1.78e-03, p=9.51e-02
+ 32%|███▏      | 38080/120000 [14:20<28:57, 47.14it/s]\n[Iter 40000] Convergencia a steady: u=3.98e-04, v=1.82e-03, p=9.68e-02
+\n[Iter 40500] Convergencia a steady: u=1.36e-03, v=2.39e-03, p=2.05e-01
+ 34%|███▍      | 40993/120000 [15:00<27:40, 47.57it/s]\n[Iter 41000] Convergencia a steady: u=1.06e-03, v=2.08e-03, p=1.71e-01
+\n[Iter 41500] Convergencia a steady: u=7.21e-04, v=1.83e-03, p=6.49e-02
+ 34%|███▍      | 40993/120000 [15:20<27:40, 47.57it/s]\n[Iter 42000] Convergencia a steady: u=1.29e-03, v=2.42e-03, p=1.19e-02
+\n[Iter 42500] Convergencia a steady: u=1.46e-04, v=1.77e-03, p=8.97e-02
+\n[Iter 43000] Convergencia a steady: u=1.14e-03, v=2.21e-03, p=7.45e-02
+\n[Iter 43500] Convergencia a steady: u=6.50e-04, v=1.76e-03, p=1.04e-01
+ 37%|███▋      | 43901/120000 [16:00<26:30, 47.83it/s]\n[Iter 44000] Convergencia a steady: u=7.14e-04, v=1.84e-03, p=4.40e-02
+\n[Iter 44500] Convergencia a steady: u=9.32e-04, v=2.05e-03, p=1.92e-02
+ 37%|███▋      | 43901/120000 [16:20<26:30, 47.83it/s]\n[Iter 45000] Convergencia a steady: u=1.79e-04, v=1.80e-03, p=7.64e-02
+\n[Iter 45500] Convergencia a steady: u=9.16e-04, v=2.14e-03, p=1.97e-02
+\n[Iter 46000] Convergencia a steady: u=3.58e-04, v=1.64e-03, p=7.14e-02
+\n[Iter 46500] Convergencia a steady: u=6.55e-04, v=1.83e-03, p=2.88e-02
+ 39%|███▉      | 46810/120000 [17:00<25:23, 48.03it/s]\n[Iter 47000] Convergencia a steady: u=6.44e-04, v=1.93e-03, p=2.35e-02
+\n[Iter 47500] Convergencia a steady: u=2.58e-04, v=1.72e-03, p=6.00e-02
+ 39%|███▉      | 46810/120000 [17:20<25:23, 48.03it/s]\n[Iter 48500] Convergencia a steady: u=1.63e-04, v=1.58e-03, p=5.16e-02
+\n[Iter 49000] Convergencia a steady: u=5.68e-04, v=1.82e-03, p=1.75e-02
+\n[Iter 49500] Convergencia a steady: u=4.23e-04, v=1.81e-03, p=2.51e-02
+ 41%|████▏     | 49716/120000 [18:00<24:19, 48.15it/s]\n[Iter 50000] Convergencia a steady: u=2.93e-04, v=1.50e-03, p=4.37e-02
+\n[Iter 50500] Convergencia a steady: u=5.31e-04, v=1.68e-03, p=1.25e-02
+ 41%|████▏     | 49716/120000 [18:20<24:19, 48.15it/s]\n[Iter 51000] Convergencia a steady: u=5.94e-05, v=1.52e-03, p=3.79e-02
+\n[Iter 52000] Convergencia a steady: u=2.59e-04, v=1.68e-03, p=2.44e-02
+\n[Iter 52500] Convergencia a steady: u=2.91e-04, v=1.63e-03, p=2.96e-02
+ 44%|████▍     | 52630/120000 [19:00<23:15, 48.27it/s]\n[Iter 53000] Convergencia a steady: u=3.83e-04, v=1.62e-03, p=1.55e-02
+\n[Iter 53500] Convergencia a steady: u=7.73e-05, v=1.48e-03, p=2.77e-02
+ 44%|████▍     | 52630/120000 [19:20<23:15, 48.27it/s]\n[Iter 54500] Convergencia a steady: u=1.42e-04, v=1.55e-03, p=2.22e-02
+\n[Iter 55000] Convergencia a steady: u=2.68e-04, v=1.53e-03, p=1.86e-02
+\n[Iter 55500] Convergencia a steady: u=2.64e-04, v=1.63e-03, p=1.55e-02
+ 46%|████▋     | 55537/120000 [20:00<22:14, 48.32it/s]\n[Iter 56000] Convergencia a steady: u=1.10e-04, v=1.61e-03, p=2.00e-02
+ 46%|████▋     | 55537/120000 [20:20<22:14, 48.32it/s]\n[Iter 57000] Convergencia a steady: u=6.38e-05, v=1.59e-03, p=1.90e-02
+\n[Iter 57500] Convergencia a steady: u=2.32e-04, v=1.61e-03, p=1.06e-02
+\n[Iter 58000] Convergencia a steady: u=1.73e-04, v=1.54e-03, p=1.41e-02
+ 49%|████▊     | 58443/120000 [21:00<21:13, 48.35it/s]\n[Iter 58500] Convergencia a steady: u=1.23e-04, v=1.54e-03, p=1.40e-02
+ 49%|████▊     | 58443/120000 [21:20<21:13, 48.35it/s]\n[Iter 59500] Convergencia a steady: u=2.39e-05, v=1.58e-03, p=1.54e-02
+\n[Iter 60500] Convergencia a steady: u=1.05e-04, v=1.61e-03, p=1.22e-02
+ 51%|█████     | 61353/120000 [22:00<20:11, 48.40it/s]\n[Iter 62000] Convergencia a steady: u=3.25e-05, v=1.61e-03, p=1.19e-02
+ 51%|█████     | 61353/120000 [22:20<20:11, 48.40it/s]\n[Iter 63000] Convergencia a steady: u=5.75e-05, v=1.54e-03, p=1.01e-02
+ 54%|█████▎    | 64261/120000 [23:00<19:11, 48.41it/s] 54%|█████▎    | 64261/120000 [23:20<19:11, 48.41it/s] 56%|█████▌    | 67166/120000 [24:00<18:11, 48.41it/s] 56%|█████▌    | 67166/120000 [24:20<18:11, 48.41it/s] 58%|█████▊    | 70071/120000 [25:00<17:11, 48.41it/s] 58%|█████▊    | 70071/120000 [25:20<17:11, 48.41it/s] 61%|██████    | 72981/120000 [26:00<16:10, 48.43it/s] 61%|██████    | 72981/120000 [26:20<16:10, 48.43it/s] 63%|██████▎   | 75845/120000 [27:00<15:15, 48.22it/s] 63%|██████▎   | 75845/120000 [27:20<15:15, 48.22it/s]/usr/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-ddkxtokr'}
+  warnings.warn(
+/usr/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 3 leaked shared_memory objects to clean up at shutdown: {'/sim2d_live', '/sim2d_coords', '/sim2d_meta'}
+  warnings.warn(

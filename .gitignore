@@ -37,3 +37,31 @@ docs/tfg/.~lock.*#
 # de 45 MB en la malla fina). Se conservan en local para instrumentar el TE; al
 # repo van los escalares, las series, las figuras y el log.
 results/richardson_polar_domC/campos/*.npz
+
+# Resultados finales: los .npz de campos son ~2 GB (el de dx=0.001 son 60 MB por
+# punto). Las metricas, las figuras y el analisis si se versionan.
+resultados_finales/*/campos/*.npz
+resultados_finales/ejecucion.log
+
+# Trazas de Nsight Systems del perfilado del paso: 118-503 MB por fichero, muy
+# por encima del limite de 100 MB de GitHub. Se regeneran con
+# scripts/agent_tests/perfilar_paso.sh; al repo van los resumenes.
+results/bench_opt/perfil/*.sqlite
+results/bench_opt/perfil/*.nsys-rep
+
+# Volcados de campos por instante y frames PNG para el video: ~3.5 GB entre
+# results/formas y results/tubo. Los regenera el runner de cada campana; al
+# repo van las series, las metricas, las figuras y los mp4.
+**/campos_t/
+**/frames/
+
+# Campanas archivadas de resultados_finales (descartadas o superadas por la
+# definitiva): 500 MB de campos y figuras. Las metricas y las series si se
+# versionan, que son las que se citan en la memoria.
+resultados_finales/_archivo_*/*/campos/
+resultados_finales/_archivo_*/*/figuras/
+
+# Campos finales (u/v/p/mascara) de cualquier campana: 12-70 MB por punto de la
+# polar y regenerables desde la geometria y el json de configuracion. Las
+# *_series.npz (14 KB) si se versionan, que son las que alimentan las figuras.
+**/*campo.npz

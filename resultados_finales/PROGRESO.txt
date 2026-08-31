@@ -1,0 +1,11 @@
+RESULTADOS FINALES TFG — convergencia de malla de Richardson
+actualizado: 2026-08-26 15:57:55
+
+  [############################################]  72/72 puntos  (100%)
+  reusados: 0   GPU consumida: 9h13m   restante estimado: 0h00m
+
+  ganador_ag dx=0.008:#########  dx=0.006:#########  dx=0.004:#########  dx=0.002:#########
+  naca0012   dx=0.008:#########  dx=0.006:#########  dx=0.004:#########  dx=0.002:#########
+
+  malla:  # hecho   . pendiente     angulos en orden 0 2 4 6 8
+  parar limpio entre puntos:  touch PARAR_ESTUDIO.trigger

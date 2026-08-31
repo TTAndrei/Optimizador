@@ -14,6 +14,8 @@ from multiprocessing import shared_memory
 import struct
 import threading
 
+import opt_solver
+
 
 # ============================================================
 # GENERACIÓN DE MALLA CON DENSIDAD VARIABLE (stretching 1D)
@@ -1089,7 +1091,8 @@ class Mesh:
         for lvl in range(self._mg_niveles):
             sx = self._mg_x_start[lvl + 1]
             sy = self._mg_y_start[lvl + 1]
-            self._mg_solids.append(_coarsen_mask(self._mg_solids[-1], sx, sy))
+            self._mg_solids.append(
+                opt_solver.coarsen_solid(_coarsen_mask, self._mg_solids[-1], sx, sy))
 
         # Jerarquía Dirichlet
         self._mg_hay_dirichlet = bool(cp.any(self.fixed_pressure_mask))
@@ -1689,6 +1692,7 @@ class Mesh:
         Retorna:
             (v0x_new, v0y_new): nuevas componentes de velocidad libre
         """
+        opt_solver.invalidate_warm(self)
         alpha_rad = -np.deg2rad(nuevo_alpha_deg)
         v0x_new = float(U_inf * np.cos(alpha_rad))
         v0y_new = float(U_inf * np.sin(alpha_rad))
@@ -1883,8 +1887,7 @@ class Mesh:
         j1 = cp.minimum(j0 + 1, nx - 1)
         i1 = cp.minimum(i0 + 1, ny - 1)
 
-        wx = x - j0
-        wy = y - i0
+        wx, wy = opt_solver.bilinear_weights(x, y, j0, i0)
 
         f00 = field[i0, j0]
         f10 = field[i0, j1]
@@ -3360,6 +3363,12 @@ class Mesh:
             d2yS = self._mg_d2y_S[lvl]; d2yC = self._mg_d2y_C[lvl]; d2yN = self._mg_d2y_N[lvl]
             # Usar omega solo en nivel fino; GS puro (omega=1) en niveles gruesos
             om = omega_f32 if lvl == 0 else omega_coarse_f32
+            if opt_solver.line_smoother_active():
+                # omega=1.0: el 1.15 esta ajustado para Gauss-Seidel punto a
+                # punto; la relajacion por lineas ya resuelve exactamente la
+                # direccion fuerte y sobre-relajarla la desestabiliza.
+                opt_solver.smooth_lines(self, p_arr, rhs, lvl, n_sweeps, 1.0)
+                return
             for s in range(n_sweeps):
                 # Alternar el color inicial reduce sesgos direccionales sistematicos.
                 first = p0_i32 if (s % 2 == 0) else p1_i32
@@ -3376,6 +3385,10 @@ class Mesh:
         def _aplicar_bc_mg(p_nivel, lvl):
             """Fuerza Neumann cero-gradiente en bordes (copiando celda vecina),
                respetando Dirichlet donde aplica."""
+            if opt_solver.fast_masks_active():
+                opt_solver.aplicar_bc_mg(self, p_nivel, lvl, hay_dirichlet,
+                                         self.fixed_pressure_value)
+                return
             ny_n, nx_n = p_nivel.shape
             if hay_dirichlet:
                 dm = self._mg_dirichlet[lvl]
@@ -3415,9 +3428,11 @@ class Mesh:
         # Limitar niveles efectivos de MG: con malla 20:1 no-uniforme, niveles
         # profundos son inconsistentes (L_c ≠ R·L_f·P). Usando máx 2 niveles
         # la relación geométrica local es ~4x y la aproximación es suficiente.
-        nlvl_use = min(n_levels, 2)
+        nlvl_use = opt_solver.mg_depth(n_levels, 2)
         # Iteraciones en nivel 'coarsest' del V-cycle (puede ser nivel 1 o 2)
-        coarse_solve_iters = 20   # pocas: sólo corregir modos bajos, no resolver exactamente
+        coarse_solve_iters = opt_solver.coarse_iters(
+            20,   # pocas: sólo corregir modos bajos, no resolver exactamente
+            self._mg_kdims[nlvl_use]['nx'], self._mg_kdims[nlvl_use]['ny'])
 
         def _v_cycle(p_arr, rhs, _dbg=False):
             """V-cycle iterativo: resuelve L*p = rhs usando nlvl_use niveles."""
@@ -3490,7 +3505,7 @@ class Mesh:
                      cp.int32(kd_f['nx']), cp.int32(kd_f['ny']),
                      cp.int32(self._mg_x_start[lvl + 1]),
                      cp.int32(self._mg_y_start[lvl + 1])))
-                p_lv[lvl][self._mg_solids[lvl]] = cp.float32(0.0)
+                opt_solver.cero_en_solido(p_lv[lvl], self._mg_solids[lvl])
                 _smooth(p_lv[lvl], rhs_lv[lvl], lvl, post_suavizado)
                 _aplicar_bc_mg(p_lv[lvl], lvl)
 
@@ -3656,7 +3671,7 @@ class Mesh:
                     rhs_flat_ref[free_flat] -= vrs / vt
 
             # --- Resolver Poisson: L * p_corr = rhs ---
-            p_corr.fill(cp.float32(0.0))
+            opt_solver.init_guess(self, p_corr, outer, dt)
             if hay_dirichlet:
                 p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
 
@@ -3746,11 +3761,13 @@ class Mesh:
                 if rollback_on_nan and u_initial is not None:
                     self.u[:] = u_initial
                     self.v[:] = v_initial
+                opt_solver.invalidate_warm(self)
                 if verbose:
                     print(f"[MG] NaN outer {outer+1}, revertido")
                 break
 
             p_last[:] = p_corr
+            opt_solver.store_guess(self, p_corr, outer, dt)
             if p_acumulada is not None:
                 p_acumulada += p_corr
 
@@ -4104,6 +4121,12 @@ class Mesh:
             d2yC = self._mg_d2y_C[lvl]
             d2yN = self._mg_d2y_N[lvl]
             om = omega_f32 if lvl == 0 else omega_coarse_f32
+            if opt_solver.line_smoother_active():
+                # omega=1.0: el 1.15 esta ajustado para Gauss-Seidel punto a
+                # punto; la relajacion por lineas ya resuelve exactamente la
+                # direccion fuerte y sobre-relajarla la desestabiliza.
+                opt_solver.smooth_lines(self, p_arr, rhs, lvl, n_sweeps, 1.0)
+                return
             for s in range(n_sweeps):
                 first = p0_i32 if (s % 2 == 0) else p1_i32
                 second = p1_i32 if (s % 2 == 0) else p0_i32
@@ -4117,6 +4140,10 @@ class Mesh:
                            om, nx_l, ny_l, second))
 
         def _aplicar_bc_mg(p_nivel, lvl):
+            if opt_solver.fast_masks_active():
+                opt_solver.aplicar_bc_mg(self, p_nivel, lvl, hay_dirichlet,
+                                         self.fixed_pressure_value)
+                return
             ny_n, nx_n = p_nivel.shape
             if hay_dirichlet:
                 dm = self._mg_dirichlet[lvl]
@@ -4152,8 +4179,9 @@ class Mesh:
                 kd['nx_i'], kd['ny_i'], size=kd['total'])
             return float(cp.linalg.norm(rhs_r - Lp))
 
-        nlvl_use = min(n_levels, 2)
-        coarse_solve_iters = 20
+        nlvl_use = opt_solver.mg_depth(n_levels, 2)
+        coarse_solve_iters = opt_solver.coarse_iters(
+            20, self._mg_kdims[nlvl_use]['nx'], self._mg_kdims[nlvl_use]['ny'])
 
         def _v_cycle(p_arr, rhs, _dbg=False):
             if _dbg:
@@ -4215,7 +4243,7 @@ class Mesh:
                      cp.int32(kd_f['nx']), cp.int32(kd_f['ny']),
                      cp.int32(self._mg_x_start[lvl + 1]),
                      cp.int32(self._mg_y_start[lvl + 1])))
-                p_lv[lvl][self._mg_solids[lvl]] = cp.float32(0.0)
+                opt_solver.cero_en_solido(p_lv[lvl], self._mg_solids[lvl])
                 _smooth(p_lv[lvl], rhs_lv[lvl], lvl, post_suavizado)
                 _aplicar_bc_mg(p_lv[lvl], lvl)
 
@@ -4327,7 +4355,7 @@ class Mesh:
                 if float(vt) > 0:
                     rhs_flat_ref[free_flat] -= vrs / vt
 
-            p_corr.fill(cp.float32(0.0))
+            opt_solver.init_guess(self, p_corr, outer, dt)
             if hay_dirichlet:
                 p_corr[self.fixed_pressure_mask] = self.fixed_pressure_value
 
@@ -4377,9 +4405,11 @@ class Mesh:
                 if rollback_on_nan and u_initial is not None:
                     self.u[:] = u_initial
                     self.v[:] = v_initial
+                opt_solver.invalidate_warm(self)
                 break
 
             p_last[:] = p_corr
+            opt_solver.store_guess(self, p_corr, outer, dt)
             p_sum += p_corr
             if rollback_on_nan and u_initial is not None:
                 u_initial[:] = self.u
@@ -5533,6 +5563,32 @@ class Mesh:
         else:
             plt.close()
 
+    def dump_field_window(self, out_dir, iteration, xlim=None, ylim=None,
+                          max_nx=1000, t_fisico=0.0):
+        """Vuelca u, v, p recortados a [xlim]x[ylim] y submuestreados a max_nx
+        columnas, en float16, a out_dir/f_XXXXXX.npz.
+
+        El submuestreo no es cosmético: sin él, a dx=0.002 la ventana refinada
+        son ~48 MB por frame y 200 frames llenan el disco.
+        """
+        os.makedirs(out_dir, exist_ok=True)
+        x = cp.asnumpy(self.X_1d)
+        y = cp.asnumpy(self.Y_1d)
+        i0, i1 = (0, len(x)) if xlim is None else np.searchsorted(x, xlim)
+        j0, j1 = (0, len(y)) if ylim is None else np.searchsorted(y, ylim)
+        i1, j1 = max(i1, i0 + 2), max(j1, j0 + 2)
+        s = max(1, int(np.ceil((i1 - i0) / max_nx)))
+        sx, sy = slice(i0, i1, s), slice(j0, j1, s)
+        np.savez_compressed(
+            os.path.join(out_dir, f"f_{iteration:06d}.npz"),
+            x=x[sx], y=y[sy],
+            u=cp.asnumpy(self.u[sy, sx]).astype(np.float16),
+            v=cp.asnumpy(self.v[sy, sx]).astype(np.float16),
+            p=cp.asnumpy(self.p[sy, sx]).astype(np.float16),
+            solid=cp.asnumpy(self.solid[sy, sx]),
+            t=np.float32(t_fisico), iter=np.int32(iteration),
+        )
+
     def save_frame(self, out_dir, iteration, kind="velocity", scale=1.0,
                    xlim=None, ylim=None, dpi=600, title_suffix=""):
         """
@@ -5597,8 +5653,34 @@ class Mesh:
                 suffix = f" - {title_suffix}" if title_suffix else ""
                 plt.title(f"Tracción en superficie (iter {iteration}){suffix}")
                 plt.savefig(fname, dpi=dpi, bbox_inches="tight")
+            elif kind == "vorticity":
+                # Vorticidad sobre la malla estirada: cp.gradient acepta el eje
+                # físico, así que no hay que resamplear a uniforme.
+                w = (cp.gradient(self.v, self.X_1d, axis=1)
+                     - cp.gradient(self.u, self.Y_1d, axis=0))
+                w_np = cp.asnumpy(cp.where(self.solid, cp.nan, w))
+                X_np = cp.asnumpy(self.XX)
+                Y_np = cp.asnumpy(self.YY)
+                # Escala simétrica fija: si cambia de frame a frame el vídeo
+                # parpadea y deja de ser comparable.
+                lim = float(np.nanpercentile(np.abs(w_np), 99.5))
+                lim = 20.0 if not np.isfinite(lim) or lim <= 0 else lim
+                ar = self.Ly / self.Lx
+                fig = plt.figure(figsize=(10, 10 * ar))
+                ax = plt.gca()
+                im = ax.pcolormesh(X_np, Y_np, w_np, cmap='RdBu_r',
+                                   vmin=-lim, vmax=lim, shading='auto')
+                ax.set_aspect('equal', adjustable='box')
+                ax.set_xlim(xlim if xlim is not None else (0, self.Lx))
+                ax.set_ylim(ylim if ylim is not None else (0, self.Ly))
+                plt.colorbar(im, label=r"$\omega_z$")
+                plt.xlabel("x")
+                plt.ylabel("y")
+                suffix = f" - {title_suffix}" if title_suffix else ""
+                plt.title(f"Vorticidad (iter {iteration}){suffix}")
+                plt.savefig(fname, dpi=dpi, bbox_inches="tight")
             else:
-                raise ValueError("kind debe ser 'velocity' o 'traction'")
+                raise ValueError("kind debe ser 'velocity', 'traction' o 'vorticity'")
         finally:
             # Siempre cerrar la figura, incluso si hay error
             if fig is not None:
@@ -6953,17 +7035,20 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
 
     # Diagnóstico de circulación (Kutta): compara Cl de circulación vs Cl de superficie
     Cl_superficie = 2 * Fy_total / (rho * U_inf**2 * chord)
-    circ = mesh_gruesa.compute_circulation()
-    if circ:
-        cl_bound = circ[0]["cl_circ"]
-        print(f"  {'─'*50}")
-        print(f"  Cl (integral superficie) = {Cl_superficie:+.4f}")
-        print(f"  Cl (circulación, lazo interior) = {cl_bound:+.4f}")
-        print(f"  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)")
-        print(f"  → si difieren mucho: la integral de fuerzas es la sospechosa")
-        print(f"{'─'*52}")
+    # Ambos diagnósticos parten de _airfoil_bbox, que no existe sin sólido
+    # (dominio vacío: canal/tubo).
+    if bool(mesh_gruesa.solid.any()):
+        circ = mesh_gruesa.compute_circulation()
+        if circ:
+            cl_bound = circ[0]["cl_circ"]
+            print(f"  {'─'*50}")
+            print(f"  Cl (integral superficie) = {Cl_superficie:+.4f}")
+            print(f"  Cl (circulación, lazo interior) = {cl_bound:+.4f}")
+            print(f"  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)")
+            print(f"  → si difieren mucho: la integral de fuerzas es la sospechosa")
+            print(f"{'─'*52}")
 
-    mesh_gruesa.compute_cp_diagnostics(mu, rho)
+        mesh_gruesa.compute_cp_diagnostics(mu, rho)
 
     if graficos:
         mesh_gruesa.visualize_velocity()
@@ -7320,8 +7405,13 @@ def main(
     # ================================================================
     # MULTIGRID (proyección de presión) — defaults conservan el comportamiento base
     # ================================================================
-    mg_max_outer=8,
-    mg_cycles_per_outer=5,
+    # 2x3 en vez de 8x5. Con la semilla de presion (opt_solver.warm_start) el
+    # solver alcanza con 5 ciclos por paso una divergencia MENOR que la que el
+    # 8x5 conseguia con 35, asi que el presupuesto viejo ya no compra nada.
+    # Validado a t=20 sobre la polar completa: results/polar_optimizada.
+    # Para volver al comportamiento anterior: OPT_SOLVER_OFF=1 y estos dos a 8/5.
+    mg_max_outer=2,
+    mg_cycles_per_outer=3,
     mg_pre_suavizado=3,
     mg_post_suavizado=3,
     mg_guard_residual_every_outer=True,
@@ -7378,10 +7468,17 @@ def main(
     save_frames=False,
     frames_dir_grueso=None,
     frames_dir_refinado=None,
+    frames_dir_vorticidad=None,
     save_frames_cada=None,
     save_frame_refined_xlim=None,
     save_frame_refined_ylim=None,
     save_frame_dpi=600,
+    # Volcado periódico de campos numéricos (u, v, p) recortados a la ventana
+    # refinada y submuestreados. Complementa dump_field_path de RunGA, que sólo
+    # escribe el campo final. None = desactivado.
+    dump_fields_dir=None,
+    dump_fields_cada=None,
+    dump_fields_max_nx=1000,
     graficos=False,
     live_view=False,      # vista en tiempo real (memoria compartida)
     mostrar_malla=False,
@@ -7627,13 +7724,16 @@ def main(
     # Añadir sólido a malla
     mesh_gruesa.add_solid_circle(cx+0.5*chord,cy,0.25*chord)  # círculo de colisión para evitar celdas vacías
     '''
-    mesh_gruesa.load_solids_from_file(
-        filepath=filepath,
-        chord=chord,
-        x_offset=cx, y_offset=cy,
-        alpha_deg=alpha_geom, fill=True, plot=False,
-        min_te_height=min_te
-    )
+    # filepath=None => dominio vacío (canal/tubo): no hay sólido inmerso y todo
+    # el post-proceso que asume perfil se salta más abajo.
+    if filepath:
+        mesh_gruesa.load_solids_from_file(
+            filepath=filepath,
+            chord=chord,
+            x_offset=cx, y_offset=cy,
+            alpha_deg=alpha_geom, fill=True, plot=False,
+            min_te_height=min_te
+        )
     if usar_flujo_inclinado:
         mesh_gruesa.alpha_deg = float(alpha_deg)
 
@@ -8558,9 +8658,31 @@ def main(
                             dpi=int(save_frame_dpi),
                             title_suffix="zona refinada",
                         )
+                    if frames_dir_vorticidad:
+                        mesh_gruesa.save_frame(
+                            frames_dir_vorticidad,
+                            it,
+                            kind="vorticity",
+                            xlim=save_frame_refined_xlim,
+                            ylim=save_frame_refined_ylim,
+                            dpi=int(save_frame_dpi),
+                            title_suffix="vorticidad",
+                        )
                     # Liberar memoria de figuras matplotlib cada cierto número de frames
                     if it % (guardado * 10) == 0:
                         plt.close('all')
+
+                if dump_fields_dir:
+                    campo_every = int(dump_fields_cada) if dump_fields_cada is not None else int(guardado)
+                    campo_every = max(1, campo_every)
+                    if it % campo_every == 0:
+                        mesh_gruesa.dump_field_window(
+                            dump_fields_dir, it,
+                            xlim=save_frame_refined_xlim,
+                            ylim=save_frame_refined_ylim,
+                            max_nx=int(dump_fields_max_nx),
+                            t_fisico=float(tiempo_fisico_acumulado),
+                        )
 
             if it % guardado == 0:
                 timing_stats['guardado'] += time.time() - t0

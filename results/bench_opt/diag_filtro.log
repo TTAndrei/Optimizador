@@ -1,0 +1,524 @@
+[warm] ya hecho: ABORTADA
+[warm_escalado] ya hecho: ABORTADA
+
+=== warm_filtrado  dx=0.004 alpha=0.0 13000 iters {'mg_max_outer': 2, 'mg_cycles_per_outer': 3}
+    activas=['coarse_mask_majority', 'fast_masks', 'interp_float32', 'warm_start', 'warm_start_filtered'] ===
+Malla variable: 918 x 387 nodos
+  X: dx_min=0.003452, dx_max=0.200000
+  Y: dy_min=0.004000, dy_max=0.200000
+  [Ghost-cell] 4 image points corregidos | 1 irreparables (forzados a 0) | total ghost=485
+dt = 0.002000 s  (CFL=0.5)
+Malla: 918 x 387 (355,266 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/13000 [00:00<?, ?it/s] 15%|█▌        | 2008/13000 [01:00<05:28, 33.46it/s] 15%|█▌        | 2008/13000 [01:20<05:28, 33.46it/s] 31%|███       | 4038/13000 [02:00<04:26, 33.67it/s] 31%|███       | 4038/13000 [02:20<04:26, 33.67it/s] 46%|████▋     | 6039/13000 [03:00<03:27, 33.52it/s] 46%|████▋     | 6039/13000 [03:20<03:27, 33.52it/s] 62%|██████▏   | 8065/13000 [04:00<02:26, 33.62it/s] 62%|██████▏   | 8065/13000 [04:20<02:26, 33.62it/s] 78%|███████▊  | 10085/13000 [05:00<01:26, 33.63it/s] 78%|███████▊  | 10085/13000 [05:20<01:26, 33.63it/s] 93%|█████████▎| 12135/13000 [06:00<00:25, 33.81it/s] 93%|█████████▎| 12135/13000 [06:20<00:25, 33.81it/s]100%|██████████| 13000/13000 [06:25<00:00, 33.69it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 500] nu_efectiva muy alta: 5.04e-04 (50.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 500] gamma min=0.002 media=0.202
+\n[Iter 500] Convergencia a steady: u=1.13e-02, v=5.35e-01, p=3.98e-01
+
+[ADVERTENCIA] [Iter 1000] nu_efectiva muy alta: 7.74e-04 (77.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1000] gamma min=0.002 media=0.228
+\n[Iter 1000] Convergencia a steady: u=1.12e-02, v=5.95e-01, p=6.69e-02
+
+[ADVERTENCIA] [Iter 1500] nu_efectiva muy alta: 8.63e-04 (86.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1500] gamma min=0.002 media=0.251
+\n[Iter 1500] Convergencia a steady: u=8.01e-03, v=6.07e-01, p=7.14e-02
+
+[ADVERTENCIA] [Iter 2000] nu_efectiva muy alta: 8.37e-04 (83.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2000] gamma min=0.001 media=0.259
+\n[Iter 2000] Convergencia a steady: u=4.82e-03, v=4.64e-01, p=5.28e-02
+
+[ADVERTENCIA] [Iter 2500] nu_efectiva muy alta: 8.36e-04 (83.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2500] gamma min=0.001 media=0.266
+\n[Iter 2500] Convergencia a steady: u=3.89e-03, v=2.40e-01, p=5.10e-02
+
+[ADVERTENCIA] [Iter 3000] nu_efectiva muy alta: 8.83e-04 (88.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3000] gamma min=0.001 media=0.272
+\n[Iter 3000] Convergencia a steady: u=6.24e-03, v=3.95e-01, p=7.19e-02
+
+[ADVERTENCIA] [Iter 3500] nu_efectiva muy alta: 9.19e-04 (91.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3500] gamma min=0.001 media=0.279
+\n[Iter 3500] Convergencia a steady: u=7.82e-03, v=5.37e-01, p=9.15e-02
+
+[ADVERTENCIA] [Iter 4000] nu_efectiva muy alta: 9.25e-04 (92.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 4000] gamma min=0.001 media=0.284
+\n[Iter 4000] Convergencia a steady: u=1.20e-02, v=8.20e-01, p=1.39e-01
+
+[ADVERTENCIA] [Iter 4500] nu_efectiva muy alta: 9.38e-04 (93.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 4500] gamma min=0.001 media=0.289
+\n[Iter 4500] Convergencia a steady: u=1.07e-02, v=8.19e-01, p=1.20e-01
+
+[ADVERTENCIA] [Iter 5000] nu_efectiva muy alta: 9.54e-04 (95.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5000] gamma min=0.001 media=0.292
+\n[Iter 5000] Convergencia a steady: u=1.41e-02, v=9.08e-01, p=1.56e-01
+
+[ADVERTENCIA] [Iter 5500] nu_efectiva muy alta: 9.70e-04 (97.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5500] gamma min=0.001 media=0.296
+\n[Iter 5500] Convergencia a steady: u=1.31e-02, v=9.41e-01, p=1.33e-01
+
+[ADVERTENCIA] [Iter 6000] nu_efectiva muy alta: 9.30e-04 (93.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6000] gamma min=0.001 media=0.298
+\n[Iter 6000] Convergencia a steady: u=9.60e-03, v=7.97e-01, p=9.24e-02
+
+[ADVERTENCIA] [Iter 6500] nu_efectiva muy alta: 9.63e-04 (96.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6500] gamma min=0.001 media=0.300
+\n[Iter 6500] Convergencia a steady: u=1.30e-02, v=8.20e-01, p=2.08e-01
+
+[ADVERTENCIA] [Iter 7000] nu_efectiva muy alta: 9.73e-04 (97.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7000] gamma min=0.001 media=0.305
+\n[Iter 7000] Convergencia a steady: u=1.50e-02, v=1.03e+00, p=1.84e-01
+
+[ADVERTENCIA] [Iter 7500] nu_efectiva muy alta: 1.00e-03 (100.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7500] gamma min=0.001 media=0.308
+\n[Iter 7500] Convergencia a steady: u=1.26e-02, v=9.35e-01, p=1.19e-01
+
+[ADVERTENCIA] [Iter 8000] nu_efectiva muy alta: 9.71e-04 (97.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 8000] gamma min=0.001 media=0.307
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0594 (|tol|=0.05) en iter 8000
+\n[Iter 8000] Convergencia a steady: u=1.11e-02, v=8.52e-01, p=1.05e-01
+
+[ADVERTENCIA] [Iter 8500] nu_efectiva muy alta: 9.42e-04 (94.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 8500] gamma min=0.001 media=0.308
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0634 (|tol|=0.05) en iter 8500
+\n[Iter 8500] Convergencia a steady: u=8.31e-03, v=7.41e-01, p=8.21e-02
+
+[ADVERTENCIA] [Iter 9000] nu_efectiva muy alta: 9.64e-04 (96.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9000] gamma min=0.001 media=0.308
+\n[Iter 9000] Convergencia a steady: u=8.16e-03, v=6.30e-01, p=9.60e-02
+
+[ADVERTENCIA] [Iter 9500] nu_efectiva muy alta: 9.84e-04 (98.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9500] gamma min=0.001 media=0.309
+\n[Iter 9500] Convergencia a steady: u=9.26e-03, v=7.17e-01, p=1.06e-01
+
+[ADVERTENCIA] [Iter 10000] nu_efectiva muy alta: 9.65e-04 (96.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10000] gamma min=0.001 media=0.312
+\n[Iter 10000] Convergencia a steady: u=8.41e-03, v=6.43e-01, p=9.88e-02
+
+[ADVERTENCIA] [Iter 10500] nu_efectiva muy alta: 9.85e-04 (98.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10500] gamma min=0.001 media=0.314
+\n[Iter 10500] Convergencia a steady: u=1.48e-02, v=9.20e-01, p=2.26e-01
+
+[ADVERTENCIA] [Iter 11000] nu_efectiva muy alta: 9.96e-04 (99.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11000] gamma min=0.001 media=0.319
+\n[Iter 11000] Convergencia a steady: u=1.54e-02, v=1.02e+00, p=1.96e-01
+
+[ADVERTENCIA] [Iter 11500] nu_efectiva muy alta: 9.54e-04 (95.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11500] gamma min=0.001 media=0.320
+\n[Iter 11500] Convergencia a steady: u=1.51e-02, v=1.04e+00, p=1.72e-01
+
+[ADVERTENCIA] [Iter 12000] nu_efectiva muy alta: 9.12e-04 (91.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12000] gamma min=0.001 media=0.319
+\n[Iter 12000] Convergencia a steady: u=1.26e-02, v=9.52e-01, p=1.19e-01
+
+[ADVERTENCIA] [Iter 12500] nu_efectiva muy alta: 9.29e-04 (92.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12500] gamma min=0.001 media=0.316
+\n[Iter 12500] Convergencia a steady: u=1.02e-02, v=8.25e-01, p=1.07e-01
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 13000 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.0297 s
+Pasos simulados: 13000
+Tiempo total simulación: 385.80 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     4.01 s  (  1.0%)
+  Advección.....................   104.05 s  ( 27.0%)
+  Difusión......................    38.68 s  ( 10.0%)
+  Proyección....................   229.20 s  ( 59.4%)
+  Guardado/fuerzas..............     8.44 s  (  2.2%)
+  Otros (overhead)..............     1.41 s  (  0.4%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 229.20 s (59.4% del tiempo total)
+   Tiempo promedio por paso: 0.0176 s
+   Ciclos MG por paso: media=5.04  p95=5.00  max=6
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    0.00   0.046377   0.094591      2.040
+  [save_state] sim_last.npz  (84 arrays, 57 escalares)
+
+--- Resultados (Re=100000, t=19.7024s) ---
+  Cl medio = 0.100363   Cd medio = 0.046124   L/D = 2.18
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.023304      0.048814  N/m
+    Presión                 0.019786      0.048839  N/m
+    Viscosa (fricción)      0.003518     -0.000025  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.046609
+    Cd presión              0.039573  (84.9%)
+    Cd fricción             0.007036  (15.1%)
+  Cl total                  0.097627
+    Cl presión              0.097678  (100.1%)
+    Cl fricción            -0.000051  (-0.1%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.014,6.998] c=0.984  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.87,   7.15]  [   7.86,   8.21]    -0.05311    +0.1079
+   0.40c  [   5.63,   7.39]  [   7.61,   8.46]    -0.05503    +0.1119
+   0.80c  [   5.27,   7.79]  [   7.22,   8.89]    -0.05864    +0.1192
+   1.50c  [   4.56,   8.48]  [   6.61,   9.58]    -0.02568    +0.0522
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.0976
+  Cl (circulación, lazo interior) = +0.1079
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +0.0954
+    ΔCp_TE (extr−intr, x/c≥0.95) = -0.1125  (→0 si Kutta cierra)
+    pico succión Cp_min = -0.244 en x/c=0.655
+────────────────────────────────────────────────────
+[warm_filtrado] {'estado': 'OK', 'cl': 0.092944, 'cd': 0.046536, 'ld': 1.9972, 'cl_ci95': 0.002372, 'cd_ci95': 0.000104, 'iters_efectivas': 13000, 'wall_s': 387.0, 'div_media_2a_mitad': 0.13923953473567963}
+
+=== warm_filt_esc  dx=0.004 alpha=0.0 13000 iters {'mg_max_outer': 2, 'mg_cycles_per_outer': 3}
+    activas=['coarse_mask_majority', 'fast_masks', 'interp_float32', 'warm_start', 'warm_start_filtered', 'warm_start_scaled'] ===
+Malla variable: 918 x 387 nodos
+  X: dx_min=0.003452, dx_max=0.200000
+  Y: dy_min=0.004000, dy_max=0.200000
+  [Ghost-cell] 4 image points corregidos | 1 irreparables (forzados a 0) | total ghost=485
+dt = 0.002000 s  (CFL=0.5)
+Malla: 918 x 387 (355,266 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 40 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/13000 [00:00<?, ?it/s] 15%|█▌        | 2003/13000 [01:00<05:29, 33.38it/s] 15%|█▌        | 2003/13000 [01:13<05:29, 33.38it/s] 31%|███       | 4051/13000 [02:00<04:24, 33.81it/s] 31%|███       | 4051/13000 [02:13<04:24, 33.81it/s] 47%|████▋     | 6090/13000 [03:00<03:23, 33.89it/s] 47%|████▋     | 6090/13000 [03:13<03:23, 33.89it/s] 62%|██████▏   | 8122/13000 [04:00<02:24, 33.87it/s] 62%|██████▏   | 8122/13000 [04:13<02:24, 33.87it/s] 78%|███████▊  | 10151/13000 [05:00<01:24, 33.85it/s] 78%|███████▊  | 10151/13000 [05:13<01:24, 33.85it/s] 94%|█████████▎| 12184/13000 [06:00<00:24, 33.86it/s] 94%|█████████▎| 12184/13000 [06:13<00:24, 33.86it/s]100%|██████████| 13000/13000 [06:24<00:00, 33.82it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 500] nu_efectiva muy alta: 5.04e-04 (50.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 500] gamma min=0.002 media=0.202
+\n[Iter 500] Convergencia a steady: u=1.13e-02, v=5.35e-01, p=3.65e-01
+
+[ADVERTENCIA] [Iter 1000] nu_efectiva muy alta: 7.71e-04 (77.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1000] gamma min=0.002 media=0.228
+\n[Iter 1000] Convergencia a steady: u=1.11e-02, v=5.91e-01, p=6.48e-02
+
+[ADVERTENCIA] [Iter 1500] nu_efectiva muy alta: 8.49e-04 (84.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1500] gamma min=0.002 media=0.251
+\n[Iter 1500] Convergencia a steady: u=7.93e-03, v=6.01e-01, p=6.65e-02
+
+[ADVERTENCIA] [Iter 2000] nu_efectiva muy alta: 8.32e-04 (83.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2000] gamma min=0.001 media=0.259
+\n[Iter 2000] Convergencia a steady: u=4.72e-03, v=4.57e-01, p=4.52e-02
+
+[ADVERTENCIA] [Iter 2500] nu_efectiva muy alta: 8.34e-04 (83.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2500] gamma min=0.001 media=0.266
+\n[Iter 2500] Convergencia a steady: u=2.88e-03, v=2.04e-01, p=3.41e-02
+
+[ADVERTENCIA] [Iter 3000] nu_efectiva muy alta: 8.81e-04 (88.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3000] gamma min=0.001 media=0.272
+\n[Iter 3000] Convergencia a steady: u=5.82e-03, v=2.68e-01, p=5.45e-02
+
+[ADVERTENCIA] [Iter 3500] nu_efectiva muy alta: 9.16e-04 (91.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3500] gamma min=0.001 media=0.278
+\n[Iter 3500] Convergencia a steady: u=9.56e-03, v=5.90e-01, p=1.28e-01
+
+[ADVERTENCIA] [Iter 4000] nu_efectiva muy alta: 9.14e-04 (91.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 4000] gamma min=0.001 media=0.285
+\n[Iter 4000] Convergencia a steady: u=1.06e-02, v=7.82e-01, p=1.08e-01
+
+[ADVERTENCIA] [Iter 4500] nu_efectiva muy alta: 9.27e-04 (92.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 4500] gamma min=0.001 media=0.289
+\n[Iter 4500] Convergencia a steady: u=1.09e-02, v=7.49e-01, p=1.01e-01
+
+[ADVERTENCIA] [Iter 5000] nu_efectiva muy alta: 9.37e-04 (93.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5000] gamma min=0.001 media=0.291
+\n[Iter 5000] Convergencia a steady: u=1.23e-02, v=7.99e-01, p=1.44e-01
+
+[ADVERTENCIA] [Iter 5500] nu_efectiva muy alta: 9.32e-04 (93.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5500] gamma min=0.001 media=0.296
+\n[Iter 5500] Convergencia a steady: u=1.05e-02, v=8.44e-01, p=1.03e-01
+
+[ADVERTENCIA] [Iter 6000] nu_efectiva muy alta: 9.71e-04 (97.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6000] gamma min=0.001 media=0.298
+\n[Iter 6000] Convergencia a steady: u=1.18e-02, v=7.72e-01, p=1.34e-01
+
+[ADVERTENCIA] [Iter 6500] nu_efectiva muy alta: 9.97e-04 (99.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6500] gamma min=0.001 media=0.301
+\n[Iter 6500] Convergencia a steady: u=1.18e-02, v=8.50e-01, p=1.15e-01
+
+[ADVERTENCIA] [Iter 7000] nu_efectiva muy alta: 9.64e-04 (96.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7000] gamma min=0.001 media=0.305
+\n[Iter 7000] Convergencia a steady: u=1.59e-02, v=9.79e-01, p=2.08e-01
+
+[ADVERTENCIA] [Iter 7500] nu_efectiva muy alta: 9.52e-04 (95.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7500] gamma min=0.001 media=0.308
+\n[Iter 7500] Convergencia a steady: u=1.60e-02, v=1.06e+00, p=2.10e-01
+
+[ADVERTENCIA] [Iter 8000] nu_efectiva muy alta: 9.70e-04 (97.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 8000] gamma min=0.001 media=0.311
+\n[Iter 8000] Convergencia a steady: u=1.33e-02, v=1.02e+00, p=1.35e-01
+
+[ADVERTENCIA] [Iter 8500] nu_efectiva muy alta: 9.47e-04 (94.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 8500] gamma min=0.001 media=0.310
+\n[Iter 8500] Convergencia a steady: u=1.22e-02, v=9.04e-01, p=1.14e-01
+
+[ADVERTENCIA] [Iter 9000] nu_efectiva muy alta: 9.41e-04 (94.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9000] gamma min=0.001 media=0.309
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0749 (|tol|=0.05) en iter 9000
+\n[Iter 9000] Convergencia a steady: u=8.44e-03, v=7.45e-01, p=6.51e-02
+
+[ADVERTENCIA] [Iter 9500] nu_efectiva muy alta: 9.75e-04 (97.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9500] gamma min=0.001 media=0.309
+\n[Iter 9500] Convergencia a steady: u=9.94e-03, v=6.75e-01, p=1.22e-01
+
+[ADVERTENCIA] [Iter 10000] nu_efectiva muy alta: 9.90e-04 (99.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10000] gamma min=0.001 media=0.312
+\n[Iter 10000] Convergencia a steady: u=1.08e-02, v=8.10e-01, p=1.29e-01
+
+[ADVERTENCIA] [Iter 10500] nu_efectiva muy alta: 9.99e-04 (99.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10500] gamma min=0.001 media=0.316
+\n[Iter 10500] Convergencia a steady: u=1.17e-02, v=8.27e-01, p=1.17e-01
+
+[ADVERTENCIA] [Iter 11000] nu_efectiva muy alta: 9.52e-04 (95.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11000] gamma min=0.001 media=0.315
+\n[Iter 11000] Convergencia a steady: u=1.19e-02, v=8.14e-01, p=1.52e-01
+
+[ADVERTENCIA] [Iter 11500] nu_efectiva muy alta: 9.68e-04 (96.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11500] gamma min=0.001 media=0.317
+\n[Iter 11500] Convergencia a steady: u=1.42e-02, v=9.59e-01, p=1.75e-01
+
+[ADVERTENCIA] [Iter 12000] nu_efectiva muy alta: 9.69e-04 (96.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12000] gamma min=0.001 media=0.318
+\n[Iter 12000] Convergencia a steady: u=1.44e-02, v=9.46e-01, p=1.57e-01
+
+[ADVERTENCIA] [Iter 12500] nu_efectiva muy alta: 9.49e-04 (94.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12500] gamma min=0.001 media=0.319
+\n[Iter 12500] Convergencia a steady: u=1.40e-02, v=9.31e-01, p=1.53e-01
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 13000 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.0296 s
+Pasos simulados: 13000
+Tiempo total simulación: 384.41 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................     3.97 s  (  1.0%)
+  Advección.....................   103.72 s  ( 27.0%)
+  Difusión......................    38.57 s  ( 10.0%)
+  Proyección....................   228.36 s  ( 59.4%)
+  Guardado/fuerzas..............     8.41 s  (  2.2%)
+  Otros (overhead)..............     1.39 s  (  0.4%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 228.36 s (59.4% del tiempo total)
+   Tiempo promedio por paso: 0.0176 s
+   Ciclos MG por paso: media=5.04  p95=5.00  max=6
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    0.00   0.046412   0.094166      2.029
+  [save_state] sim_last.npz  (84 arrays, 57 escalares)
+
+--- Resultados (Re=100000, t=19.7114s) ---
+  Cl medio = 0.100024   Cd medio = 0.046148   L/D = 2.17
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.023174      0.048046  N/m
+    Presión                 0.019652      0.048073  N/m
+    Viscosa (fricción)      0.003522     -0.000027  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.046349
+    Cd presión              0.039305  (84.8%)
+    Cd fricción             0.007044  (15.2%)
+  Cl total                  0.096092
+    Cl presión              0.096146  (100.1%)
+    Cl fricción            -0.000054  (-0.1%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.014,6.998] c=0.984  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.87,   7.15]  [   7.86,   8.21]    -0.05334    +0.1084
+   0.40c  [   5.63,   7.39]  [   7.61,   8.46]    -0.06868    +0.1396
+   0.80c  [   5.27,   7.79]  [   7.22,   8.89]    -0.03861    +0.0785
+   1.50c  [   4.56,   8.48]  [   6.61,   9.58]    -0.03166    +0.0643
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.0961
+  Cl (circulación, lazo interior) = +0.1084
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +0.0951
+    ΔCp_TE (extr−intr, x/c≥0.95) = -0.1124  (→0 si Kutta cierra)
+    pico succión Cp_min = -0.244 en x/c=0.655
+────────────────────────────────────────────────────
+[warm_filt_esc] {'estado': 'OK', 'cl': 0.091174, 'cd': 0.046638, 'ld': 1.9549, 'cl_ci95': 0.002625, 'cd_ci95': 8.8e-05, 'iters_efectivas': 13000, 'wall_s': 385.3, 'div_media_2a_mitad': 0.14296431839466095}
+
+======================================================================================
+GANADOR AG, dx=0.004, alpha=0.0, 13000 iters, presupuesto 2x3
+======================================================================================
+caso                estado        Cl        Cd      L/D    div media     wall
+--------------------------------------------------------------------------------------
+warm              ABORTADA                                                         44s
+warm_escalado     ABORTADA                                                         60s
+warm_filtrado           OK   0.09294   0.04654    1.997    1.392e-01     387s
+warm_filt_esc           OK   0.09117   0.04664    1.955    1.430e-01     385s
+--------------------------------------------------------------------------------------
+  referencia publicada (solver viejo, 8x5):  Cl=0.07441  Cd=0.04833
+
+  Si warm_escalado sobrevive las 13000, el arreglo funciona y warm_start
+  vuelve a ser utilizable en las tres mallas.
