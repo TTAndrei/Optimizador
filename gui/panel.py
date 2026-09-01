@@ -79,6 +79,9 @@ class PanelParametros(QtWidgets.QScrollArea):
 
 
 def _texto(v):
+    # None = campo vacio: `valores()` lo omite y manda el defecto del solver.
+    if v is None:
+        return ""
     if isinstance(v, float):
         return f"{v:g}"
     return str(v)

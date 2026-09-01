@@ -650,6 +650,10 @@ class Mesh:
         # (~79 referencias, camino caliente) y no una property derivada.
         self.body_id = cp.zeros((self.ny, self.nx), dtype=cp.int16)
         self.bodies = []
+        # Pared deslizante por cuerpo. None mientras no haya ghost cells.
+        self._ghost_slip = None
+        self._ghost_nx = None
+        self._ghost_ny = None
         # Mientras esto sea False el solver recorre exactamente el camino de
         # siempre, instruccion por instruccion. Lo ponen a True el contorno
         # exterior, el segundo cuerpo y los parches de frontera.
@@ -1699,6 +1703,19 @@ class Mesh:
             self.u[self.solid] = 0.0
             self.v[self.solid] = 0.0
 
+    def _mascara_pared_slip(self):
+        """Celdas solidas cuyo cuerpo pide pared deslizante.
+
+        `ibm_wall_mode` es global y vale para toda la geometria; esto es lo que
+        permite mezclar un perfil con no-slip y una pared de tunel con slip en
+        la misma escena, que es lo que ofrece la columna «pared» de la GUI.
+        """
+        m = cp.zeros_like(self.solid)
+        for b in self.bodies:
+            if b.get("pared") == "slip":
+                m |= (self.body_id == cp.int16(b["id"]))
+        return m
+
     def _precomputar_ghost_cell(self):
         """
         Precomputa los datos necesarios para el método Ghost-Cell IBM.
@@ -1736,6 +1753,7 @@ class Mesh:
             self._ghost_cell_ready = False
             self._ghost_mask = ghost_mask
             self._ghost_direct_zero = cp.zeros(0, dtype=cp.bool_)
+            self._ghost_slip = cp.zeros(0, dtype=cp.bool_)
             return
 
         # Distancia de cada ghost cell a la pared (en celdas, siempre negativa dentro del sólido)
@@ -1809,6 +1827,16 @@ class Mesh:
         self._ghost_mask = ghost_mask
         self._ghost_i = ghost_indices[0]
         self._ghost_j = ghost_indices[1]
+        # La normal de cada ghost hace falta luego para reflejar el punto imagen
+        # en las paredes deslizantes.
+        self._ghost_nx = nx_g
+        self._ghost_ny = ny_g
+        self._ghost_slip = self._mascara_pared_slip()[ghost_indices[0],
+                                                      ghost_indices[1]]
+        n_slip = int(cp.count_nonzero(self._ghost_slip))
+        if n_slip:
+            print(f"  [Ghost-cell] {n_slip} de {n_ghost} celdas fantasma con "
+                  f"pared deslizante")
         self._image_j_idx = j_image  # para _bilinear_interpolate (x = j)
         self._image_i_idx = i_image  # para _bilinear_interpolate (y = i)
         self._n_ghost = n_ghost
@@ -1858,11 +1886,28 @@ class Mesh:
         v_image = cp.clip(v_image, -clamp_max, clamp_max)
 
         # Ghost cell = negativo de imagen (para que en la pared: promedio = 0)
-        self.u[self._ghost_i, self._ghost_j] = -u_image
-        self.v[self._ghost_i, self._ghost_j] = -v_image
+        u_g, v_g = -u_image, -v_image
+
+        # Pared deslizante: en vez de invertir la velocidad entera, se refleja
+        # respecto del plano de la pared. Eso invierte solo la componente normal
+        # —su promedio en la pared sigue siendo cero, la pared es impermeable— y
+        # conserva la tangencial, con lo que su derivada normal es cero y no hay
+        # cortadura. Es la misma proyeccion de `reforzar_impermeabilidad`,
+        # aplicada al punto imagen.
+        if self._ghost_slip is not None and bool(cp.any(self._ghost_slip)):
+            un = u_image * self._ghost_nx + v_image * self._ghost_ny
+            u_g = cp.where(self._ghost_slip,
+                           u_image - cp.float32(2.0) * un * self._ghost_nx, u_g)
+            v_g = cp.where(self._ghost_slip,
+                           v_image - cp.float32(2.0) * un * self._ghost_ny, v_g)
+
+        self.u[self._ghost_i, self._ghost_j] = u_g
+        self.v[self._ghost_i, self._ghost_j] = v_g
 
         # Ghost cells "directos" (imagen en sólido incluso tras 25 iters):
-        # imponer velocidad cero directamente (no-slip de primer orden, estable)
+        # imponer velocidad cero directamente (no-slip de primer orden, estable).
+        # Pisa al slip a proposito: si el punto imagen no sirve, reflejarlo
+        # tampoco sirve, y el cero es lo unico estable que queda.
         if hasattr(self, '_ghost_direct_zero') and cp.any(self._ghost_direct_zero):
             gi = self._ghost_i[self._ghost_direct_zero]
             gj = self._ghost_j[self._ghost_direct_zero]
@@ -2055,7 +2100,16 @@ class Mesh:
         self._bc_m = {}
         self.fixed_pressure_mask_bc[:] = False
         for lado, code in self._bc_code.items():
-            efect = cp.where(solid_edge[lado], cp.int8(BC_WALL), code)
+            # Solo se anulan los parches que INYECTAN algo. Un inflow sobre una
+            # celda de pared mete corriente libre encima del cero que el IBM
+            # acaba de poner —el conducto fuga masa— y un Dirichlet de presion
+            # dentro de la pared es un sumidero espurio que el multigrid impone.
+            # noslip y slip no inyectan nada: son condiciones de pared y sobre
+            # una celda de pared son exactamente lo que toca. Dejarlas pasar es
+            # lo unico que hace elegible el tipo de pared de un conducto cuyo
+            # contorno cae sobre el borde de la caja, que es el caso normal.
+            inyecta = (code == BC_INFLOW) | (code == BC_OUTFLOW)
+            efect = cp.where(solid_edge[lado] & inyecta, cp.int8(BC_WALL), code)
             m = {"noslip": efect == BC_NOSLIP,
                  "inflow": efect == BC_INFLOW,
                  "outflow": efect == BC_OUTFLOW,
@@ -4943,6 +4997,14 @@ class Mesh:
         # Para perfiles simetricos (NACA0012 a alpha=0) esto produce 1+ celdas espurias.
         # Solucion: usar radius pequeno negativo para encoger el polygon ~1e-9 en
         # coords. Cells exactamente sobre boundary -> clasificadas FUERA simetricamente.
+        #
+        # El criterio vale igual para region="outside": una celda cuyo centro cae
+        # sobre el contorno es PARED. No se toca el signo para que el conducto
+        # encajado a su bbox deje entrar flujo — eso se arregla sacando las bocas
+        # de entrada y salida fuera de la caja (Escena.contornos_para_malla), no
+        # ensanchando el poligono, que ademas pondria celdas de fluido
+        # exactamente SOBRE la pared, sin distancia a ella, y ahi el ghost cell
+        # degenera.
         try:
             inside = poly.contains_points(pts_grid, radius=-1e-9)
         except TypeError:
@@ -5991,12 +6053,45 @@ class Mesh:
 
     '''Fuerzas'''
 
-    def _solid_boundary_mask(self, use_diagonals=True):
+    def _mascara_cuerpo(self, body):
+        """Mascara solida de uno o varios cuerpos, por id o por nombre.
+
+        `body=None` devuelve todo el solido, que es el comportamiento de
+        siempre. Con varios cuerpos en la escena ese total mezcla la pared del
+        conducto con el obstaculo de dentro y no significa nada.
+        """
+        if body is None:
+            return self.solid
+        if isinstance(body, (str, int, np.integer)):
+            body = [body]
+        ids = []
+        for b in body:
+            if isinstance(b, str):
+                hit = [d["id"] for d in self.bodies if d["nombre"] == b]
+                if not hit:
+                    nombres = [d["nombre"] for d in self.bodies]
+                    raise ValueError(
+                        f"no hay ningún cuerpo llamado {b!r}; hay {nombres}")
+                ids += hit
+            else:
+                ids.append(int(b))
+        m = cp.zeros_like(self.solid)
+        for k in ids:
+            m |= (self.body_id == cp.int16(k))
+        if not bool(m.any()):
+            raise ValueError(f"los cuerpos {body!r} no ocupan ninguna celda")
+        return m
+
+    def _solid_boundary_mask(self, use_diagonals=True, body=None):
         """
         Devuelve máscara de celdas de fluido adyacentes al sólido (frontera del sólido).
+
+        Con `body` se restringe a la pared de esos cuerpos. El fluido sigue
+        siendo `~self.solid` entero: otro cuerpo no es fluido, asi que dos
+        cuerpos que se tocan no se cuentan pared el uno al otro.
         """
-        solid = self.solid
-        fluid = ~solid
+        solid = self._mascara_cuerpo(body)
+        fluid = ~self.solid
 
         # Vecinos ortogonales
         nb = cp.zeros_like(solid, dtype=cp.bool_)
@@ -6020,6 +6115,11 @@ class Mesh:
         boundary[:, -1] = False
 
         return boundary
+
+    def fuerzas_por_cuerpo(self, mu, rho=1.0, **kw):
+        """{nombre: resultado} con la integral restringida a cada cuerpo."""
+        return {b["nombre"]: self.compute_surface_forces_definitive(
+                    mu, rho=rho, body=b["id"], **kw) for b in self.bodies}
 
     def _signed_distance_and_normals(self, smooth_passes: int = None,
                                      smooth_band_cells: float = 5.0):
@@ -6280,7 +6380,8 @@ class Mesh:
         }
     def compute_surface_forces_definitive(self, mu, rho=1.0, return_per_face=False, return_cp=True, n_extrap_layers=5,
                                           correct_pressure_offset=True, pressure_debias_mode=None,
-                                          pressure_wall_reconstruction="linear_5"):
+                                          pressure_wall_reconstruction="linear_5",
+                                          body=None):
         """
         Versión definitiva de la integral de esfuerzos sobre el perfil.
         - Usa extrapolación de presión y viscosidad desde múltiples capas para capturar gradientes lejanos en flujos turbulentos.
@@ -6300,7 +6401,10 @@ class Mesh:
         Retorna diccionario con Fx,Fy, etc.
         """
         # 1) frontera y normales
-        boundary = self._solid_boundary_mask(use_diagonals=True)
+        # `body` restringe la integral a la pared de esos cuerpos. Sin el, el
+        # total suma TODO el solido: en un conducto con un obstaculo dentro, la
+        # pared del conducto tapa al obstaculo y el numero no significa nada.
+        boundary = self._solid_boundary_mask(use_diagonals=True, body=body)
         _, nx_all, ny_all = self._signed_distance_and_normals()
 
         # 2) elemento de arco local ds usando métrica física local
@@ -7328,6 +7432,32 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     print(f"  {'  Cl presión':20s}  {Cl_presion:>12.6f}  ({100*Cl_presion/(2*Fy_total/(rho*U_inf**2*chord)+1e-30):.1f}%)")
     print(f"  {'  Cl fricción':20s}  {Cl_friccion:>12.6f}  ({100*Cl_friccion/(2*Fy_total/(rho*U_inf**2*chord)+1e-30):.1f}%)")
     print(f"{'─'*52}")
+
+    # Desglose por cuerpo. El TOTAL de arriba integra sobre toda la mascara
+    # solida, asi que en cuanto hay mas de un cuerpo mezcla cosas que no se
+    # pueden sumar —la pared de un conducto y el obstaculo de dentro— y no
+    # significa nada. Esto es lo que hay que mirar en una escena multicuerpo.
+    if len(getattr(mesh_gruesa, "bodies", [])) > 1:
+        print(f"  Fuerzas por cuerpo (N/m):")
+        print(f"  {'':22s}  {'Fx':>11s}  {'Fy':>11s}  {'Fx presión':>11s}  {'Fx fricción':>11s}")
+        print(f"  {'─'*72}")
+        suma_x = suma_y = 0.0
+        for b in mesh_gruesa.bodies:
+            try:
+                r = mesh_gruesa.compute_surface_forces_definitive(
+                    mu=rho * nu, rho=rho, body=b["id"], return_cp=False)
+            except Exception as e:
+                print(f"  {b['nombre'][:22]:22s}  no se pudo integrar: {e}")
+                continue
+            suma_x += float(r["Fx"]); suma_y += float(r["Fy"])
+            print(f"  {b['nombre'][:22]:22s}  {float(r['Fx']):>11.6f}  "
+                  f"{float(r['Fy']):>11.6f}  {float(r['Fx_p']):>11.6f}  "
+                  f"{float(r['Fx_v']):>11.6f}   ({b['rol']}, {b['pared']})")
+        print(f"  {'─'*72}")
+        print(f"  {'suma de cuerpos':22s}  {suma_x:>11.6f}  {suma_y:>11.6f}"
+              f"   (total sobre todo el sólido: {Fx_total:.6f}, {Fy_total:.6f})")
+        print(f"{'─'*52}")
+
     # retener variables para posible uso posterior
 
     # Diagnóstico de circulación (Kutta): compara Cl de circulación vs Cl de superficie
@@ -8082,11 +8212,17 @@ def main(
         n_sol = int(mesh_gruesa.solid.sum())
         print(f"  [escena] {len(mesh_gruesa.bodies)} cuerpo(s), "
               f"{n_sol} celdas sólidas ({100.0 * n_sol / (mesh_gruesa.ny * mesh_gruesa.nx):.1f} %)")
-        if n_sol == 0 and mesh_gruesa.bodies:
+        # Un cuerpo sumergido sin celdas es un error: cae fuera del dominio o
+        # las unidades del DXF no eran las que se creia. Un contorno EXTERIOR
+        # sin celdas no lo es: un conducto recto cuyo perimetro coincide con la
+        # caja no deja ninguna pared inmersa, y sus paredes son las BC del borde.
+        vacios = [b["nombre"] for b in mesh_gruesa.bodies
+                  if b["rol"] != "exterior" and b["celdas"] == 0]
+        if vacios:
             raise ValueError(
-                "La máscara sólida ha salido vacía con la escena dada: la "
-                "geometría no cae dentro del dominio, o las unidades no son "
-                "las que se cree. Previsualiza la malla antes de lanzar.")
+                f"Los cuerpos {vacios} no han rasterizado ninguna celda: caen "
+                f"fuera del dominio {Lx:g} x {Ly:g}, o las unidades del DXF no "
+                f"son las que se cree. Previsualiza la malla antes de lanzar.")
         mesh_gruesa.preparar_geometria()
     elif filepath:
         mesh_gruesa.load_solids_from_file(
@@ -8470,7 +8606,14 @@ def main(
         else:
             data_size = base_size
 
-        meta_size = 40  # ny(4)+nx(4)+iter(4)+cd(4)+cl(4)+alpha(4)+timestamp(8)+v0x(4)+v0y(4)
+        # ny(4)+nx(4)+iter(4)+cd(4)+cl(4)+alpha(4)+timestamp(8)+v0x(4)+v0y(4)+pid(4)
+        # El pid va al final para no mover ningun offset ya publicado. Sirve
+        # para que un visor sepa si el bloque es de ESTA simulacion: la memoria
+        # compartida POSIX sobrevive al proceso, y un bloque huerfano de una
+        # corrida anterior se lee igual de bien, con la malla y el dominio de la
+        # otra. Es como acaba una GUI pintando un campo negro de 4x2 sobre un
+        # conducto de 4.8x1.
+        meta_size = 48
 
         # Limpiar bloques previos si existen
         for name in ["sim2d_meta", "sim2d_live", "sim2d_coords"]:
@@ -8494,6 +8637,7 @@ def main(
 
         # Escribir dimensiones iniciales
         struct.pack_into('ii', shm_meta.buf, 0, ny_g, nx_g)
+        struct.pack_into('i', shm_meta.buf, 40, os.getpid())
         if live_view:
             print(f"\n[LIVE] Live view activado: ejecuta 'python viewer_live.py' en otra terminal")
         print(f"   Progreso en memoria compartida: {meta_size} bytes (iteraciones sincronizadas)")

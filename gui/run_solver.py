@@ -36,11 +36,13 @@ def main(ruta_escena):
     # main() se queda con SUS defectos (dx_min=0.002) y sale una malla veinte
     # veces mas fina que la previsualizada.
     kwargs.setdefault("dx_min", float(esc.dx_min))
+    if esc.dy_min:
+        kwargs.setdefault("dy_min", float(esc.dy_min))
     kwargs.setdefault("factor_expansion", float(esc.factor_expansion))
     kwargs.update(
         Lx=float(esc.Lx), Ly=float(esc.Ly),
         filepath=None,                 # la geometria entra por la escena
-        escena=esc.a_dict(),
+        escena=esc.dict_solver(),
         graficos=False, mostrar_malla=False,
     )
     kwargs.update(SALIDA.get(esc.modo_salida, SALIDA["monitor"]))

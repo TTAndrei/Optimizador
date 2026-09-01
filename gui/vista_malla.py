@@ -28,19 +28,26 @@ def ejes(escena):
     from Simulador2D import (absorber_slivers, generar_malla_estirada,
                              generar_malla_estirada_intervalo)
     dx = escena.dx_min
+    dy = escena.dy
     fe = escena.factor_expansion
+    # El solver tapa el crecimiento de celda en ratio_max_malla*dx_min. Sin
+    # replicarlo aqui la previsualizacion enseña una malla que no es la que se
+    # simula, que es justo lo que hay que evitar.
+    ratio = float(escena.solver.get("ratio_max_malla", 50))
     banda = escena.banda_fina()
     if banda is None:
         X = generar_malla_estirada(escena.Lx, escena.Lx / 2, dx, fe, escena.Lx)
-        Y = generar_malla_estirada(escena.Ly, escena.Ly / 2, dx, fe, escena.Ly)
+        Y = generar_malla_estirada(escena.Ly, escena.Ly / 2, dy, fe, escena.Ly)
         return np.asarray(X), np.asarray(Y)
     x0, x1, y0, y1 = banda
     # Mismo tratamiento que en el solver: si no, la previsualizacion promete un
     # dt que la simulacion no va a tener.
     X = absorber_slivers(generar_malla_estirada_intervalo(
-        escena.Lx, max(0.0, x0), min(escena.Lx, x1), dx, fe), dx)
+        escena.Lx, max(0.0, x0), min(escena.Lx, x1), dx, fe,
+        dx_max=ratio * dx), dx)
     Y = absorber_slivers(generar_malla_estirada_intervalo(
-        escena.Ly, max(0.0, y0), min(escena.Ly, y1), dx, fe), dx)
+        escena.Ly, max(0.0, y0), min(escena.Ly, y1), dy, fe,
+        dx_max=ratio * dy), dy)
     return np.asarray(X), np.asarray(Y)
 
 
@@ -48,12 +55,45 @@ def mascara(escena, X, Y):
     XX, YY = np.meshgrid(X, Y, indexing="xy")
     pts = np.column_stack((XX.ravel(), YY.ravel()))
     solid = np.zeros((len(Y), len(X)), dtype=bool)
-    for c in escena.contornos:
-        x, y = c.arrays()
+    # Las MISMAS coordenadas que va a ver el solver, incluida la extension de
+    # las bocas fuera de la caja: si no, la previsualizacion ensena una mascara
+    # que no es la que se simula.
+    for c, x, y in escena.contornos_para_malla():
         dentro = Path(np.column_stack((x, y))).contains_points(
             pts, radius=-1e-9).reshape(solid.shape)
         solid |= (~dentro) if c.rol == "exterior" else dentro
     return solid
+
+
+# Que se pinta en el modo de malla. El valor es (etiqueta, unidad).
+MODOS_MALLA = {
+    "tamaño":  ("tamaño de celda", "m"),
+    "dx":      ("dx", "m"),
+    "dy":      ("dy", "m"),
+    "aspecto": ("relación de aspecto", ":1"),
+}
+
+
+def mapa_celda(X, Y, modo="tamaño"):
+    """Mapa (ny, nx) del tamaño de celda en cada nodo de la malla.
+
+    `np.gradient` sobre el eje da el espaciado local en el propio nodo —media de
+    los dos intervalos vecinos, y el intervalo suelto en los extremos— asi que
+    el mapa tiene la forma de la malla y no hay que interpolar nada.
+
+    "tamaño" es el lado MAYOR de la celda: es el que manda en lo que se puede
+    resolver ahi, y una celda de 0.004 x 0.2 no resuelve nada de 0.004.
+    """
+    hx = np.gradient(np.asarray(X, float))
+    hy = np.gradient(np.asarray(Y, float))
+    HX, HY = np.meshgrid(hx, hy, indexing="xy")
+    if modo == "dx":
+        return HX
+    if modo == "dy":
+        return HY
+    if modo == "aspecto":
+        return np.maximum(HX / HY, HY / HX)
+    return np.maximum(HX, HY)
 
 
 def diagnostico(escena):
@@ -97,6 +137,28 @@ def diagnostico(escena):
         avisos.append(f"El hueco de fluido más estrecho son {hueco:.1f} celdas. "
                       "El IBM necesita ~8: por debajo, los puntos imagen de las "
                       "dos paredes se interpenetran y la garganta se tapona.")
+    # SA cuenta la distancia a pared en NUMERO DE CELDAS y la multiplica por el
+    # tamano de la celda donde estas (Simulador2D._compute_sa_wall_distance), asi
+    # que solo es exacta si todas las celdas entre el punto y la pared miden lo
+    # mismo. Con un perfil se cumple solo: la capa limite vive dentro de la banda
+    # fina uniforme. Con un conducto la cortadura ocupa TODA la seccion, asi que
+    # la banda fina tiene que cubrirla. Medido en un canal: con la banda cubriendo
+    # la seccion el error en d es del 0 % (3 % de pico); con la banda solo en el
+    # centro y un estiramiento de x1.9 dentro del canal, 35 % mediano y 51 % de
+    # pico.
+    if escena.solver.get("turb_model") == "sa" and solid.any():
+        fluido_y = ~solid.all(axis=1)          # filas con algo de fluido
+        if fluido_y.any() and ny > 1:
+            dyf = np.diff(Y)[fluido_y[:-1]]
+            if dyf.size and dyf.max() > 1.5 * dyf.min():
+                avisos.append(
+                    f"El modelo SA necesita celdas del mismo tamaño entre el "
+                    f"punto y la pared, y dentro del fluido dy va de "
+                    f"{dyf.min():.4f} a {dyf.max():.4f} (×{dyf.max()/dyf.min():.1f}). "
+                    f"La distancia a pared saldrá mal donde la malla se estira. "
+                    f"Amplía la banda fina para que cubra toda la sección, o usa "
+                    f"wale/none.")
+
     banda = escena.banda_fina()
     if banda:
         bx0, bx1, by0, by1 = banda
@@ -108,6 +170,37 @@ def diagnostico(escena):
                 avisos.append(f"El cuerpo «{c.nombre}» se sale de la banda "
                               "fina: ahí las normales de pared salen mal y las "
                               "fuerzas con ellas.")
+    # Relacion de aspecto de celda. Medido en el conducto de 4.8x1 con la banda
+    # fina puesta solo alrededor del cilindro: dx crece x20 (0.01 -> 0.20) contra
+    # dy=0.01, y la simulacion revienta en la iteracion 790. Con la banda
+    # cubriendo la seccion, o acotando el crecimiento a x8, aguanta. El
+    # multigrid se degrada con malla anisotropa y aqui deja de converger.
+    # Relacion de aspecto JUNTO A LA PARED. El aspecto por si solo no decide:
+    # un perfil en 24x16 tiene celdas 28:1 lejos, en corriente uniforme, y corre
+    # sin problema. Lo que revienta es una celda larga y plana donde hay
+    # cortadura, es decir pegada a una pared. Medido en el conducto de 4.8x1:
+    # con celdas 20:1 contra la pared, blowup en la iteracion 790; acotando el
+    # crecimiento de dx a x8, 3000 pasos limpios.
+    if nx > 1 and ny > 1:
+        rx = np.diff(X)[None, :] / np.diff(Y)[:, None]
+        rx = np.maximum(rx, 1.0 / rx)
+        junto = np.zeros_like(rx, dtype=bool)
+        if solid.any():
+            from scipy.ndimage import binary_dilation
+            junto |= (binary_dilation(solid) & ~solid)[:-1, :-1]
+        for p in escena.parches:                 # la pared tambien puede ser el borde
+            if p.tipo != "noslip":
+                continue
+            junto[{"bottom": np.s_[0, :], "top": np.s_[-1, :],
+                   "left": np.s_[:, 0], "right": np.s_[:, -1]}[p.lado]] = True
+        if junto.any():
+            aspecto = float(rx[junto].max())
+            if aspecto > 10.0:
+                avisos.append(
+                    f"Junto a la pared hay celdas de relación de aspecto "
+                    f"{aspecto:.0f}:1. Por encima de ~10 el multigrid deja de "
+                    f"converger y la simulación revienta. Baja «Ratio máximo "
+                    f"dx_max/dx_min» o amplía la banda fina.")
     if dt_visc < dt_conv:
         avisos.append(f"El paso lo limita la viscosidad, no el CFL "
                       f"(dt_visc={dt_visc:.2e} < dt_conv={dt_conv:.2e}). "

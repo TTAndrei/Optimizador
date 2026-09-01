@@ -108,7 +108,19 @@ máscara ya rasterizada en CPU: pared más fina que una celda (no existe, el flu
 se fuga), hueco de fluido por debajo de ~8 celdas (el IBM se atasca y la garganta
 se tapona), cuerpo fuera de la banda fina (normales mal), sin entrada o sin
 salida (Poisson singular), contorno que no cruza el perímetro, `dt` previsto
-distinguiendo el límite convectivo del viscoso.
+distinguiendo el límite convectivo del viscoso, y malla estirada dentro del
+fluido con SA activo (ver abajo).
+
+**SA y conductos, medido.** `_compute_sa_wall_distance` cuenta la distancia a
+pared en **número de celdas** y la multiplica por el tamaño de **la celda local**,
+así que solo es exacta si todas las celdas entre el punto y la pared miden lo
+mismo. Con un perfil se cumple gratis: la capa límite vive dentro de la banda fina
+uniforme. Con un conducto la cortadura ocupa **toda la sección**. Medido sobre un
+canal de altura 1 en un dominio de 2: con la banda fina cubriendo la sección el
+error en `d` es **0 % mediano y 3.1 % de pico**; con la banda solo en el centro y
+un estiramiento de ×1.9 dentro del canal, **35 % mediano y 51 % de pico**. La
+regla no es "no usar SA", es **la banda fina tiene que cubrir la sección**; la
+previsualización lo comprueba y avisa.
 
 **Casos de prueba con verdad conocida** (`tests/test_dominio_arbitrario.py`):
 canal de Poiseuille (balance de masa < 2 %, perfil parabólico < 10 %) y tobera

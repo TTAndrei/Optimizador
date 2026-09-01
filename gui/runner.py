@@ -44,7 +44,7 @@ class LectorLog(QtCore.QThread):
 class Runner(QtCore.QObject):
     log = QtCore.pyqtSignal(str)
     progreso = QtCore.pyqtSignal(dict)          # iter, cl, cd, alpha
-    campo = QtCore.pyqtSignal(object, object, object)   # speed, x, y
+    campo = QtCore.pyqtSignal(object, object, object, object)  # speed, solid, x, y
     terminado = QtCore.pyqtSignal(int)
 
     def __init__(self, parent=None):
@@ -66,6 +66,7 @@ class Runner(QtCore.QObject):
         ruta = os.path.join(self.dir, "escena.json")
         escena.guardar(ruta)
         self._quitar_centinela()
+        self._tirar_shm_huerfana()
 
         self.proc = subprocess.Popen(
             [PYTHON, "-u", "-m", "gui.run_solver", ruta],
@@ -109,24 +110,55 @@ class Runner(QtCore.QObject):
         self.progreso.emit({"iter": it, "cl": cl, "cd": cd, "alpha": alpha})
 
         n = ny * nx
-        speed = np.frombuffer(self._shm[DATOS].buf, dtype=np.float32,
-                              count=n).reshape(ny, nx).copy()
+        db = self._shm[DATOS].buf
+        speed = np.frombuffer(db, dtype=np.float32, count=n).reshape(ny, nx).copy()
+        solid = np.frombuffer(db, dtype=np.uint8, count=n,
+                              offset=n * 4).reshape(ny, nx).astype(bool)
         cb = self._shm[COORDS].buf
         x = np.frombuffer(cb, dtype=np.float32, count=nx).copy()
         y = np.frombuffer(cb, dtype=np.float32, count=ny,
                           offset=nx * 4).copy()
-        self.campo.emit(speed, x, y)
+        self.campo.emit(speed, solid, x, y)
 
     def _abrir_shm(self):
+        """Solo acepta los bloques de NUESTRO proceso.
+
+        La memoria compartida POSIX tiene nombre fijo y sobrevive al proceso que
+        la creo, asi que un bloque huerfano de una corrida anterior —un test
+        interrumpido, un blowup— se abre igual de bien y se pinta igual de bien,
+        con la malla y el dominio de la OTRA simulacion. El solver publica su pid
+        al final de la cabecera; sin coincidencia, no se lee nada.
+        """
         if self._shm:
             return True
+        if self.proc is None:
+            return False
         try:
             for nombre in (META, DATOS, COORDS):
                 self._shm[nombre] = shared_memory.SharedMemory(name=nombre)
         except FileNotFoundError:
             self._cerrar_shm()
             return False
+        if self._shm[META].size < 44:
+            self._cerrar_shm()               # cabecera vieja, sin pid
+            return False
+        pid, = struct.unpack_from("i", self._shm[META].buf, 40)
+        if pid != self.proc.pid:
+            self._cerrar_shm()
+            return False
         return True
+
+    def _tirar_shm_huerfana(self):
+        """Borra los bloques que haya dejado una corrida anterior. Sin esto, el
+        pid nunca coincide y no se ve nada; con esto, ademas, no se acumulan."""
+        for nombre in (META, DATOS, COORDS):
+            try:
+                v = shared_memory.SharedMemory(name=nombre)
+                v.close()
+                v.unlink()
+                self.log.emit(f"[GUI] tirado bloque huérfano {nombre}")
+            except FileNotFoundError:
+                pass
 
     def _cerrar_shm(self):
         for s in self._shm.values():

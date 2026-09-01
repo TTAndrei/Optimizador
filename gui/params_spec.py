@@ -20,6 +20,10 @@ GRUPOS = [
  ("Malla", [
   ("dx_min", "dx mínimo [m]", "f", 0.004,
    "Manda en todo: el coste va con 1/dx², y dt con dx² por el límite viscoso."),
+  ("dy_min", "dy mínimo [m]", "f", None,
+   "Vacío = igual que dx. Separarlos sirve para resolver una capa límite sin "
+   "pagar la misma resolución a lo largo del flujo, pero celdas muy planas "
+   "junto a una pared hacen que el multigrid deje de converger."),
   ("factor_expansion", "Factor de expansión", "f", 1.1,
    "Crecimiento de celda fuera de la zona fina. Por encima de 1.2 el "
    "multigrid se degrada."),
