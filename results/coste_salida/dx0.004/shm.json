@@ -1,0 +1,43 @@
+{
+  "id": "shm",
+  "dx": 0.004,
+  "iters": 1500,
+  "guardado": 50,
+  "ny": 387,
+  "nx": 918,
+  "celdas": 355266,
+  "wall_s": 45.13,
+  "it_s": 33.238,
+  "s_paso": 0.030086,
+  "timing": {
+    "recalculo_dt": 0.4891,
+    "adveccion": 12.0447,
+    "difusion": 4.234,
+    "proyeccion": 26.0974,
+    "guardado": 1.032,
+    "guardado_fuerzas": 0.4404,
+    "guardado_series": 0.5741,
+    "guardado_shm": 0.0174,
+    "guardado_frames": 0.0001,
+    "guardado_dump": 0.0,
+    "otros": 0.1634
+  },
+  "n_eventos": {
+    "guardado": 30,
+    "shm": 30,
+    "frames": 0,
+    "dump": 0
+  },
+  "disco": {
+    "dump_ficheros": 0,
+    "dump_bytes": 0,
+    "png_ficheros": 0,
+    "png_bytes": 0
+  },
+  "cl": 0.5163017392158509,
+  "cd": 0.03689303509891033,
+  "n_samples": 10,
+  "overrides": {
+    "shm_publish": true
+  }
+}

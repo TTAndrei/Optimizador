@@ -1,0 +1,44 @@
+{
+  "id": "dump_400",
+  "dx": 0.002,
+  "iters": 1000,
+  "guardado": 50,
+  "ny": 713,
+  "nx": 1772,
+  "celdas": 1263436,
+  "wall_s": 44.78,
+  "it_s": 22.331,
+  "s_paso": 0.044781,
+  "timing": {
+    "recalculo_dt": 0.3967,
+    "adveccion": 16.5286,
+    "difusion": 4.2154,
+    "proyeccion": 19.1986,
+    "guardado": 1.6288,
+    "guardado_fuerzas": 0.6637,
+    "guardado_series": 0.7671,
+    "guardado_shm": 0.0002,
+    "guardado_frames": 0.0,
+    "guardado_dump": 0.1978,
+    "otros": 0.107
+  },
+  "n_eventos": {
+    "guardado": 20,
+    "shm": 0,
+    "frames": 0,
+    "dump": 20
+  },
+  "disco": {
+    "dump_ficheros": 20,
+    "dump_bytes": 4887356,
+    "png_ficheros": 0,
+    "png_bytes": 0
+  },
+  "cl": 0.46313767433166503,
+  "cd": 0.04271132610738278,
+  "n_samples": 10,
+  "overrides": {
+    "dump_fields_dir": "campos",
+    "dump_fields_max_nx": 400
+  }
+}

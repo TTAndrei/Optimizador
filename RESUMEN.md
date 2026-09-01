@@ -7,6 +7,128 @@ Simulador CFD 2D incompresible (Navier-Stokes) en GPU (CuPy, RTX 3070 Ti) para p
 - Sólidos por IBM (Immersed Boundary): máscara rasterizada + ghost-cell no-slip (`ibm_wall_mode="ghost_noslip"`).
 - **Ejecutar SIEMPRE con `.venv/bin/python`** (el python3 del sistema no tiene CuPy).
 
+## DOMINIOS ARBITRARIOS DESDE CAD + INTERFAZ (2026-09-01, sin commitear)
+
+El solver ya no está atado a "un perfil alar dentro de una caja". Admite
+**contornos importados de DXF**: un contorno exterior que define las paredes del
+dominio (túnel, conducto, tobera, difusor) y N cuerpos internos, con las
+condiciones de frontera asignadas **por tramo del perímetro** en vez de por lado
+entero. Interfaz nueva en `gui/` (PyQt6 + pyqtgraph): importar, clasificar,
+asignar fronteras con el ratón, previsualizar la malla y lanzar.
+
+**Compatibilidad: bit a bit.** Todo lo nuevo va detrás de `Mesh._geom_arbitrary`,
+que solo se activa con contorno exterior, con más de un cuerpo o con parches de
+frontera. Comprobado con `scripts/agent_tests/equivalencia_bit.py`, que compara
+`u`, `v`, `p`, `solid`, `cl` y `cd` con `np.array_equal` contra el
+`Simulador2D.py` de HEAD — no con una puerta del 0.5 %, que es lo que hace
+`bench_opt --compare` y por donde se cuela un cambio. **Idénticos.** Y sobre una
+corrida de producción de 4000 iteraciones (`results/bench_opt/post_f23.json`
+frente a `base_f0.json`): **Cl = 0.560895 y Cd = 0.029798 en las dos**, hasta el
+último decimal. **32/32 tests.**
+
+### Dos bugs, y el segundo importa más que la feature
+
+1. **`apply_boundaries` corre DESPUÉS del IBM** en los seis caminos de paso
+   (`apply_ghost_cell_bc` → `reforzar_impermeabilidad` → `apply_boundaries`) y
+   escribía la columna o fila **entera** del borde. En cuanto una pared de
+   conducto llega al perímetro de la caja, esa línea inyectaba velocidad de
+   corriente libre en celdas de pared que el IBM acababa de poner a cero: fuente
+   de masa dentro de la pared, y el conducto fugaba. Arreglado con el código
+   `BC_WALL`, que marca las celdas de borde sólidas como "no escribir nada".
+   Sin esto ningún caso analítico pasa.
+2. **`generar_malla_estirada_intervalo` deja una celda residual diminuta en los
+   extremos** cuando la banda fina no cuadra con el dominio, y como `Mesh.dx` es
+   el **mínimo** de los espaciados, esa sola celda se lleva por delante el paso
+   de tiempo: el límite viscoso va con `dx²`, así que `dx/12` en una celda divide
+   el `dt` por **145**. Medido en la tobera de prueba: `dt` de 3.4e-5 a 5.0e-3.
+   **Es el mismo mecanismo que hundió la malla de dx=0.001 del estudio** (ver más
+   abajo), y ya está actuando en la ruta antigua: el estudio de coste pidió
+   dx=0.004 y la malla salió con `dx_min=0.003452`, un 14 % menos. Arreglado con
+   `absorber_slivers()`, **aplicado solo en la ruta nueva** para no mover ningún
+   resultado publicado. Merece la pena mirar si conviene extenderlo.
+
+### Coste de sacar frames — medido, no estimado
+
+`scripts/agent_tests/coste_salida.py` → `results/coste_salida/INFORME.md`.
+26 configuraciones (13 × 2 mallas) con la configuración de las polares finales
+(dominio C, presupuesto 2×3, SA-BC, las cinco optimizaciones de `opt_solver`).
+El bloque de salida está ahora desglosado en sub-cronómetros
+(`guardado_fuerzas` / `_series` / `_shm` / `_frames` / `_dump`), porque los
+cuatro caían en el mismo cubo y no se podía separar nada.
+
+Lo que se mide es el **coste por evento**, que es lo único independiente de la
+cadencia; el `it/s` entre corridas tiene ±3 % de ruido y no sirve.
+
+| vía | ms/evento (dx=0.004) | ms/evento (dx=0.002) | a cadencia 50 |
+|---|---|---|---|
+| memoria compartida (vista en vivo) | 0.6 | 1.8 | **0.08 %** |
+| ídem + vorticidad (`live_view`) | 1.3 | 3.8 | 0.2 % |
+| `dump_fields` comprimido (`max_nx`=900) | 21 | 20 | 0.9 % |
+| `dump_fields` **sin comprimir** | 3 | 3 | 0.1 % |
+| `save_frame` dpi=600 **dentro del solver** | 753 | 1178 | **53 %** |
+
+- **La vista en vivo es gratis.** No hay motivo para apagarla. Y hasta ahora se
+  pagaba *siempre*, mirase alguien o no: el campo se publicaba incondicionalmente.
+  Nuevo flag `shm_publish` (por defecto `True`, sin cambio de comportamiento) y
+  `shm_cada` para bajar la cadencia.
+- **El volcado a disco lo domina zlib**: el 85 % del coste. Quitarlo cuesta ×2.2
+  de disco (`dump_fields_comprimir=False`).
+- **Dibujar dentro del solver es ×60 el volcado equivalente.** Volcar campos y
+  montar el vídeo después con `render_videos.py` da lo mismo por una fracción y
+  sin ocupar la GPU. La GUI lo desaconseja con el número al lado.
+
+### Qué hay nuevo
+
+**Solver** (`Simulador2D.py`, +620/−199): `parse_geometry_file()` a nivel de
+módulo (el recorte de borde de salida pasa a ser `trim_te=True`, opcional);
+`Mesh.rasterize_polygon(region="inside"|"outside")`; `Mesh.add_body()` y
+`Mesh.body_id`; `Mesh.set_boundary_patch()` con arrays de código por celda de
+borde y `_apply_boundaries_por_celda()`; `Mesh.preparar_geometria()`;
+`absorber_slivers()`; kwargs `escena`, `shm_publish`, `shm_cada`, `bench_sync`,
+`dump_fields_comprimir`. Además se invalida `_opt_bc_cache` en
+`_init_mg_hierarchy` — se indexaba **solo por nivel y no caducaba nunca**, así
+que cualquier cambio posterior de geometría o de presión fijada lo dejaba
+obsoleto y en silencio equivocado.
+
+**Con geometría arbitraria se DESACTIVAN** la circulación, el diagnóstico de Cp y
+el Kutta, y se dice por qué. `_airfoil_bbox` toma el bbox de *toda* la máscara
+sólida: con un conducto devuelve el dominio entero y de ahí sale una "cuerda" que
+envenena `Cl_circ`, los bins de Cp y el `Cp_min` sin dar error (se vio: Cd=10.4,
+Cp_min=303). Un número plausible y equivocado es peor que ninguno.
+
+**Módulos nuevos**: `geom_import.py` (DXF: aplanado con error de cuerda acotado,
+cosido de segmentos sueltos por KDTree, anidamiento, orientación, `$INSUNITS`,
+filtro por capa; **los lazos que no cierran se reportan con sus coordenadas y no
+se cierran a la fuerza**). `gui/` (8 módulos): `escena` (modelo serializable),
+`lienzo`, `panel` + `params_spec` (formulario declarativo), `vista_malla`
+(previsualización con las comprobaciones baratas), `runner`, `run_solver`, `app`.
+
+**Comprobaciones antes de gastar GPU** (`gui/vista_malla.py`), todas sobre la
+máscara ya rasterizada en CPU: pared más fina que una celda (no existe, el fluido
+se fuga), hueco de fluido por debajo de ~8 celdas (el IBM se atasca y la garganta
+se tapona), cuerpo fuera de la banda fina (normales mal), sin entrada o sin
+salida (Poisson singular), contorno que no cruza el perímetro, `dt` previsto
+distinguiendo el límite convectivo del viscoso.
+
+**Casos de prueba con verdad conocida** (`tests/test_dominio_arbitrario.py`):
+canal de Poiseuille (balance de masa < 2 %, perfil parabólico < 10 %) y tobera
+convergente 2:1 (balance < 3 %, aceleración = razón de alturas < 5 %). Geometrías
+en `scripts/agent_tests/formas_dominio.py`. Ejemplos listos para abrir:
+`.venv/bin/python scripts/agent_tests/demo_gui.py` → `results/gui_demo/`.
+
+**Arrancar la interfaz**: `./lanzar_gui.sh`. Necesita `python3-pyside6.*`,
+`python3-pyqtgraph` y `ezdxf`; el venv tiene ahora
+`include-system-site-packages = true` (copia en `.venv/pyvenv.cfg.bak`).
+**Ojo: la GUI usa PyQt6, no PySide6** — pyqtgraph elige PyQt6 cuando está
+disponible, y cargar los dos bindings en el mismo proceso rompe los imports de
+PySide6.
+
+**Lo que queda fuera a propósito**: paredes `slip` por cuerpo; varias presiones de
+salida distintas (`fixed_pressure_value` es un escalar); entradas que no caen en
+el perímetro de la caja; bandas finas múltiples.
+
+---
+
 ## RESULTADOS FINALES DEL TFG — CERRADOS 2026-08-26
 
 **Estos son los resultados definitivos que se presentan.** Todo en

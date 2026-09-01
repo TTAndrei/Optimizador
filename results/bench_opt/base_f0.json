@@ -1,0 +1,33 @@
+{
+  "name": "base_f0",
+  "opts": [],
+  "overrides": {
+    "dx_min": 0.002
+  },
+  "dx": 0.002,
+  "iters": 4000,
+  "wall_s": 705.7,
+  "it_s": 5.668,
+  "s_paso": 0.17642,
+  "gpu_util_media": 44.0,
+  "gpu_util_p95": 52.0,
+  "gpu_util_n": 689,
+  "cl": 0.560895,
+  "cd": 0.029798,
+  "ld": 18.8231,
+  "cl_std": 0.038746,
+  "cd_std": 0.004325,
+  "n_samples": 32,
+  "mg_cycles_media": 23.94,
+  "mg_cycles_p95": 24.0,
+  "mg_cycles_total": 95752,
+  "div_mean": 0.00972865,
+  "div_max": 158.571,
+  "outers_media": 8.0,
+  "outers_p95": 8.0,
+  "outers_max": 8,
+  "frac_converge": 0.0,
+  "div_before_media": 0.00551,
+  "div_after_media": 0.002899,
+  "reduccion_div": 1.9
+}

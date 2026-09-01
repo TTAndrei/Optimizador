@@ -1,0 +1,46 @@
+{
+  "id": "frames_100",
+  "dx": 0.002,
+  "iters": 1000,
+  "guardado": 50,
+  "ny": 713,
+  "nx": 1772,
+  "celdas": 1263436,
+  "wall_s": 47.16,
+  "it_s": 21.203,
+  "s_paso": 0.047164,
+  "timing": {
+    "recalculo_dt": 0.3941,
+    "adveccion": 16.4991,
+    "difusion": 4.2234,
+    "proyeccion": 19.0861,
+    "guardado": 4.1321,
+    "guardado_fuerzas": 0.6638,
+    "guardado_series": 0.7631,
+    "guardado_shm": 0.0002,
+    "guardado_frames": 2.7051,
+    "guardado_dump": 0.0,
+    "otros": 0.1058
+  },
+  "n_eventos": {
+    "guardado": 20,
+    "shm": 0,
+    "frames": 4,
+    "dump": 0
+  },
+  "disco": {
+    "dump_ficheros": 0,
+    "dump_bytes": 0,
+    "png_ficheros": 4,
+    "png_bytes": 93945
+  },
+  "cl": 0.46313767433166503,
+  "cd": 0.04271132610738278,
+  "n_samples": 10,
+  "overrides": {
+    "save_frames": true,
+    "frames_dir_grueso": "frames",
+    "save_frame_dpi": 100,
+    "save_frames_cada": 250
+  }
+}

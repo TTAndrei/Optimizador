@@ -65,3 +65,8 @@ resultados_finales/_archivo_*/*/figuras/
 # polar y regenerables desde la geometria y el json de configuracion. Las
 # *_series.npz (14 KB) si se versionan, que son las que alimentan las figuras.
 **/*campo.npz
+.ref_head/
+results/coste_salida/_sandbox/
+PARAR_GUI.trigger
+results/gui_demo/corrida_*/
+results/gui_demo/capturas/

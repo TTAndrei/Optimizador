@@ -1,0 +1,44 @@
+{
+  "id": "shm_live",
+  "dx": 0.002,
+  "iters": 1000,
+  "guardado": 50,
+  "ny": 713,
+  "nx": 1772,
+  "celdas": 1263436,
+  "wall_s": 44.47,
+  "it_s": 22.49,
+  "s_paso": 0.044465,
+  "timing": {
+    "recalculo_dt": 0.3941,
+    "adveccion": 16.5065,
+    "difusion": 4.1895,
+    "proyeccion": 19.0489,
+    "guardado": 1.506,
+    "guardado_fuerzas": 0.6623,
+    "guardado_series": 0.7685,
+    "guardado_shm": 0.0751,
+    "guardado_frames": 0.0001,
+    "guardado_dump": 0.0,
+    "otros": 0.1066
+  },
+  "n_eventos": {
+    "guardado": 20,
+    "shm": 20,
+    "frames": 0,
+    "dump": 0
+  },
+  "disco": {
+    "dump_ficheros": 0,
+    "dump_bytes": 0,
+    "png_ficheros": 0,
+    "png_bytes": 0
+  },
+  "cl": 0.46313767433166503,
+  "cd": 0.04271132610738278,
+  "n_samples": 10,
+  "overrides": {
+    "shm_publish": true,
+    "live_view": true
+  }
+}

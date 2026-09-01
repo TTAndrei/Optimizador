@@ -105,6 +105,49 @@ def generar_malla_estirada(L, x_centro, dx_min, factor_expansion=1.05,
     return X_1d.astype(np.float64)
 
 
+def absorber_slivers(Z, dx_min, frac=0.5):
+    """Quita las celdas residuales diminutas de los extremos de un eje.
+
+    `generar_malla_estirada_intervalo` reparte el hueco que sobra entre la banda
+    fina y el borde del dominio, y cuando no cuadra deja una celda de una
+    fraccion de dx_min pegada al borde. Da igual para la geometria, pero NO para
+    el paso de tiempo: `Mesh.dx` es el MINIMO de los espaciados y el limite
+    viscoso va con dx^2, asi que una sola celda residual de dx/12 divide el dt
+    por 145. Es el mismo mecanismo que hundio la malla de dx=0.001 del estudio.
+
+    Se absorbe fusionando el residuo con su vecina (se borra el nodo interior),
+    que cambia el borde del dominio en menos de dx_min y no toca la banda fina.
+    """
+    Z = np.asarray(Z, dtype=np.float64).copy()
+    umbral = frac * float(dx_min)
+    while len(Z) > 3 and (Z[1] - Z[0]) < umbral:
+        Z = np.delete(Z, 1)
+    while len(Z) > 3 and (Z[-1] - Z[-2]) < umbral:
+        Z = np.delete(Z, -2)
+    return Z
+
+
+def _banda_fina_escena(escena):
+    """(x0, x1, y0, y1) de la zona fina que pide una escena, o None.
+
+    El contorno exterior se excluye del bbox a proposito: su bbox es casi el
+    dominio entero y usarlo dejaria la malla fina en todas partes.
+    """
+    if not escena:
+        return None
+    if escena.get("refinado"):
+        return tuple(escena["refinado"])
+    cuerpos = [c for c in escena.get("contornos", [])
+               if c.get("rol", "cuerpo") == "cuerpo"]
+    if not cuerpos:
+        return None
+    xs = [v for c in cuerpos for v in c["x"]]
+    ys = [v for c in cuerpos for v in c["y"]]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    L = max(x1 - x0, y1 - y0)
+    return (x0 - 0.25 * L, x1 + 1.5 * L, y0 - 0.5 * L, y1 + 0.5 * L)
+
+
 def generar_malla_estirada_intervalo(L, x_fino_min, x_fino_max, dx_min,
                                      factor_expansion=1.05, dx_max=None):
     """Version con banda fina explicita, util para extender wake sin mover el LE."""
@@ -246,6 +289,190 @@ SA_R_MAX = 10.0
 # Transición SA-BC (Bas-Cakmakcıoğlu 2016): gamma algebraica sobre producción SA
 SA_BC_CHI1 = 0.002
 SA_BC_CHI2 = 5.0
+
+
+def parse_geometry_file(filepath, chord=1.0, x_offset=0.0, y_offset=0.0,
+                        alpha_deg=0.0, min_te_height=None, dx_ref=None,
+                        trim_te=True):
+    """Lee un fichero de puntos y devuelve el poligono ya transformado.
+
+    Es la mitad de `Mesh.load_solids_from_file` que NO necesita malla: parseo,
+    escalado por cuerda, recorte del borde de salida, rotacion respecto al
+    cuarto de cuerda y traslado. Separada porque hacen falta las dos cosas por
+    separado: la malla se genera a partir del bbox de la geometria, asi que hay
+    que poder leerla ANTES de que exista la malla.
+
+    `trim_te=False` salta el recorte del borde de salida, que es especifico de
+    perfil alar. La rotacion se queda, pero es respecto a (0.25*chord, 0): para
+    geometria arbitraria pasar alpha_deg=0 y rotar antes, en el importador.
+
+    Devuelve (x_final, y_final, meta) con meta = {n_points, min_te_height,
+    chord, alpha_deg, bbox}.
+    """
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"Archivo no encontrado: {filepath}")
+
+    # Leer todas las líneas y filtrar vacías / comentarios
+    with open(filepath, "r", encoding="utf-8") as f:
+        lines = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+
+    if len(lines) < 2:
+        raise ValueError("Archivo no contiene suficientes puntos.")
+
+    # Ignorar primera línea (título), parsear el resto
+    coord_lines = lines[1:]
+    pts = []
+    for ln in coord_lines:
+        parts = ln.replace(",", " ").split()
+        if len(parts) < 2:
+            continue
+        try:
+            x = float(parts[0])
+            y = float(parts[1])
+            pts.append((x, y))
+        except ValueError:
+            continue
+
+    if len(pts) < 1:
+        raise ValueError("No se pudieron leer puntos suficientes del perfil.")
+
+    n_points = len(pts)
+    pts = np.array(pts, dtype=np.float64)  # en CPU. float64 para preservar simetria exacta
+    # del polygon en rasterizacion (perfiles simetricos a alpha=0).
+
+    # Normalizar suponiendo x ya en [0,1]; escalado por cuerda
+    x_raw = pts[:, 0] * chord
+    y_raw = pts[:, 1] * chord  # mantiene proporciones (espesor relativo)
+
+    # --- Recorte del trailing edge para garantizar espesor mínimo ---
+    # Se asegura que el borde de escape tenga al menos min_te_height
+    # de espesor (por defecto 2*dx) para que ocupe al menos 2 celdas.
+    if min_te_height is None:
+        min_te_height = 2.0 * float(dx_ref) if dx_ref is not None else 0.0
+
+    # El recorte del borde de salida solo tiene sentido en un perfil alar:
+    # parte la lista en argmin(x) y llama 'extrados' e 'intrados' a los dos
+    # trozos. Sobre el contorno de un conducto eso no significa nada.
+    if trim_te:
+        # Encontrar el leading edge (mínimo x)
+        le_idx = int(np.argmin(x_raw))
+
+        # Superficie superior: índices [0, le_idx], x decrece de ~chord a ~0
+        upper_x = x_raw[:le_idx + 1]
+        upper_y = y_raw[:le_idx + 1]
+        # Superficie inferior: índices [le_idx, end], x crece de ~0 a ~chord
+        lower_x = x_raw[le_idx:]
+        lower_y = y_raw[le_idx:]
+
+        # Espesor actual del trailing edge
+        te_thickness = abs(float(upper_y[0]) - float(lower_y[-1]))
+
+        if te_thickness < min_te_height and len(upper_x) > 2 and len(lower_x) > 2:
+            # Para interpolar, necesitamos x monótonamente creciente
+            upper_x_inc = upper_x[::-1].copy()
+            upper_y_inc = upper_y[::-1].copy()
+
+            # Muestrear x desde el TE hacia el LE para encontrar dónde el
+            # espesor alcanza min_te_height
+            x_te = min(float(upper_x_inc[-1]), float(lower_x[-1]))
+            x_le = max(float(upper_x_inc[0]),  float(lower_x[0]))
+            x_sample = np.linspace(x_te, x_le, 2000)
+
+            y_up_s = np.interp(x_sample, upper_x_inc, upper_y_inc)
+            y_lo_s = np.interp(x_sample, lower_x, lower_y)
+            thickness = y_up_s - y_lo_s
+
+            # Primer x (desde TE hacia LE) donde espesor >= min_te_height
+            valid = np.where(thickness >= min_te_height)[0]
+
+            if len(valid) > 0:
+                # Interpolación lineal para el x donde espesor == min_te_height
+                # (no el primer sample >=, que sobrepasa). Base TE exacta = min_te.
+                i = int(valid[0])
+                if i > 0 and thickness[i] > thickness[i - 1]:
+                    t0, t1 = float(thickness[i - 1]), float(thickness[i])
+                    x0, x1 = float(x_sample[i - 1]), float(x_sample[i])
+                    frac = (min_te_height - t0) / (t1 - t0)
+                    x_cut = x0 + frac * (x1 - x0)
+                else:
+                    x_cut = float(x_sample[i])
+                y_cut_upper = float(np.interp(x_cut, upper_x_inc, upper_y_inc))
+                y_cut_lower = float(np.interp(x_cut, lower_x, lower_y))
+
+                # Descartar puntos más allá de x_cut (zona delgada del TE)
+                eps = 1e-8
+                mask_up = upper_x < (x_cut - eps)   # upper va de alto a bajo x
+                mask_lo = lower_x < (x_cut - eps)   # lower va de bajo a alto x
+
+                trimmed_upper_x = upper_x[mask_up]
+                trimmed_upper_y = upper_y[mask_up]
+                trimmed_lower_x = lower_x[mask_lo]
+                trimmed_lower_y = lower_y[mask_lo]
+
+                # Reconstruir perfil: TE_upper → interior superior → LE →
+                #                     interior inferior → TE_lower
+                x_raw = np.concatenate([[x_cut], trimmed_upper_x,
+                                        trimmed_lower_x, [x_cut]])
+                y_raw = np.concatenate([[y_cut_upper], trimmed_upper_y,
+                                        trimmed_lower_y, [y_cut_lower]])
+
+                new_chord_eff = x_cut
+                print(f"  [TE trim] Trailing edge recortado: x_cut={x_cut:.6f}, "
+                      f"espesor TE={y_cut_upper - y_cut_lower:.6f} "
+                      f"(mín requerido: {min_te_height:.6f}, "
+                      f"cuerda efectiva: {new_chord_eff:.6f})")
+            else:
+                print(f"  [TE trim] AVISO: El perfil es demasiado delgado para "
+                      f"alcanzar espesor TE={min_te_height:.6f}. "
+                      f"Se mantiene el perfil original.")
+
+    # Centro para rotación: usar cuarto de cuerda (convención aero)
+    cx_rot = 0.25 * chord
+    cy_rot = 0.0
+
+    # Rotar por ángulo de ataque (convención: α>0 eleva el perfil)
+    alpha = -np.deg2rad(alpha_deg)  # invertir signo para que α>0 rote antihorario en el dominio usado
+    ca = np.cos(alpha); sa = np.sin(alpha)
+    x_shift = x_raw - cx_rot
+    y_shift = y_raw - cy_rot
+    x_rot = x_shift * ca - y_shift * sa + cx_rot
+    y_rot = x_shift * sa + y_shift * ca + cy_rot
+
+    # Trasladar
+    x_final = x_rot + x_offset
+    y_final = y_rot + y_offset
+
+    # Asegurar cierre del polígono
+    if not (np.isclose(x_final[0], x_final[-1]) and np.isclose(y_final[0], y_final[-1])):
+        x_final = np.concatenate([x_final, x_final[0:1]])
+        y_final = np.concatenate([y_final, y_final[0:1]])
+
+    meta = {
+        "n_points": int(n_points),
+        "min_te_height": float(min_te_height),
+        "chord": float(chord),
+        "alpha_deg": float(alpha_deg),
+        "bbox": (float(x_final.min()), float(y_final.min()),
+                 float(x_final.max()), float(y_final.max())),
+    }
+    return x_final, y_final, meta
+
+
+# Codigos de condicion de frontera por celda de borde. WALL no es una condicion
+# fisica: marca una celda de borde que es SOLIDA, y significa "no escribas nada
+# aqui". Hace falta porque apply_boundaries corre DESPUES del IBM y, sin esto,
+# pisa con velocidad de corriente libre las celdas de pared que el IBM acaba de
+# poner a cero: es por donde se fuga la masa de un conducto.
+BC_NONE, BC_INFLOW, BC_OUTFLOW, BC_NOSLIP, BC_SLIP, BC_WALL = 0, 1, 2, 3, 4, 5
+_BC_CODIGO = {"inflow": BC_INFLOW, "outflow": BC_OUTFLOW,
+              "noslip": BC_NOSLIP, "slip": BC_SLIP}
+# Indice de la linea de borde y de su vecina interior, por lado.
+_BC_SLICES = {
+    "left":   ((slice(None), 0),  (slice(None), 1)),
+    "right":  ((slice(None), -1), (slice(None), -2)),
+    "bottom": ((0, slice(None)),  (1, slice(None))),
+    "top":    ((-1, slice(None)), (-2, slice(None))),
+}
 
 
 class Mesh:
@@ -402,9 +629,32 @@ class Mesh:
         self.boundaries = {
             "left": None, "right": None, "top": None, "bottom": None
         }
+        # Condicion por CELDA de borde. Con los cuatro lados uniformes es
+        # redundante con `boundaries`, pero es lo que permite que la entrada de
+        # un conducto sea un tramo del lado y no el lado entero.
+        _n = {"left": self.ny, "right": self.ny,
+              "top": self.nx, "bottom": self.nx}
+        self._bc_code = {k: cp.full(v, BC_NONE, dtype=cp.int8)
+                         for k, v in _n.items()}
+        self._bc_u = {k: cp.zeros(v, dtype=cp.float32) for k, v in _n.items()}
+        self._bc_v = {k: cp.zeros(v, dtype=cp.float32) for k, v in _n.items()}
+        self._bc_p = {k: cp.zeros(v, dtype=cp.float32) for k, v in _n.items()}
+        self._bc_p_set = {k: cp.zeros(v, dtype=cp.bool_) for k, v in _n.items()}
+        self._bc_m = None          # mascaras derivadas, ver _rebuild_bc_masks
 
         # --- Sólido (máscara booleana) ---
         self.solid = cp.zeros((self.ny, self.nx), dtype=cp.bool_)
+
+        # --- Mapa de cuerpos ---
+        # 0 = fluido, k>=1 = cuerpo k. `solid` sigue siendo un array de verdad
+        # (~79 referencias, camino caliente) y no una property derivada.
+        self.body_id = cp.zeros((self.ny, self.nx), dtype=cp.int16)
+        self.bodies = []
+        # Mientras esto sea False el solver recorre exactamente el camino de
+        # siempre, instruccion por instruccion. Lo ponen a True el contorno
+        # exterior, el segundo cuerpo y los parches de frontera.
+        self._geom_arbitrary = False
+        self._opt_bc_cache = None
 
         # --- Refuerzo de impermeabilidad (interfaz sólido-fluido) ---
         # Se precomputan normales n=(nx,ny) a partir de un campo de distancia firmado.
@@ -1095,6 +1345,11 @@ class Mesh:
                 opt_solver.coarsen_solid(_coarsen_mask, self._mg_solids[-1], sx, sy))
 
         # Jerarquía Dirichlet
+        # El cache de mascaras de borde de opt_solver se indexa SOLO por nivel y
+        # nunca caducaba: cualquier cambio posterior en la geometria o en la
+        # presion fijada lo dejaba obsoleto y en silencio equivocado. Aqui es
+        # donde se reconstruyen sus entradas, asi que aqui se tira.
+        self._opt_bc_cache = None
         self._mg_hay_dirichlet = bool(cp.any(self.fixed_pressure_mask))
         self._mg_dirichlet = [self.fixed_pressure_mask]
         if self._mg_hay_dirichlet:
@@ -1739,6 +1994,83 @@ class Mesh:
         # Recalcular máscara efectiva
         self.fixed_pressure_mask[:] = self.fixed_pressure_mask_user | self.fixed_pressure_mask_bc
 
+        # Espejo por celda: el lado entero con la misma condicion.
+        self._set_bc_rango(side, None, None, bc_type, value)
+        self._opt_bc_cache = None
+
+    def _set_bc_rango(self, side, i0, i1, bc_type, value):
+        """Escribe [i0:i1] del array de codigos de `side`. i0/i1 en indices."""
+        sl = slice(i0, i1)
+        self._bc_code[side][sl] = _BC_CODIGO[bc_type]
+        if bc_type == "inflow" and value is not None:
+            if isinstance(value, (tuple, list)):
+                u_in, v_in = float(value[0]), float(value[1])
+            else:
+                u_in, v_in = float(value), 0.0
+            self._bc_u[side][sl] = u_in
+            self._bc_v[side][sl] = v_in
+        if bc_type == "outflow":
+            self._bc_p_set[side][sl] = value is not None
+            if value is not None:
+                self._bc_p[side][sl] = float(value)
+        self._bc_m = None
+
+    def set_boundary_patch(self, side, desde=None, hasta=None,
+                           bc_type="inflow", value=None):
+        """Condicion de frontera sobre un TRAMO del lado, en coordenadas fisicas.
+
+        `desde`/`hasta` van sobre y para left/right y sobre x para top/bottom;
+        None = el extremo del lado. En coordenadas fisicas y no en indices para
+        que el parche sobreviva a un cambio de dx.
+
+        Es lo que hace falta para un conducto: la entrada y la salida son tramos
+        del perimetro de la caja, no lados enteros.
+        """
+        assert side in self._bc_code, side
+        assert bc_type in _BC_CODIGO, bc_type
+        eje = np.asarray(self.Y_1d_f64 if side in ("left", "right")
+                         else self.X_1d_f64, dtype=np.float64)
+        i0 = 0 if desde is None else int(np.searchsorted(eje, desde))
+        i1 = len(eje) if hasta is None else int(np.searchsorted(eje, hasta))
+        if i1 <= i0:
+            raise ValueError(f"tramo vacío en {side}: [{desde}, {hasta}]")
+        self._set_bc_rango(side, i0, i1, bc_type, value)
+        if bc_type == "outflow" and value is not None:
+            self.fixed_pressure_value = cp.float32(value)
+        self._geom_arbitrary = True
+        self._rebuild_bc_masks()
+
+    def _rebuild_bc_masks(self):
+        """Deriva las mascaras por lado y fuerza WALL donde el borde es solido.
+
+        Lo segundo es el arreglo del bug: `apply_boundaries` corre despues del
+        IBM en los seis caminos de paso, asi que sin esto una pared de conducto
+        que muere en el borde de la caja recibe velocidad de entrada encima del
+        cero que le acaba de poner el IBM, y el conducto fuga masa.
+        """
+        solid_edge = {
+            "left": self.solid[:, 0], "right": self.solid[:, -1],
+            "bottom": self.solid[0, :], "top": self.solid[-1, :],
+        }
+        self._bc_m = {}
+        self.fixed_pressure_mask_bc[:] = False
+        for lado, code in self._bc_code.items():
+            efect = cp.where(solid_edge[lado], cp.int8(BC_WALL), code)
+            m = {"noslip": efect == BC_NOSLIP,
+                 "inflow": efect == BC_INFLOW,
+                 "outflow": efect == BC_OUTFLOW,
+                 "slip": efect == BC_SLIP}
+            m["outflow_p"] = m["outflow"] & self._bc_p_set[lado]
+            self._bc_m[lado] = m
+            # OR y no asignacion: una celda de esquina pertenece a DOS lados, y
+            # asignando gana el ultimo del bucle. Si un lado la quiere Dirichlet
+            # de presion, lo es; perder ese punto deja el Poisson peor anclado.
+            self.fixed_pressure_mask_bc[_BC_SLICES[lado][0]] |= m["outflow_p"]
+        self.fixed_pressure_mask[:] = (self.fixed_pressure_mask_user
+                                       | self.fixed_pressure_mask_bc)
+        self._mg_initialized = False
+        self._opt_bc_cache = None
+
     def apply_boundaries(self, after_projection=False):
         """
         Aplica condiciones de frontera.
@@ -1746,6 +2078,8 @@ class Mesh:
         Parámetros:
             after_projection: Si True, no sobrescribir outflow (ya tiene grad(p) aplicado)
         """
+        if self._geom_arbitrary:
+            return self._apply_boundaries_por_celda()
         for side, bc in self.boundaries.items():
             if bc is None:
                 continue
@@ -1828,6 +2162,42 @@ class Mesh:
                     self.u[0, :] = self.u[1, :]
                 elif side == "top":
                     self.u[-1, :] = self.u[-2, :]
+
+    def _apply_boundaries_por_celda(self):
+        """Misma fisica que `apply_boundaries`, celda a celda en vez de lado a
+        lado. Las mascaras son disjuntas, asi que el orden de escritura no
+        importa; con un lado uniforme sale el mismo valor en cada celda.
+
+        Las celdas marcadas WALL (borde solido) no se escriben: son pared y las
+        gobierna el IBM.
+        """
+        if self._bc_m is None:
+            self._rebuild_bc_masks()
+        cero = cp.float32(0.0)
+        for lado, (borde, dentro) in _BC_SLICES.items():
+            m = self._bc_m[lado]
+            ub, vb = self.u[borde], self.v[borde]
+            ui, vi = self.u[dentro], self.v[dentro]
+
+            cp.copyto(ub, cero, where=m["noslip"])
+            cp.copyto(vb, cero, where=m["noslip"])
+
+            cp.copyto(ub, self._bc_u[lado], where=m["inflow"])
+            cp.copyto(vb, self._bc_v[lado], where=m["inflow"])
+
+            # Outflow: Dirichlet de presion donde se dio valor, y Neumann de
+            # velocidad siempre (el kernel de correccion no toca la ultima capa).
+            cp.copyto(self.p[borde], self._bc_p[lado], where=m["outflow_p"])
+            cp.copyto(ub, ui, where=m["outflow"])
+            cp.copyto(vb, vi, where=m["outflow"])
+
+            # Slip: componente normal a cero, tangencial copiada del interior.
+            if lado in ("top", "bottom"):
+                cp.copyto(vb, cero, where=m["slip"])
+                cp.copyto(ub, ui, where=m["slip"])
+            else:
+                cp.copyto(ub, cero, where=m["slip"])
+                cp.copyto(vb, vi, where=m["slip"])
 
     def _aplicar_bc_presion_neumann(self):
         """Aplica dp/dn=0 en los bordes donde NO haya Dirichlet.
@@ -4492,6 +4862,110 @@ class Mesh:
         self._precomputar_ghost_cell()
         self._mg_initialized = False  # Invalidar jerarquía multigrid
 
+    def _cell_centers(self):
+        """Centros de celda en float64. float64 y no float32 porque el ruido de
+        simple precision rompia la simetria exacta de la mascara para perfiles
+        simetricos a alpha=0."""
+        if self.malla_variable:
+            return self.X_1d_f64, self.Y_1d_f64
+        return ((np.arange(self.nx, dtype=np.float64) + 0.5) * float(self.dx),
+                (np.arange(self.ny, dtype=np.float64) + 0.5) * float(self.dy))
+
+    def preparar_geometria(self):
+        """Todo lo que hay que recalcular cuando cambia la mascara solida.
+
+        Estaba al final de `load_solids_from_file`; se saca aparte porque con
+        varios cuerpos hay que rasterizarlos TODOS antes de precomputar nada:
+        las normales y los ghost cells se derivan de la mascara completa, y
+        hacerlo cuerpo a cuerpo daria ghosts contra cuerpos que aun no existen.
+        """
+        if getattr(self, 'ibm_sdf_source', 'edt') == 'polygon':
+            self._precomputar_sdf_poligono()
+        self._precomputar_normales_impermeabilidad()
+        self._precomputar_ghost_cell()
+        self._mg_initialized = False
+        if self._geom_arbitrary:
+            self._rebuild_bc_masks()
+        self.apply_boundaries()
+
+    def add_body(self, px, py, rol="cuerpo", pared="noslip", nombre="",
+                 es_perfil=False):
+        """Anade un cuerpo (o el contorno exterior) y devuelve su body_id.
+
+        rol="exterior" rasteriza el COMPLEMENTO del poligono: el fluido queda
+        dentro y las paredes del conducto salen como solido, que es como se
+        representa un tunel o una tobera sin salir de la caja cartesiana.
+
+        No precomputa nada: hay que rasterizar todos los cuerpos y llamar
+        despues a `preparar_geometria()`, porque las normales y los ghost cells
+        se derivan de la mascara completa.
+        """
+        bid = len(self.bodies) + 1
+        mask = self.rasterize_polygon(
+            px, py, region=("outside" if rol == "exterior" else "inside"),
+            body_id=bid)
+        self.bodies.append({
+            "id": bid, "nombre": nombre or f"cuerpo{bid}", "rol": rol,
+            "pared": pared, "es_perfil": bool(es_perfil),
+            "poly_x": np.asarray(px, dtype=np.float64),
+            "poly_y": np.asarray(py, dtype=np.float64),
+            "celdas": int(mask.sum()),
+        })
+        # Un solo perfil sumergido en una caja es el caso de siempre.
+        if rol == "exterior" or len(self.bodies) > 1:
+            self._geom_arbitrary = True
+        return bid
+
+    def rasterize_polygon(self, px, py, fill=True, region="inside",
+                          body_id=None):
+        """Rasteriza un poligono cerrado y lo acumula en `self.solid`.
+
+        region="inside"  : solido = interior del poligono (un cuerpo sumergido).
+        region="outside" : solido = TODO lo demas (el poligono es el contorno
+                           exterior del dominio y el fluido queda dentro; es
+                           como se representa un tunel, un conducto o una
+                           tobera sin salir de la caja cartesiana).
+
+        Devuelve la mascara del poligono (numpy bool, ny x nx) por si el
+        llamante necesita saber que celdas ha aportado este cuerpo en concreto,
+        que es lo que hace falta para el mapa de cuerpos.
+        """
+        from matplotlib.path import Path
+
+        x_centers, y_centers = self._cell_centers()
+        poly = Path(np.column_stack((np.asarray(px, dtype=np.float64),
+                                     np.asarray(py, dtype=np.float64))))
+        XXc, YYc = np.meshgrid(x_centers, y_centers, indexing='xy')
+        pts_grid = np.column_stack((XXc.ravel(), YYc.ravel()))
+
+        # FIX simetria: cuando un cell center coincide EXACTAMENTE con un vertice del
+        # polygon, contains_points decide en/out de manera asimetrica (winding rule).
+        # Para perfiles simetricos (NACA0012 a alpha=0) esto produce 1+ celdas espurias.
+        # Solucion: usar radius pequeno negativo para encoger el polygon ~1e-9 en
+        # coords. Cells exactamente sobre boundary -> clasificadas FUERA simetricamente.
+        try:
+            inside = poly.contains_points(pts_grid, radius=-1e-9)
+        except TypeError:
+            inside = poly.contains_points(pts_grid)
+        inside = inside.reshape(self.ny, self.nx)
+
+        if region == "outside":
+            solid_mask = ~inside
+        elif region == "inside":
+            solid_mask = inside
+        else:
+            raise ValueError(f"region debe ser 'inside' u 'outside', no {region!r}")
+        if not fill:
+            solid_mask = np.zeros_like(inside, dtype=bool)
+
+        nuevo = cp.asarray(solid_mask)
+        if body_id is not None:
+            # Gana el primero en los solapes: un cuerpo no se come al anterior.
+            self.body_id = cp.where(nuevo & (self.body_id == 0),
+                                    cp.int16(body_id), self.body_id)
+        self.solid = cp.logical_or(self.solid, nuevo)
+        return solid_mask
+
     def load_solids_from_file(self, filepath,
                               chord=1.0,
                               x_offset=0.0,
@@ -4516,175 +4990,13 @@ class Mesh:
               superficie superior hasta el borde de ataque y volver por inferior
               al borde de salida (orden típico NACA). Se cierra automáticamente.
         """
-        if not os.path.isfile(filepath):
-            raise FileNotFoundError(f"Archivo no encontrado: {filepath}")
+        x_final, y_final, _meta = parse_geometry_file(
+            filepath, chord=chord, x_offset=x_offset, y_offset=y_offset,
+            alpha_deg=alpha_deg, min_te_height=min_te_height,
+            dx_ref=float(self.dx))
+        min_te_height = _meta["min_te_height"]
 
-        # Leer todas las líneas y filtrar vacías / comentarios
-        with open(filepath, "r", encoding="utf-8") as f:
-            lines = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
-
-        if len(lines) < 2:
-            raise ValueError("Archivo no contiene suficientes puntos.")
-
-        # Ignorar primera línea (título), parsear el resto
-        coord_lines = lines[1:]
-        pts = []
-        for ln in coord_lines:
-            parts = ln.replace(",", " ").split()
-            if len(parts) < 2:
-                continue
-            try:
-                x = float(parts[0])
-                y = float(parts[1])
-                pts.append((x, y))
-            except ValueError:
-                continue
-
-        if len(pts) < 1:
-            raise ValueError("No se pudieron leer puntos suficientes del perfil.")
-
-        pts = np.array(pts, dtype=np.float64)  # en CPU. float64 para preservar simetria exacta
-        # del polygon en rasterizacion (perfiles simetricos a alpha=0).
-
-        # Normalizar suponiendo x ya en [0,1]; escalado por cuerda
-        x_raw = pts[:, 0] * chord
-        y_raw = pts[:, 1] * chord  # mantiene proporciones (espesor relativo)
-
-        # --- Recorte del trailing edge para garantizar espesor mínimo ---
-        # Se asegura que el borde de escape tenga al menos min_te_height
-        # de espesor (por defecto 2*dx) para que ocupe al menos 2 celdas.
-        if min_te_height is None:
-            min_te_height = 2.0 * float(self.dx)
-
-        # Encontrar el leading edge (mínimo x)
-        le_idx = int(np.argmin(x_raw))
-
-        # Superficie superior: índices [0, le_idx], x decrece de ~chord a ~0
-        upper_x = x_raw[:le_idx + 1]
-        upper_y = y_raw[:le_idx + 1]
-        # Superficie inferior: índices [le_idx, end], x crece de ~0 a ~chord
-        lower_x = x_raw[le_idx:]
-        lower_y = y_raw[le_idx:]
-
-        # Espesor actual del trailing edge
-        te_thickness = abs(float(upper_y[0]) - float(lower_y[-1]))
-
-        if te_thickness < min_te_height and len(upper_x) > 2 and len(lower_x) > 2:
-            # Para interpolar, necesitamos x monótonamente creciente
-            upper_x_inc = upper_x[::-1].copy()
-            upper_y_inc = upper_y[::-1].copy()
-
-            # Muestrear x desde el TE hacia el LE para encontrar dónde el
-            # espesor alcanza min_te_height
-            x_te = min(float(upper_x_inc[-1]), float(lower_x[-1]))
-            x_le = max(float(upper_x_inc[0]),  float(lower_x[0]))
-            x_sample = np.linspace(x_te, x_le, 2000)
-
-            y_up_s = np.interp(x_sample, upper_x_inc, upper_y_inc)
-            y_lo_s = np.interp(x_sample, lower_x, lower_y)
-            thickness = y_up_s - y_lo_s
-
-            # Primer x (desde TE hacia LE) donde espesor >= min_te_height
-            valid = np.where(thickness >= min_te_height)[0]
-
-            if len(valid) > 0:
-                # Interpolación lineal para el x donde espesor == min_te_height
-                # (no el primer sample >=, que sobrepasa). Base TE exacta = min_te.
-                i = int(valid[0])
-                if i > 0 and thickness[i] > thickness[i - 1]:
-                    t0, t1 = float(thickness[i - 1]), float(thickness[i])
-                    x0, x1 = float(x_sample[i - 1]), float(x_sample[i])
-                    frac = (min_te_height - t0) / (t1 - t0)
-                    x_cut = x0 + frac * (x1 - x0)
-                else:
-                    x_cut = float(x_sample[i])
-                y_cut_upper = float(np.interp(x_cut, upper_x_inc, upper_y_inc))
-                y_cut_lower = float(np.interp(x_cut, lower_x, lower_y))
-
-                # Descartar puntos más allá de x_cut (zona delgada del TE)
-                eps = 1e-8
-                mask_up = upper_x < (x_cut - eps)   # upper va de alto a bajo x
-                mask_lo = lower_x < (x_cut - eps)   # lower va de bajo a alto x
-
-                trimmed_upper_x = upper_x[mask_up]
-                trimmed_upper_y = upper_y[mask_up]
-                trimmed_lower_x = lower_x[mask_lo]
-                trimmed_lower_y = lower_y[mask_lo]
-
-                # Reconstruir perfil: TE_upper → interior superior → LE →
-                #                     interior inferior → TE_lower
-                x_raw = np.concatenate([[x_cut], trimmed_upper_x,
-                                        trimmed_lower_x, [x_cut]])
-                y_raw = np.concatenate([[y_cut_upper], trimmed_upper_y,
-                                        trimmed_lower_y, [y_cut_lower]])
-
-                new_chord_eff = x_cut
-                print(f"  [TE trim] Trailing edge recortado: x_cut={x_cut:.6f}, "
-                      f"espesor TE={y_cut_upper - y_cut_lower:.6f} "
-                      f"(mín requerido: {min_te_height:.6f}, "
-                      f"cuerda efectiva: {new_chord_eff:.6f})")
-            else:
-                print(f"  [TE trim] AVISO: El perfil es demasiado delgado para "
-                      f"alcanzar espesor TE={min_te_height:.6f}. "
-                      f"Se mantiene el perfil original.")
-
-        # Centro para rotación: usar cuarto de cuerda (convención aero)
-        cx_rot = 0.25 * chord
-        cy_rot = 0.0
-
-        # Rotar por ángulo de ataque (convención: α>0 eleva el perfil)
-        alpha = -np.deg2rad(alpha_deg)  # invertir signo para que α>0 rote antihorario en el dominio usado
-        ca = np.cos(alpha); sa = np.sin(alpha)
-        x_shift = x_raw - cx_rot
-        y_shift = y_raw - cy_rot
-        x_rot = x_shift * ca - y_shift * sa + cx_rot
-        y_rot = x_shift * sa + y_shift * ca + cy_rot
-
-        # Trasladar
-        x_final = x_rot + x_offset
-        y_final = y_rot + y_offset
-
-        # Asegurar cierre del polígono
-        if not (np.isclose(x_final[0], x_final[-1]) and np.isclose(y_final[0], y_final[-1])):
-            x_final = np.concatenate([x_final, x_final[0:1]])
-            y_final = np.concatenate([y_final, y_final[0:1]])
-
-        # Rasterizar sobre la malla
-        from matplotlib.path import Path
-
-        # Coordenadas de centros de celdas en float64 (rasterizacion exacta-simetrica
-        # para perfiles simetricos; evita ruido float32 que daba asimetrias en solid mask).
-        if self.malla_variable:
-            x_centers = self.X_1d_f64
-            y_centers = self.Y_1d_f64
-        else:
-            x_centers = (np.arange(self.nx, dtype=np.float64) + 0.5) * float(self.dx)
-            y_centers = (np.arange(self.ny, dtype=np.float64) + 0.5) * float(self.dy)
-        # Tambien float64 para el polygon (alineacion exacta de simetria).
-        x_final_f64 = np.asarray(x_final, dtype=np.float64)
-        y_final_f64 = np.asarray(y_final, dtype=np.float64)
-        poly = Path(np.column_stack((x_final_f64, y_final_f64)))
-        XXc, YYc = np.meshgrid(x_centers, y_centers, indexing='xy')
-        pts_grid = np.column_stack((XXc.ravel(), YYc.ravel()))
-
-        # FIX simetria: cuando un cell center coincide EXACTAMENTE con un vertice del
-        # polygon, contains_points decide en/out de manera asimetrica (winding rule).
-        # Para perfiles simetricos (NACA0012 a alpha=0) esto produce 1+ celdas espurias.
-        # Solucion: usar radius pequeno negativo para encoger el polygon ~1e-9 en
-        # coords. Cells exactamente sobre boundary -> clasificadas FUERA simetricamente.
-        try:
-            inside = poly.contains_points(pts_grid, radius=-1e-9)
-        except TypeError:
-            inside = poly.contains_points(pts_grid)
-        inside = inside.reshape(self.ny, self.nx)
-
-        # Borde (celdas tocando polígono) usando distancia (opcional simple: dilate)
-        # Aquí tratamos todo el interior como sólido si fill=True
-        solid_mask = inside if fill else np.zeros_like(inside, dtype=bool)
-
-        # Convertir a CuPy y actualizar
-        solid_cp = cp.asarray(solid_mask)
-        self.solid = cp.logical_or(self.solid, solid_cp)
+        self.rasterize_polygon(x_final, y_final, fill=fill)
 
         # Anular velocidades en el sólido
         self.u[self.solid] = 0.0
@@ -4718,17 +5030,7 @@ class Mesh:
         bis = -(t_up + t_lo)
         self._airfoil_te_bisector = bis / (np.linalg.norm(bis) + 1e-30)
 
-        # SDF exacto de polígono (solo modo polygon; cachea banda antes de normales/ghost)
-        if getattr(self, 'ibm_sdf_source', 'edt') == 'polygon':
-            self._precomputar_sdf_poligono()
-
-        # Recalcular normales para impermeabilidad (perfil estático)
-        self._precomputar_normales_impermeabilidad()
-        self._precomputar_ghost_cell()
-        self._mg_initialized = False  # Invalidar jerarquía multigrid
-
-        # Reaplicar fronteras
-        self.apply_boundaries()
+        self.preparar_geometria()
 
         if plot:
             plt.figure(figsize=(6, 3))
@@ -4741,13 +5043,7 @@ class Mesh:
             plt.legend()
             plt.show()
 
-        return {
-            "n_points": int(len(pts)),
-            "chord": chord,
-            "alpha_deg": alpha_deg,
-            "bbox": (float(x_final.min()), float(y_final.min()),
-                     float(x_final.max()), float(y_final.max()))
-        }
+        return dict(_meta)
 
     '''Visualización'''
 
@@ -5564,7 +5860,7 @@ class Mesh:
             plt.close()
 
     def dump_field_window(self, out_dir, iteration, xlim=None, ylim=None,
-                          max_nx=1000, t_fisico=0.0):
+                          max_nx=1000, t_fisico=0.0, comprimir=True):
         """Vuelca u, v, p recortados a [xlim]x[ylim] y submuestreados a max_nx
         columnas, en float16, a out_dir/f_XXXXXX.npz.
 
@@ -5579,7 +5875,8 @@ class Mesh:
         i1, j1 = max(i1, i0 + 2), max(j1, j0 + 2)
         s = max(1, int(np.ceil((i1 - i0) / max_nx)))
         sx, sy = slice(i0, i1, s), slice(j0, j1, s)
-        np.savez_compressed(
+        _savez = np.savez_compressed if comprimir else np.savez
+        _savez(
             os.path.join(out_dir, f"f_{iteration:06d}.npz"),
             x=x[sx], y=y[sy],
             u=cp.asnumpy(self.u[sy, sx]).astype(np.float16),
@@ -7036,8 +7333,16 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     # Diagnóstico de circulación (Kutta): compara Cl de circulación vs Cl de superficie
     Cl_superficie = 2 * Fy_total / (rho * U_inf**2 * chord)
     # Ambos diagnósticos parten de _airfoil_bbox, que no existe sin sólido
-    # (dominio vacío: canal/tubo).
-    if bool(mesh_gruesa.solid.any()):
+    # (dominio vacío: canal/tubo) y que con geometría arbitraria devuelve el bbox
+    # de TODA la máscara sólida: con un conducto, el dominio entero. De ahí sale
+    # una "cuerda" que no significa nada y que envenena Cl_circ, los bins de Cp y
+    # el Cp_min. Se desactivan a propósito: un número plausible y equivocado es
+    # peor que ninguno.
+    if getattr(mesh_gruesa, "_geom_arbitrary", False):
+        print("  [diagnósticos de perfil] desactivados: la geometría no es un "
+              "perfil único en una caja (circulación, Cp y cuerda no están "
+              "definidos). Las fuerzas por cuerpo están en mesh.bodies.")
+    elif bool(mesh_gruesa.solid.any()):
         circ = mesh_gruesa.compute_circulation()
         if circ:
             cl_bound = circ[0]["cl_circ"]
@@ -7479,9 +7784,35 @@ def main(
     dump_fields_dir=None,
     dump_fields_cada=None,
     dump_fields_max_nx=1000,
+    # np.savez_compressed comprime con zlib en el hilo principal: mono-hilo y
+    # bloqueante, con la GPU parada mientras tanto. False escribe sin comprimir.
+    dump_fields_comprimir=True,
     graficos=False,
     live_view=False,      # vista en tiempo real (memoria compartida)
     mostrar_malla=False,
+    # El campo de |u| y la mascara se publican en memoria compartida cada
+    # 'guardado' iteraciones AUNQUE no haya nadie mirando. A dx=0.002 en dominio
+    # C son 6.25 MB de GPU->CPU cada vez. False apaga solo los datos; los
+    # metadatos (40 bytes, progreso) se siguen publicando.
+    shm_publish=True,
+    # Cadencia propia de la publicacion de datos, desacoplada de 'guardado'.
+    # Solo puede REDUCIR la frecuencia: el bloque entero cuelga de
+    # `it % guardado == 0`, asi que la cadencia efectiva es el primer multiplo
+    # comun. None = cada vez que toca guardado (comportamiento actual).
+    shm_cada=None,
+    # Sincroniza la GPU antes de cada marca de tiempo del bloque de salida. Sin
+    # esto, los sub-cubos de 'guardado' se comen el tiempo de kernels encolados.
+    # Solo para medir: anade una barrera por marca.
+    bench_sync=False,
+
+    # ================================================================
+    # ESCENA (geometria arbitraria importada de CAD)
+    # ================================================================
+    # dict con {contornos, parches, refinado}, tal como lo serializa
+    # gui.escena.Escena. Entra por aqui y no como veinte kwargs sueltos porque
+    # main() ya tiene ~200 y N contornos con su rol no caben de otra forma.
+    # escena=None => el camino de siempre, sin cambios.
+    escena=None,
 
     # ================================================================
     # CORRECCIÓN DE DERIVA VERTICAL (solo casos simétricos, α=0)
@@ -7668,7 +7999,22 @@ def main(
     # ============================================================
     # GENERAR MALLA VARIABLE (stretching 1D)
     # ============================================================
-    if wake_refinement_mode == "long_fine_x":
+    # Con escena, la zona fina sale de la geometria y no de cx+chord/2. El
+    # contorno exterior se EXCLUYE del bbox: el suyo es practicamente el dominio
+    # entero y refinarlo todo hace explotar el numero de celdas.
+    banda_escena = _banda_fina_escena(escena)
+    if banda_escena is not None:
+        bx0, bx1, by0, by1 = banda_escena
+        X_1d = absorber_slivers(generar_malla_estirada_intervalo(
+            L=Lx, x_fino_min=max(0.0, bx0), x_fino_max=min(float(Lx), bx1),
+            dx_min=dx_min, factor_expansion=factor_expansion,
+            dx_max=dx_max_eff), dx_min)
+        Y_1d = absorber_slivers(generar_malla_estirada_intervalo(
+            L=Ly, x_fino_min=max(0.0, by0), x_fino_max=min(float(Ly), by1),
+            dx_min=dy_min if dy_min else dx_min,
+            factor_expansion=factor_expansion, dx_max=dy_max_eff),
+            dy_min if dy_min else dx_min)
+    elif wake_refinement_mode == "long_fine_x":
         if ancho_zona_fina_x is None:
             ancho_zona_fina_x = 0.1 * Lx
         x_fino_min = max(0.0, (cx + chord * 0.5) - 0.5 * float(ancho_zona_fina_x))
@@ -7687,12 +8033,13 @@ def main(
             dx_min=dx_min, factor_expansion=factor_expansion,
             ancho_zona_fina=ancho_zona_fina_x, dx_max=dx_max_eff
         )
-    Y_1d = generar_malla_estirada(
-        L=Ly, x_centro=cy,
-        dx_min=dy_min if dy_min else dx_min,
-        factor_expansion=factor_expansion,
-        ancho_zona_fina=ancho_zona_fina_y, dx_max=dy_max_eff
-    )
+    if banda_escena is None:
+        Y_1d = generar_malla_estirada(
+            L=Ly, x_centro=cy,
+            dx_min=dy_min if dy_min else dx_min,
+            factor_expansion=factor_expansion,
+            ancho_zona_fina=ancho_zona_fina_y, dx_max=dy_max_eff
+        )
 
     print(f"Malla variable: {len(X_1d)} x {len(Y_1d)} nodos")
     print(f"  X: dx_min={np.min(np.diff(X_1d)):.6f}, dx_max={np.max(np.diff(X_1d)):.6f}")
@@ -7726,7 +8073,22 @@ def main(
     '''
     # filepath=None => dominio vacío (canal/tubo): no hay sólido inmerso y todo
     # el post-proceso que asume perfil se salta más abajo.
-    if filepath:
+    if escena is not None:
+        for c in escena.get("contornos", []):
+            mesh_gruesa.add_body(
+                c["x"], c["y"], rol=c.get("rol", "cuerpo"),
+                pared=c.get("pared", "noslip"), nombre=c.get("nombre", ""),
+                es_perfil=bool(c.get("es_perfil", False)))
+        n_sol = int(mesh_gruesa.solid.sum())
+        print(f"  [escena] {len(mesh_gruesa.bodies)} cuerpo(s), "
+              f"{n_sol} celdas sólidas ({100.0 * n_sol / (mesh_gruesa.ny * mesh_gruesa.nx):.1f} %)")
+        if n_sol == 0 and mesh_gruesa.bodies:
+            raise ValueError(
+                "La máscara sólida ha salido vacía con la escena dada: la "
+                "geometría no cae dentro del dominio, o las unidades no son "
+                "las que se cree. Previsualiza la malla antes de lanzar.")
+        mesh_gruesa.preparar_geometria()
+    elif filepath:
         mesh_gruesa.load_solids_from_file(
             filepath=filepath,
             chord=chord,
@@ -7777,11 +8139,25 @@ def main(
     mesh_gruesa.set_boundary("bottom", boundary_type_bottom, value=boundary_val_bottom)
     mesh_gruesa.set_boundary("right", boundary_type_right, value=boundary_val_right)
 
+    # Los parches de la escena se aplican ENCIMA de los cuatro lados: lo que no
+    # cubre ningun parche conserva la condicion de siempre.
+    for _p in (escena or {}).get("parches", []):
+        v = _p.get("valor")
+        mesh_gruesa.set_boundary_patch(
+            _p["lado"], _p.get("desde"), _p.get("hasta"), _p["tipo"],
+            tuple(v) if isinstance(v, list) else v)
+
     mesh_gruesa.advection_scheme = str(advection_scheme)
     if turb_model == "sa":
         mesh_gruesa.init_sa(nu, nu_tilde_factor=sa_nu_tilde_factor,
                             transition_model=transition_model,
                             freestream_Tu=freestream_Tu)
+    # El TE sale de los indices [0],[-2],[1],[-3] del poligono, que es un
+    # contrato del formato Selig. Sobre una polilinea de CAD no significa nada,
+    # asi que forzar Kutta ahi produciria sustentacion plausible y falsa.
+    if kutta_enforce and mesh_gruesa._geom_arbitrary:
+        print("  [Kutta] desactivado: la geometría no es un perfil Selig único.")
+        kutta_enforce = False
     if kutta_enforce:
         mesh_gruesa._precomputar_kutta_te()
 
@@ -7890,9 +8266,26 @@ def main(
         'difusion': 0.0,
         'proyeccion': 0.0,
         'guardado': 0.0,
+        # Sub-cubos de 'guardado'. Suman 'guardado' salvo redondeo: el bloque
+        # mezcla cuatro cosas de coste muy distinto y sin separarlas no se puede
+        # decir cuanto cuesta sacar frames.
+        'guardado_fuerzas': 0.0,
+        'guardado_series': 0.0,
+        'guardado_shm': 0.0,
+        'guardado_frames': 0.0,
+        'guardado_dump': 0.0,
         'otros': 0.0,
         'total_por_paso': []
     }
+
+    # CuPy encola: sin sincronizar, el cronometro del bloque de salida se come
+    # el tiempo de los kernels pendientes y sale inflado. Solo para medir.
+    if bench_sync:
+        def _tmark():
+            cp.cuda.runtime.deviceSynchronize()
+            return time.time()
+    else:
+        _tmark = time.time
 
     # ⭐ Variable para acumular tiempo físico simulado
     tiempo_fisico_acumulado = 0.0
@@ -8489,6 +8882,8 @@ def main(
                 forces = mesh_gruesa.compute_drag_lift(mu, rho=rho, n_extrap_layers=5)
                 cd_val = 2 * forces['Drag'] / (rho * U_inf**2 * chord)
                 cl_val = 2 * forces['Lift'] / (rho * U_inf**2 * chord)
+                _t_fuerzas = _tmark()
+                timing_stats['guardado_fuerzas'] += _t_fuerzas - t0
 
                 # Chequear NaN en coeficientes aerodinámicos
                 if np.isnan(cd_val) or np.isnan(cl_val):
@@ -8591,6 +8986,8 @@ def main(
                         print(f"[ADVERTENCIA] Diagnóstico de fuerzas falló en iter {it}: {_e_diag}")
 
                 # Publicar en memoria compartida (SIEMPRE metadatos para progreso)
+                _t_pre_shm = _tmark()
+                timing_stats['guardado_series'] += _t_pre_shm - _t_fuerzas
                 if shm_meta is not None:
                     try:
                         # Escribir metadatos SIEMPRE (cada iteración)
@@ -8606,7 +9003,8 @@ def main(
 
                 # Publicar speed+solid siempre para la GUI interna.
                 # Vorticidad solo cuando live_view está activo.
-                if shm_data is not None:
+                _shm_every = max(1, int(shm_cada)) if shm_cada is not None else 1
+                if shm_data is not None and shm_publish and (it % _shm_every == 0):
                     try:
                         speed_np = cp.asnumpy(cp.sqrt(mesh_gruesa.u**2 + mesh_gruesa.v**2))
                         solid_np = cp.asnumpy(mesh_gruesa.solid).astype(np.uint8)
@@ -8636,6 +9034,9 @@ def main(
                             shm_data.buf[off_vort:off_vort + n_cells*4] = vort_np.tobytes()
                     except Exception:
                         pass  # No interrumpir simulación por error de viewer
+
+                _t_post_shm = _tmark()
+                timing_stats['guardado_shm'] += _t_post_shm - _t_pre_shm
 
                 frame_every = int(save_frames_cada) if save_frames_cada is not None else int(guardado)
                 frame_every = max(1, frame_every)
@@ -8672,6 +9073,9 @@ def main(
                     if it % (guardado * 10) == 0:
                         plt.close('all')
 
+                _t_post_frames = _tmark()
+                timing_stats['guardado_frames'] += _t_post_frames - _t_post_shm
+
                 if dump_fields_dir:
                     campo_every = int(dump_fields_cada) if dump_fields_cada is not None else int(guardado)
                     campo_every = max(1, campo_every)
@@ -8682,7 +9086,10 @@ def main(
                             ylim=save_frame_refined_ylim,
                             max_nx=int(dump_fields_max_nx),
                             t_fisico=float(tiempo_fisico_acumulado),
+                            comprimir=bool(dump_fields_comprimir),
                         )
+
+                timing_stats['guardado_dump'] += _tmark() - _t_post_frames
 
             if it % guardado == 0:
                 timing_stats['guardado'] += time.time() - t0
@@ -8839,12 +9246,26 @@ def main(
             ('Proyección', 'proyeccion'),
             ('Guardado/fuerzas', 'guardado')
         ]
+        subcomponentes = [
+            ('  ...fuerzas Cl/Cd', 'guardado_fuerzas'),
+            ('  ...series y diagnostico', 'guardado_series'),
+            ('  ...memoria compartida', 'guardado_shm'),
+            ('  ...save_frame (PNG)', 'guardado_frames'),
+            ('  ...dump_fields (npz)', 'guardado_dump'),
+        ]
 
         tiempo_total = sum(timing_stats['total_por_paso'])
         for nombre, clave in componentes:
             t = timing_stats[clave]
             pct = 100 * t / tiempo_total if tiempo_total > 0 else 0
             print(f"  {nombre:.<30} {t:>8.2f} s  ({pct:>5.1f}%)")
+            if clave == 'guardado':
+                for sub_nombre, sub_clave in subcomponentes:
+                    ts = timing_stats[sub_clave]
+                    if ts <= 0.0:
+                        continue
+                    pcts = 100 * ts / tiempo_total if tiempo_total > 0 else 0
+                    print(f"  {sub_nombre:.<30} {ts:>8.2f} s  ({pcts:>5.1f}%)")
 
         # Calcular tiempo no contabilizado
         tiempo_contabilizado = sum(timing_stats[k] for _, k in componentes)
