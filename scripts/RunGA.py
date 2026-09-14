@@ -111,12 +111,18 @@ CONFIG = {
     'tol_mejora_fitness': 0.05,          # mejora mínima de L/D que cuenta
     'le_proteccion_x': 0.06,             # Zona [0, x] con mutación atenuada en LE
     'espesor_min_global': 2e-4,          # Espesor mínimo global (excepto LE)
-    'te_espesor_min_absoluto': 3e-4,     # Cota inferior absoluta para espesor TE
+    'te_espesor_min_absoluto': 0.0025,   # Cota inferior absoluta para espesor TE
     'te_espesor_rel_min': 0.65,          # Cota inferior relativa al espesor TE base
     'te_espesor_rel_max': 3.50,          # Cota superior relativa al espesor TE base
     'te_validacion_tol': 1e-9,           # Tolerancia numérica para validación de TE
     'le_radio_factor_min': 0.40,         # Radio LE mínimo relativo al perfil base
-    'le_radio_min_absoluto': 2e-4,       # Radio LE mínimo absoluto
+    'le_radio_min_absoluto': 0.005,      # Radio LE mínimo absoluto (fracción de cuerda)
+    'le_radio_validacion_margen': 0.50,  # Holgura del radio de punta medido al validar
+    'punta_espesor_min': 0.010,          # Grosor mínimo de la punta (fracción de cuerda)
+    'punta_x_max_factor': 2.0,           # El grosor de punta se alcanza antes de factor*t_punta
+    'punta_espesor_max_frac': 0.60,      # Tope de t_punta frente al espesor máximo del perfil
+    'espesor_max_min': 0.0,              # Espesor máximo mínimo (0 = sin imponer)
+    'te_x_tol': 1e-6,                    # Tolerancia de verticalidad de la cara del TE
     'le_puntos_preservar': 5,            # Puntos por lado del LE a preservar parcialmente
     'reportar_diagnostico_geometria': True,
 
@@ -725,7 +731,10 @@ def descomponer_camber_espesor(puntos, le_idx, n_muestras=None):
     if x_fin <= x_ini + 1e-12:
         return None, None, None
 
-    x_common = np.linspace(x_ini, x_fin, int(n_muestras))
+    # Agrupamiento coseno: con reparto uniforme, el primer nodo aguas abajo del
+    # LE cae demasiado lejos y la reconstrucción convierte la nariz en una cuña.
+    u = np.linspace(0.0, 1.0, int(n_muestras))
+    x_common = x_ini + (x_fin - x_ini) * 0.5 * (1.0 - np.cos(np.pi * u))
     y_up = np.interp(x_common, upper_x_inc, upper_y_inc)
     y_lo = np.interp(x_common, lower_x_inc, lower_y_inc)
 
@@ -761,26 +770,56 @@ def resamplear_a_grid(seed_coords, seed_le_idx, ref_coords, ref_le_idx):
     return out
 
 
-def estimar_radio_le(puntos, le_idx):
-    """Estima radio local de LE usando el circuncírculo de 3 puntos."""
+def muestras_nariz(puntos, le_idx, n_puntos=3):
+    """
+    (s, t) de la punta medidos en los primeros puntos reales del extradós,
+    con s = x - x_LE.
+
+    Se mide en los puntos del .dat y no en un muestreo fino porque es lo que ve
+    la malla del CFD. Y se usan los más cercanos a la punta porque el morro
+    redondo solo ocupa el primer ~1 % de cuerda: más atrás manda el cuerpo del
+    perfil y el ajuste dejaría de hablar del radio de la punta.
+    """
+    puntos = np.asarray(puntos, dtype=float)
     if le_idx <= 0 or le_idx >= len(puntos) - 1:
-        return np.inf
+        return np.empty(0), np.empty(0)
 
-    p0 = np.asarray(puntos[le_idx - 1], dtype=float)
-    p1 = np.asarray(puntos[le_idx], dtype=float)
-    p2 = np.asarray(puntos[le_idx + 1], dtype=float)
+    upper = puntos[:le_idx + 1][::-1]   # LE -> TE sup
+    lower = puntos[le_idx:]             # LE -> TE inf
+    up_x = _asegurar_x_estrictamente_creciente(upper[:, 0])
+    lo_x = _asegurar_x_estrictamente_creciente(lower[:, 0])
 
-    a = np.linalg.norm(p1 - p0)
-    b = np.linalg.norm(p2 - p1)
-    c = np.linalg.norm(p2 - p0)
-    v1 = p1 - p0
-    v2 = p2 - p0
-    area2 = abs(v1[0] * v2[1] - v1[1] * v2[0])  # 2 * area en 2D
+    x_le = float(puntos[le_idx, 0])
+    cuerda = min(float(up_x[-1]), float(lo_x[-1])) - x_le
+    if cuerda <= 0.0:
+        return np.empty(0), np.empty(0)
 
-    if area2 < 1e-12:
-        return np.inf
+    s_pts = up_x - x_le
+    banda = np.zeros(len(s_pts), dtype=bool)
+    banda[1:1 + max(2, int(n_puntos))] = True
 
-    return float((a * b * c) / (2.0 * area2))
+    s = s_pts[banda]
+    if len(s) == 0:
+        return np.empty(0), np.empty(0)
+
+    t = np.maximum(upper[banda, 1] - np.interp(x_le + s, lo_x, lower[:, 1]), 0.0)
+    return s, t
+
+
+def estimar_radio_le(puntos, le_idx):
+    """
+    Radio del borde de ataque por la ley de espesor de nariz redonda,
+    t(s)^2 = 8*r*s, ajustada por mínimos cuadrados sobre los puntos del morro.
+
+    El circuncírculo de tres puntos que se usaba antes devolvía radio infinito
+    justo en el caso que hay que rechazar (nariz de cuña: los tres puntos salen
+    casi alineados) y además dependía del espaciado del .dat.
+    """
+    s, t = muestras_nariz(puntos, le_idx)
+    if len(s) == 0 or np.sum(s ** 2) <= 0.0:
+        return 0.0
+
+    return float(np.sum(t ** 2 * s) / (8.0 * np.sum(s ** 2)))
 
 
 def extraer_parametrizacion(puntos, le_idx):
@@ -820,7 +859,7 @@ def construir_restricciones_geometricas(perfil_base, le_idx, config):
     """Deriva umbrales geométricos automáticos a partir del perfil base."""
     te_base = abs(float(perfil_base[0, 1] - perfil_base[-1, 1]))
     radio_le_base = estimar_radio_le(perfil_base, le_idx)
-    if not np.isfinite(radio_le_base):
+    if not np.isfinite(radio_le_base) or radio_le_base <= 0.0:
         radio_le_base = 0.001
 
     te_min = max(
@@ -836,7 +875,7 @@ def construir_restricciones_geometricas(perfil_base, le_idx, config):
         radio_le_base * float(config.get('le_radio_factor_min', 1.0))
     )
 
-    n_muestras = max(le_idx + 1, len(perfil_base) - le_idx)
+    n_muestras = max(201, 4 * max(le_idx + 1, len(perfil_base) - le_idx))
 
     return {
         'te_base': te_base,
@@ -870,6 +909,143 @@ def _perturbacion_suave(x_common, std, n_control, le_proteccion_x):
         perturb *= escala
 
     return perturb
+
+
+def recortar_y_redondear_punta(x_common, camber, espesor, restricciones, config):
+    """
+    Recorta la punta hasta donde el perfil alcanza el grosor mínimo y sustituye
+    lo recortado por un morro redondo tangente al cuerpo. La X se reescala, así
+    que la cuerda y el espesor relativo del perfil no cambian: es el mismo
+    perfil con la punta despuntada, no un perfil más gordo.
+
+    Morro:  t(u) = A*sqrt(u) + B*u  con A = sqrt(8*r_punta),
+    y (A, B, L) resueltos para que en el empalme u=L valgan t = t_punta y
+    dt/du = pendiente del cuerpo (tangencia, sin quiebre).
+
+    Devuelve (x, camber, espesor) sobre una rejilla nueva.
+    """
+    t_punta = float(config.get('punta_espesor_min', 0.0))
+    x_common = np.asarray(x_common, dtype=float)
+    espesor = np.asarray(espesor, dtype=float)
+    camber = np.asarray(camber, dtype=float)
+
+    x0 = float(x_common[0])
+    cuerda = float(x_common[-1]) - x0
+    t_max = float(np.max(espesor)) if len(espesor) else 0.0
+    if t_punta <= 0.0 or cuerda <= 0.0 or t_max <= 0.0:
+        return x_common, camber, espesor
+
+    # En un perfil muy fino la punta no puede pedir más grosor que el cuerpo.
+    t_punta = min(t_punta, float(config.get('punta_espesor_max_frac', 0.60)) * t_max)
+    s = x_common - x0
+
+    j = int(np.argmax(espesor >= t_punta))
+    if j <= 0:
+        return x_common, camber, espesor  # la punta ya llega al grosor mínimo
+
+    # s_c: corte exacto donde el perfil alcanza t_punta.
+    t0, t1 = float(espesor[j - 1]), float(espesor[j])
+    frac = 0.0 if t1 <= t0 else (t_punta - t0) / (t1 - t0)
+    s_c = float(s[j - 1]) + frac * float(s[j] - s[j - 1])
+
+    # Pendientes del cuerpo en el corte, sobre una ventana corta (secante): la
+    # derivada punto a punto de una rejilla coseno es demasiado ruidosa.
+    s_ref = min(s_c + 2.0 * t_punta, float(s[-1]))
+    if s_ref <= s_c + 1e-12:
+        return x_common, camber, espesor
+    m = max((float(np.interp(s_ref, s, espesor)) - t_punta) / (s_ref - s_c), 1e-3)
+    dc = (float(np.interp(s_ref, s, camber))
+          - float(np.interp(s_c, s, camber))) / (s_ref - s_c)
+
+    # Punta como máximo semicircular: r = t_punta/2.
+    r_punta = min(float(restricciones.get('le_radius_min', 0.5 * t_punta)),
+                  0.5 * t_punta)
+    A = np.sqrt(8.0 * r_punta)
+
+    # L y el estirado k se acoplan (la pendiente del cuerpo cambia al estirar):
+    # dos pasadas de punto fijo bastan.
+    k = 1.0
+    L = 0.0
+    for _ in range(3):
+        m_k = m / k
+        z = (-0.5 * A + np.sqrt(0.25 * A * A + 4.0 * m_k * t_punta)) / (2.0 * m_k)
+        L = float(z * z)
+        if L >= 0.5 * cuerda:
+            return x_common, camber, espesor
+        k = (cuerda - L) / (cuerda - s_c)
+
+    B = (t_punta - A * np.sqrt(L)) / L
+
+    u = 0.5 * (1.0 - np.cos(np.pi * np.linspace(0.0, 1.0, len(s)))) * cuerda
+    morro = u < L
+    cuerpo = ~morro
+
+    t_new = np.empty_like(u)
+    c_new = np.empty_like(u)
+
+    s_cuerpo = s_c + (u[cuerpo] - L) / k
+    t_new[cuerpo] = np.interp(s_cuerpo, s, espesor)
+    c_new[cuerpo] = np.interp(s_cuerpo, s, camber)
+
+    t_new[morro] = A * np.sqrt(u[morro]) + B * u[morro]
+    c_punta = float(np.interp(s_c, s, camber))
+    c_new[morro] = c_punta + (dc / k) * (u[morro] - L)
+
+    # El recorte deja la punta a la altura de la línea de curvatura en el corte,
+    # o sea con el perfil girado. Se quita esa cizalla anclando el TE: LE y TE
+    # vuelven a definir la cuerda y el ángulo de ataque efectivo no cambia.
+    c_new -= float(c_new[0]) * (1.0 - u / cuerda)
+
+    t_new[0] = 0.0
+    t_new[-1] = float(espesor[-1])
+
+    return x0 + u, c_new, t_new
+
+
+def _reconstruir_desde_camber_espesor(genes, le_idx, x_common, camber, espesor):
+    """Perfil con las X de `genes` y las Y que salen de (camber, espesor)."""
+    y_up_common = camber + 0.5 * espesor
+    y_lo_common = camber - 0.5 * espesor
+
+    upper_x_inc = _asegurar_x_estrictamente_creciente(genes[:le_idx + 1][::-1, 0])
+    lower_x_inc = _asegurar_x_estrictamente_creciente(genes[le_idx:][:, 0])
+
+    y_up_inc = np.interp(upper_x_inc, x_common, y_up_common)
+    y_lo_inc = np.interp(lower_x_inc, x_common, y_lo_common)
+
+    y_le = 0.5 * (y_up_inc[0] + y_lo_inc[0])
+    y_up_inc[0] = y_le
+    y_lo_inc[0] = y_le
+
+    resultado = genes.copy()
+    resultado[:le_idx + 1, 1] = y_up_inc[::-1]
+    resultado[le_idx:, 1] = y_lo_inc
+    resultado[le_idx, 1] = y_le
+    return resultado
+
+
+def imponer_punta_minima(puntos, le_idx, restricciones, config):
+    """
+    Reaplica el recorte y redondeo de punta en espacio de puntos, con las
+    mezclas de LE ya hechas. Sin esta pasada final la ventana
+    `le_puntos_preservar` devuelve al hijo la punta del padre y una cuña se
+    hereda generación tras generación.
+    """
+    x_common, camber, espesor = descomponer_camber_espesor(
+        puntos, le_idx, n_muestras=restricciones['n_muestras']
+    )
+    if x_common is None:
+        return puntos
+
+    x_new, c_new, t_new = recortar_y_redondear_punta(
+        x_common, camber, espesor, restricciones, config
+    )
+    if x_new is x_common:
+        return puntos
+
+    return _reconstruir_desde_camber_espesor(
+        puntos, le_idx, x_new, c_new, t_new
+    )
 
 
 def proyectar_perfil_parametrico(genes, le_idx, restricciones, config, perturbar=True):
@@ -928,28 +1104,25 @@ def proyectar_perfil_parametrico(genes, le_idx, restricciones, config, perturbar
     piso = esp_min * _smoothstep(x_norm / le_zone)
     piso[0] = 0.0
     espesor = np.maximum(espesor, piso)
+
+    espesor[0] = 0.0
+
+    # Punta recortada y redondeada. Devuelve rejilla nueva (la X se reescala
+    # para conservar cuerda), así que la ventana del TE se recalcula.
+    x_common, camber, espesor = recortar_y_redondear_punta(
+        x_common, camber, espesor, restricciones, config
+    )
+    x_norm = ((x_common - x_common[0])
+              / max(1e-12, float(x_common[-1] - x_common[0])))
+    w_te = _smoothstep((x_norm - 0.82) / 0.18)
+    espesor += (te_obj - float(espesor[-1])) * w_te
+
     espesor[0] = 0.0
     espesor[-1] = te_obj
 
-    y_up_common = camber + 0.5 * espesor
-    y_lo_common = camber - 0.5 * espesor
-
-    upper = genes[:le_idx + 1]   # TE -> LE
-    lower = genes[le_idx:]       # LE -> TE
-    upper_x_inc = _asegurar_x_estrictamente_creciente(upper[::-1, 0])
-    lower_x_inc = _asegurar_x_estrictamente_creciente(lower[:, 0])
-
-    y_up_inc = np.interp(upper_x_inc, x_common, y_up_common)
-    y_lo_inc = np.interp(lower_x_inc, x_common, y_lo_common)
-
-    y_le = 0.5 * (y_up_inc[0] + y_lo_inc[0])
-    y_up_inc[0] = y_le
-    y_lo_inc[0] = y_le
-
-    resultado = genes.copy()
-    resultado[:le_idx + 1, 1] = y_up_inc[::-1]
-    resultado[le_idx:, 1] = y_lo_inc
-    resultado[le_idx, 1] = y_le
+    resultado = _reconstruir_desde_camber_espesor(
+        genes, le_idx, x_common, camber, espesor
+    )
 
     # Preserva suavidad/circularidad local del LE mezclando con geometría original.
     n_preservar = max(1, int(config.get('le_puntos_preservar', 5)))
@@ -964,6 +1137,10 @@ def proyectar_perfil_parametrico(genes, le_idx, restricciones, config, perturbar
 
     # El punto LE queda exactamente fijo.
     resultado[le_idx, :] = genes[le_idx, :]
+
+    # Tras la mezcla de LE la punta puede haberse vuelto a afilar: se reimpone.
+    resultado = imponer_punta_minima(resultado, le_idx, restricciones, config)
+    resultado[le_idx, 0] = genes[le_idx, 0]
 
     # TE recto/romo con x fijo y camber libre.
     x_te = float(np.clip(resultado[0, 0], x_common[0], x_common[-1]))
@@ -1002,6 +1179,11 @@ def validar_geometria_perfil(puntos, le_idx, restricciones, config):
     if np.any(np.diff(lower_x) < -1e-8):
         return False, {'motivo': 'lower_no_monotona'}
 
+    # TE rectangular: cara vertical, los dos puntos del TE a la misma X.
+    if abs(float(puntos[0, 0]) - float(puntos[-1, 0])) > float(config.get('te_x_tol', 1e-6)):
+        return False, {'motivo': 'te_no_vertical',
+                       'dx_te': abs(float(puntos[0, 0]) - float(puntos[-1, 0]))}
+
     te_gap = abs(float(puntos[0, 1] - puntos[-1, 1]))
     te_tol = float(config.get('te_validacion_tol', 1e-9))
     if (te_gap < (restricciones['te_gap_min'] - te_tol)
@@ -1024,14 +1206,36 @@ def validar_geometria_perfil(puntos, le_idx, restricciones, config):
     if espesor_min <= max(1e-8, float(config.get('espesor_min_global', 0.0)) * 0.8):
         return False, {'motivo': 'cruce_superficies', 'espesor_min': espesor_min}
 
+    espesor_max = float(np.max(espesor))
+    esp_max_min = float(config.get('espesor_max_min', 0.0))
+    if espesor_max < esp_max_min * 0.98:
+        return False, {'motivo': 'espesor_max_bajo', 'espesor_max': espesor_max}
+
+    # Punta: el grosor mínimo tiene que alcanzarse dentro del primer tramo de
+    # cuerda. Una cuña lo alcanza tarde (el ganador AG, al 8 % de cuerda).
+    t_punta = float(config.get('punta_espesor_min', 0.0))
+    t_punta_eff = min(t_punta,
+                      float(config.get('punta_espesor_max_frac', 0.60))
+                      * espesor_max)
+    if t_punta_eff > 0.0:
+        s = x_common - x_common[0]
+        s_lim = float(config.get('punta_x_max_factor', 2.0)) * t_punta_eff
+        t_en_lim = float(np.interp(s_lim, s, espesor))
+        if t_en_lim < 0.98 * t_punta_eff:
+            return False, {'motivo': 'punta_fina',
+                           'espesor_en_x_lim': t_en_lim,
+                           'x_lim': s_lim}
+
     radio_le = estimar_radio_le(puntos, le_idx)
-    if (not np.isfinite(radio_le)
-            or radio_le < float(restricciones['le_radius_min'])):
+    radio_min_val = (min(float(restricciones['le_radius_min']), 0.5 * t_punta_eff)
+                     * float(config.get('le_radio_validacion_margen', 0.50)))
+    if not np.isfinite(radio_le) or radio_le < radio_min_val:
         return False, {'motivo': 'le_agudo', 'radio_le': float(radio_le)}
 
     return True, {
         'te_gap': te_gap,
         'espesor_min': espesor_min,
+        'espesor_max': espesor_max,
         'radio_le': float(radio_le),
     }
 

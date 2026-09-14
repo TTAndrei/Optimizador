@@ -1,0 +1,91 @@
+{
+  "caso": {
+    "v0x": 1.0,
+    "v0y": 0.0,
+    "chord": 1.0,
+    "rho": 1.0,
+    "nu": 1e-05,
+    "CFL": 0.5,
+    "filepath": "/home/ttandrei/Proyectos/Optimizador/Optimizador/profiles/NACA_0012",
+    "min_te_height_factor": 2.0,
+    "Lx": 24.0,
+    "Ly": 16.0,
+    "cx": 6.0,
+    "ancho_zona_fina_x": 1.5,
+    "ancho_zona_fina_y": 1.0,
+    "factor_expansion": 1.1,
+    "turb_model": "sa",
+    "wall_treatment": "consistent",
+    "advection_scheme": "maccormack",
+    "wake_refinement_mode": "long_fine_x",
+    "transition_model": "sa_bc",
+    "freestream_Tu": 0.1,
+    "mg_niveles_max": 2,
+    "mg_max_outer": 2,
+    "mg_cycles_per_outer": 3,
+    "divergencia": 0.02,
+    "stop_on_convergence": false,
+    "stop_on_clcd_convergence": false,
+    "guardado": 25,
+    "graficos": false,
+    "live_view": false,
+    "mostrar_malla": false,
+    "save_frames": false,
+    "shm_publish": false,
+    "dx_min": 0.002,
+    "alpha_deg": 4.0,
+    "iteraciones": 24000
+  },
+  "ventana_f32": {
+    "cl": 0.3933757681399584,
+    "cd": 0.04305964435140292,
+    "div": 0.01530952254931132,
+    "div_max": 143.23570855458578,
+    "t_ini": 13.54531478881836,
+    "t_fin": 18.05406379699707,
+    "n": 240
+  },
+  "ventana_f64": {
+    "cl": 0.36608167881030623,
+    "cd": 0.04394461093335115,
+    "div": 0.014563238058085055,
+    "div_max": 143.05597799916092,
+    "t_ini": 14.221961781843438,
+    "t_fin": 18.909390921396305,
+    "n": 240
+  },
+  "filas": [
+    {
+      "magnitud": "cl",
+      "f32": 0.3933757681399584,
+      "f64": 0.36608167881030623,
+      "dif": -0.02729408932965216,
+      "dif_rel": -0.06938426700431952
+    },
+    {
+      "magnitud": "cd",
+      "f32": 0.04305964435140292,
+      "f64": 0.04394461093335115,
+      "dif": 0.0008849665819482266,
+      "dif_rel": 0.02055211080533213
+    },
+    {
+      "magnitud": "div",
+      "f32": 0.01530952254931132,
+      "f64": 0.014563238058085055,
+      "dif": -0.0007462844912262644,
+      "dif_rel": -0.04874642490139806
+    },
+    {
+      "magnitud": "div_max",
+      "f32": 143.23570855458578,
+      "f64": 143.05597799916092,
+      "dif": -0.17973055542486804,
+      "dif_rel": -0.001254788748131018
+    }
+  ],
+  "ld_f32": 9.13560188583262,
+  "ld_f64": 8.330524973028574,
+  "wall_f32_s": 1792.0121891498566,
+  "wall_f64_s": 2383.1678969860077
+}

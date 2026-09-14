@@ -17,7 +17,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from gui.escena import (Contorno, Escena, MODOS_DOMINIO, Parche, TIPOS_BC,
-                        parches_por_defecto)
+                        TIPOS_PARED, descripcion_arista, parches_por_defecto)
 from gui.lienzo import COLOR_BC, Lienzo, LeyendaBC
 from gui.panel import PanelParametros
 from gui.vista_malla import MODOS_MALLA
@@ -39,6 +39,7 @@ class Ventana(QtWidgets.QMainWindow):
 
         self.lienzo = Lienzo()
         self.lienzo.parche_pedido.connect(self._nuevo_parche)
+        self.lienzo.arista_pedida.connect(self._editar_arista)
         self.lienzo.refinado_cambiado.connect(self._roi_refinado)
         self._malla_cache = None
         self.lienzo.scene().sigMouseMoved.connect(self._raton)
@@ -127,11 +128,16 @@ class Ventana(QtWidgets.QMainWindow):
 
         v.addWidget(self._caja_refinado())
 
-        v.addWidget(QtWidgets.QLabel("Contornos"))
+        v.addWidget(QtWidgets.QLabel(
+            "Contornos y aristas (doble click para editar)"))
         self.lista = QtWidgets.QTreeWidget()
         self.lista.setColumnCount(5)
         self.lista.setHeaderLabels(["nombre", "rol", "pared", "x", "y"])
-        self.lista.itemDoubleClicked.connect(self._editar_contorno)
+        self.lista.setToolTip(
+            "Cada contorno se despliega en sus aristas: los tramos rectos en "
+            "que el DXF se deja partir. Doble click en una arista para darle "
+            "su condición; en el lienzo se pincha igual.")
+        self.lista.itemDoubleClicked.connect(self._doble_click_contorno)
         v.addWidget(self.lista, 1)
 
         v.addWidget(QtWidgets.QLabel("Fronteras (doble click para editar)"))
@@ -293,14 +299,18 @@ class Ventana(QtWidgets.QMainWindow):
             return
         from geom_import import GeometriaAbierta, cargar_dxf
         tol = self.panel.valores().get("dx_min", 0.004) / 4.0
+        escala = self._pedir_escala(ruta)
+        if escala is None:
+            return
         try:
-            lazos = cargar_dxf(ruta, tol_cordal=tol)
+            lazos = cargar_dxf(ruta, tol_cordal=tol, escala=escala)
         except GeometriaAbierta as e:
             QtWidgets.QMessageBox.warning(
                 self, "Contorno abierto",
                 f"{e}\n\nSe importa igualmente y los lazos abiertos quedan "
                 f"marcados, pero no se puede simular así.")
-            lazos = cargar_dxf(ruta, tol_cordal=tol, estricto=False)
+            lazos = cargar_dxf(ruta, tol_cordal=tol, escala=escala,
+                               estricto=False)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error al leer el DXF", str(e))
             return
@@ -310,6 +320,29 @@ class Ventana(QtWidgets.QMainWindow):
                 x=list(map(float, l["x"])), y=list(map(float, l["y"])),
                 rol=l["rol"], pared=l["pared"],
                 nombre=f"{l['capa']}_{i}"))
+        # Un solo lazo cerrado no se puede clasificar por anidamiento: puede ser
+        # el contorno del dominio o un objeto dentro de el, y las dos lecturas
+        # dan trabajos completamente distintos (una caja de 275x200 o una de
+        # 6600x4400). Se pregunta en vez de elegir a ciegas.
+        nuevos = self.escena.contornos[-len(lazos):]
+        if len(self.escena.contornos) == len(nuevos) == 1:
+            c = nuevos[0]
+            x0, y0, x1, y1 = c.bbox()
+            r = QtWidgets.QMessageBox.question(
+                self, "¿Qué es este contorno?",
+                f"El DXF trae un único contorno cerrado de "
+                f"{x1 - x0:.4g} × {y1 - y0:.4g}, y por la geometría no se puede "
+                f"saber qué es.\n\n"
+                f"«Dominio»: es la pared exterior (un túnel, un conducto, una "
+                f"tobera). El dominio será su bbox.\n"
+                f"«Objeto»: es un cuerpo sumergido (un perfil, un obstáculo) y "
+                f"el dominio lo pones tú alrededor.",
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No)
+            # Yes = Dominio, No = Objeto (se re-etiquetan al construir el cuadro)
+            c.rol = ("exterior"
+                     if r == QtWidgets.QMessageBox.StandardButton.Yes
+                     else "cuerpo")
         msg = self.escena.autoconfigurar_dominio()
         self._ajustar_malla_al_modo()
         self._sinc_dominio()
@@ -319,6 +352,36 @@ class Ventana(QtWidgets.QMainWindow):
                   f"{os.path.basename(ruta)}")
         self._log(f"[GUI] modo «{self.escena.modo_dominio}». {msg}")
         self._refrescar()
+
+    ESCALAS = [("milímetros", 1e-3), ("centímetros", 1e-2), ("metros", 1.0),
+               ("pulgadas", 0.0254), ("pies", 0.3048)]
+
+    def _pedir_escala(self, ruta):
+        """Factor a metros del DXF. None = el usuario cancela.
+
+        Si el fichero declara sus unidades se le cree y no se pregunta. La
+        mitad de los DXF que salen de un CAD traen $INSUNITS = 0 («sin
+        declarar») y entonces se asumen metros, que es como una pieza de 275 mm
+        acaba pidiendo 1e12 celdas.
+        """
+        from geom_import import unidades
+        try:
+            cod, esc, nombre = unidades(ruta)
+        except Exception:
+            return 1.0
+        if cod != 0:
+            self._log(f"[GUI] el DXF declara {nombre} (×{esc:g} a metros)")
+            return esc
+        etiquetas = [n for n, _ in self.ESCALAS]
+        n, ok = QtWidgets.QInputDialog.getItem(
+            self, "Unidades del DXF",
+            "El fichero no declara unidades ($INSUNITS = 0).\n"
+            "¿En qué está dibujado?", etiquetas, 2, False)
+        if not ok:
+            return None
+        esc = dict(self.ESCALAS)[n]
+        self._log(f"[GUI] unidades del DXF: {n} (×{esc:g} a metros)")
+        return esc
 
     def abrir(self):
         ruta, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -414,7 +477,8 @@ class Ventana(QtWidgets.QMainWindow):
         self.runner.parar()
 
     # ------------------------------------------------------------- fronteras
-    def _nuevo_parche(self, lado, desde, largo):
+    def _nuevo_parche(self, lado, desde, hasta):
+        """`desde`/`hasta` llegan ya ajustados a la boca que se ha pinchado."""
         tipo, ok = QtWidgets.QInputDialog.getItem(
             self, f"Frontera en «{lado}»", "Tipo:", list(TIPOS_BC), 0, False)
         if not ok:
@@ -422,16 +486,26 @@ class Ventana(QtWidgets.QMainWindow):
         valor = self._pedir_valor(tipo)
         if valor is False:
             return
-        a, ok = QtWidgets.QInputDialog.getDouble(
-            self, "Tramo", "desde:", desde, -1e6, 1e6, 4)
-        if not ok:
-            return
-        b, ok = QtWidgets.QInputDialog.getDouble(
-            self, "Tramo", "hasta:", largo, -1e6, 1e6, 4)
-        if not ok:
+        a, b = self._pedir_tramo(lado, desde, hasta)
+        if a is None:
             return
         self.escena.parches.append(Parche(lado, tipo, valor, a, b))
         self._refrescar()
+
+    def _pedir_tramo(self, lado, desde, hasta):
+        """Rango del parche, con los tramos abiertos del lado a la vista."""
+        largo = self.escena.Ly if lado in ("left", "right") else self.escena.Lx
+        bocas = self.escena.tramos_abiertos(lado)
+        texto = ", ".join(f"[{u:.4g}, {v:.4g}]" for u, v in bocas) or "ninguna"
+        a, ok = QtWidgets.QInputDialog.getDouble(
+            self, f"Tramo en «{lado}»",
+            f"El lado va de 0 a {largo:.4g}.\nBocas abiertas: {texto}\n\ndesde:",
+            desde, -1e9, 1e9, 4)
+        if not ok:
+            return None, None
+        b, ok = QtWidgets.QInputDialog.getDouble(
+            self, f"Tramo en «{lado}»", "hasta:", hasta, -1e9, 1e9, 4)
+        return (a, b) if ok else (None, None)
 
     def _pedir_valor(self, tipo):
         if tipo == "inflow":
@@ -459,7 +533,13 @@ class Ventana(QtWidgets.QMainWindow):
         v = self._pedir_valor(tipo)
         if v is False:
             return
-        p.tipo, p.valor = tipo, v
+        largo = self.escena.Ly if p.lado in ("left", "right") else self.escena.Lx
+        a, b = self._pedir_tramo(p.lado,
+                                 0.0 if p.desde is None else p.desde,
+                                 largo if p.hasta is None else p.hasta)
+        if a is None:
+            return
+        p.tipo, p.valor, p.desde, p.hasta = tipo, v, a, b
         self._refrescar()
 
     def _borrar_parche(self):
@@ -473,8 +553,65 @@ class Ventana(QtWidgets.QMainWindow):
         self.escena.parches = parches_por_defecto(self.escena.modo_dominio)
         self._refrescar()
 
-    def _editar_contorno(self, item, _col):
-        i = self.lista.indexOfTopLevelItem(item)
+    def _doble_click_contorno(self, item, _col):
+        padre = item.parent()
+        if padre is None:
+            self._editar_contorno(self.lista.indexOfTopLevelItem(item))
+        else:
+            self._editar_arista(self.lista.indexOfTopLevelItem(padre),
+                                padre.indexOfChild(item))
+
+    def _editar_arista(self, i_contorno, k):
+        """Condición de UNA arista del DXF.
+
+        Lo que se puede pedir depende de dónde está: sobre el borde de la caja
+        la arista es boca del dominio y admite entrada y salida (se escribe como
+        parche del perímetro, que es lo único que el solver sabe leer ahí);
+        metida dentro es pared inmersa y el IBM solo sabe hacerla deslizante o
+        no. Ofrecer inflow sobre una pared inmersa sería mentir: el ghost cell
+        impone u=0 en la pared pase lo que pase.
+        """
+        c = self.escena.contornos[i_contorno]
+        aristas = c.aristas()
+        if not (0 <= k < len(aristas)):
+            return
+        xs, ys = aristas[k]
+        borde = self.escena.lado_de_arista(xs, ys)
+        desc = descripcion_arista(xs, ys)
+        titulo = f"{c.nombre or 'contorno'} · arista {k}"
+        if borde is None:
+            opciones, actual = list(TIPOS_PARED), c.tipo_arista(k)
+            pie = (f"{desc}\nPared inmersa dentro del dominio: el IBM solo "
+                   f"sabe deslizante o no.")
+        else:
+            lado, a, b = borde
+            opciones = list(TIPOS_BC)
+            actual = self.escena.tipo_en(lado, 0.5 * (a + b))
+            pie = (f"{desc}\nEstá sobre el borde «{lado}», de {a:.4g} a "
+                   f"{b:.4g}: es boca del dominio y la condición va como "
+                   f"parche del perímetro.")
+        tipo, ok = QtWidgets.QInputDialog.getItem(
+            self, titulo, f"{pie}\n\nCondición:", opciones,
+            opciones.index(actual) if actual in opciones else 0, False)
+        if not ok:
+            return
+        if borde is None:
+            c.poner_arista(k, tipo)
+            self._log(f"[GUI] {titulo} ({desc}) → {tipo}")
+        else:
+            valor = self._pedir_valor(tipo)
+            if valor is False:
+                return
+            lado, a, b = borde
+            self.escena.poner_parche(lado, tipo, valor, a, b)
+            # La arista sigue siendo la misma pared para el resto del sistema:
+            # la excepcion por arista solo tiene sentido si es pared inmersa.
+            c.poner_arista(k, c.pared)
+            self._log(f"[GUI] {titulo} ({desc}) → parche «{tipo}» en "
+                      f"«{lado}» [{a:.4g}, {b:.4g}]")
+        self._refrescar()
+
+    def _editar_contorno(self, i):
         c = self.escena.contornos[i]
         rol, ok = QtWidgets.QInputDialog.getItem(
             self, c.nombre, "Rol:", ["cuerpo", "exterior"],
@@ -486,6 +623,15 @@ class Ventana(QtWidgets.QMainWindow):
             0 if c.pared == "noslip" else 1, False)
         if not ok:
             return
+        if pared != c.pared and c.paredes:
+            r = QtWidgets.QMessageBox.question(
+                self, c.nombre,
+                f"Este contorno tiene {len(c.paredes)} arista(s) con condición "
+                f"propia. ¿Borrarlas y dejar todo «{pared}»?",
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No)
+            if r == QtWidgets.QMessageBox.StandardButton.Yes:
+                c.paredes.clear()
         c.rol, c.pared = rol, pared
         if rol == "cuerpo":
             cx, cy = c.centro()
@@ -575,8 +721,23 @@ class Ventana(QtWidgets.QMainWindow):
         self.lista.clear()
         for c in self.escena.contornos:
             cx, cy = c.centro()
-            QtWidgets.QTreeWidgetItem(self.lista, [
+            it = QtWidgets.QTreeWidgetItem(self.lista, [
                 c.nombre, c.rol, c.pared, f"{cx:.4g}", f"{cy:.4g}"])
+            for k, (xs, ys) in enumerate(c.aristas()):
+                borde = self.escena.lado_de_arista(xs, ys)
+                if borde is None:
+                    tipo, donde = c.tipo_arista(k), "inmersa"
+                else:
+                    tipo = self.escena.tipo_en(borde[0],
+                                               0.5 * (borde[1] + borde[2]))
+                    donde = f"borde {borde[0]}"
+                hijo = QtWidgets.QTreeWidgetItem(it, [
+                    f"arista {k}", donde, tipo,
+                    f"{0.5 * (xs[0] + xs[-1]):.4g}",
+                    f"{0.5 * (ys[0] + ys[-1]):.4g}"])
+                hijo.setToolTip(0, descripcion_arista(xs, ys))
+                hijo.setForeground(2, QtGui.QBrush(QtGui.QColor(COLOR_BC[tipo])))
+            it.setExpanded(True)
         self.lista_bc.clear()
         for p in self.escena.parches:
             it = QtWidgets.QTreeWidgetItem(self.lista_bc, [

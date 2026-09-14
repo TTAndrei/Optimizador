@@ -1,0 +1,1880 @@
+[12:51:17] ganador_ag: Re=1e+05 alpha=4.0 dx=0.002 iters=52000 dump cada 72 -> 722 frames x 2 ventanas
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [Ghost-cell] 3 image points corregidos | 1 irreparables (forzados a 0) | total ghost=984
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 48 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/52020 [00:00<?, ?it/s]  3%|▎         | 1382/52020 [01:00<36:38, 23.03it/s]  3%|▎         | 1382/52020 [01:20<36:38, 23.03it/s]  5%|▌         | 2781/52020 [02:00<35:22, 23.20it/s]  5%|▌         | 2781/52020 [02:20<35:22, 23.20it/s]  8%|▊         | 4182/52020 [03:00<34:16, 23.26it/s]  8%|▊         | 4182/52020 [03:20<34:16, 23.26it/s] 11%|█         | 5596/52020 [04:00<33:05, 23.38it/s] 11%|█         | 5596/52020 [04:20<33:05, 23.38it/s] 13%|█▎        | 7007/52020 [05:00<32:01, 23.43it/s] 13%|█▎        | 7007/52020 [05:20<32:01, 23.43it/s] 16%|█▌        | 8418/52020 [06:00<30:58, 23.46it/s] 16%|█▌        | 8418/52020 [06:20<30:58, 23.46it/s] 19%|█▉        | 9827/52020 [07:00<29:58, 23.46it/s] 19%|█▉        | 9827/52020 [07:20<29:58, 23.46it/s] 22%|██▏       | 11236/52020 [08:00<28:57, 23.47it/s] 22%|██▏       | 11236/52020 [08:20<28:57, 23.47it/s] 24%|██▍       | 12646/52020 [09:00<27:57, 23.48it/s] 24%|██▍       | 12646/52020 [09:20<27:57, 23.48it/s] 27%|██▋       | 14055/52020 [10:00<26:57, 23.48it/s] 27%|██▋       | 14055/52020 [10:20<26:57, 23.48it/s] 30%|██▉       | 15466/52020 [11:00<25:56, 23.49it/s] 30%|██▉       | 15466/52020 [11:20<25:56, 23.49it/s] 32%|███▏      | 16876/52020 [12:00<24:56, 23.49it/s] 32%|███▏      | 16876/52020 [12:20<24:56, 23.49it/s] 35%|███▌      | 18287/52020 [13:00<23:55, 23.49it/s] 35%|███▌      | 18287/52020 [13:20<23:55, 23.49it/s] 38%|███▊      | 19698/52020 [14:00<22:55, 23.50it/s] 38%|███▊      | 19698/52020 [14:20<22:55, 23.50it/s] 41%|████      | 21109/52020 [15:00<21:55, 23.50it/s] 41%|████      | 21109/52020 [15:20<21:55, 23.50it/s] 43%|████▎     | 22522/52020 [16:00<20:54, 23.51it/s] 43%|████▎     | 22522/52020 [16:20<20:54, 23.51it/s] 46%|████▌     | 23934/52020 [17:00<19:54, 23.52it/s] 46%|████▌     | 23934/52020 [17:20<19:54, 23.52it/s] 49%|████▊     | 25345/52020 [18:00<18:54, 23.51it/s] 49%|████▊     | 25345/52020 [18:20<18:54, 23.51it/s] 51%|█████▏    | 26759/52020 [19:00<17:53, 23.53it/s] 51%|█████▏    | 26759/52020 [19:20<17:53, 23.53it/s] 54%|█████▍    | 28172/52020 [20:00<16:53, 23.53it/s] 54%|█████▍    | 28172/52020 [20:20<16:53, 23.53it/s] 57%|█████▋    | 29584/52020 [21:00<15:53, 23.53it/s] 57%|█████▋    | 29584/52020 [21:20<15:53, 23.53it/s] 60%|█████▉    | 30995/52020 [22:00<14:53, 23.52it/s] 60%|█████▉    | 30995/52020 [22:20<14:53, 23.52it/s] 62%|██████▏   | 32404/52020 [23:00<13:54, 23.51it/s] 62%|██████▏   | 32404/52020 [23:20<13:54, 23.51it/s] 65%|██████▌   | 33818/52020 [24:00<12:53, 23.53it/s] 65%|██████▌   | 33818/52020 [24:20<12:53, 23.53it/s] 68%|██████▊   | 35227/52020 [25:00<11:54, 23.51it/s] 68%|██████▊   | 35227/52020 [25:20<11:54, 23.51it/s] 70%|███████   | 36638/52020 [26:00<10:54, 23.51it/s] 70%|███████   | 36638/52020 [26:20<10:54, 23.51it/s] 73%|███████▎  | 38048/52020 [27:00<09:54, 23.50it/s] 73%|███████▎  | 38048/52020 [27:20<09:54, 23.50it/s] 76%|███████▌  | 39457/52020 [28:00<08:54, 23.49it/s] 76%|███████▌  | 39457/52020 [28:20<08:54, 23.49it/s] 79%|███████▊  | 40872/52020 [29:00<07:54, 23.51it/s] 79%|███████▊  | 40872/52020 [29:20<07:54, 23.51it/s] 81%|████████▏ | 42284/52020 [30:00<06:53, 23.52it/s] 81%|████████▏ | 42284/52020 [30:20<06:53, 23.52it/s] 84%|████████▍ | 43698/52020 [31:00<05:53, 23.53it/s] 84%|████████▍ | 43698/52020 [31:20<05:53, 23.53it/s] 87%|████████▋ | 45110/52020 [32:00<04:53, 23.53it/s] 87%|████████▋ | 45110/52020 [32:20<04:53, 23.53it/s] 89%|████████▉ | 46523/52020 [33:00<03:53, 23.53it/s] 89%|████████▉ | 46523/52020 [33:20<03:53, 23.53it/s] 92%|█████████▏| 47934/52020 [34:00<02:53, 23.52it/s] 92%|█████████▏| 47934/52020 [34:20<02:53, 23.52it/s] 95%|█████████▍| 49347/52020 [35:00<01:53, 23.53it/s] 95%|█████████▍| 49347/52020 [35:20<01:53, 23.53it/s] 98%|█████████▊| 50761/52020 [36:00<00:53, 23.52it/s] 98%|█████████▊| 50761/52020 [36:20<00:53, 23.52it/s]100%|██████████| 52020/52020 [36:54<00:00, 23.49it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 360] nu_efectiva muy alta: 1.98e-04 (19.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 360] gamma min=0.002 media=0.196
+\n[Iter 500] Convergencia a steady: u=1.17e-02, v=4.85e-01, p=9.12e-01
+
+[ADVERTENCIA] [Iter 720] nu_efectiva muy alta: 3.17e-04 (31.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 720] gamma min=0.001 media=0.202
+\n[Iter 1000] Convergencia a steady: u=1.31e-02, v=5.39e-01, p=3.06e-01
+
+[ADVERTENCIA] [Iter 1080] nu_efectiva muy alta: 3.85e-04 (38.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1080] gamma min=0.001 media=0.210
+
+[ADVERTENCIA] [Iter 1440] nu_efectiva muy alta: 4.24e-04 (42.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1440] gamma min=0.001 media=0.218
+\n[Iter 1500] Convergencia a steady: u=1.61e-02, v=5.88e-01, p=2.12e-01
+
+[ADVERTENCIA] [Iter 1800] nu_efectiva muy alta: 4.82e-04 (48.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1800] gamma min=0.000 media=0.228
+\n[Iter 2000] Convergencia a steady: u=1.90e-02, v=6.56e-01, p=2.42e-01
+
+[ADVERTENCIA] [Iter 2160] nu_efectiva muy alta: 5.30e-04 (53.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2160] gamma min=0.001 media=0.239
+\n[Iter 2500] Convergencia a steady: u=1.78e-02, v=6.41e-01, p=2.21e-01
+
+[ADVERTENCIA] [Iter 2520] nu_efectiva muy alta: 5.33e-04 (53.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2520] gamma min=0.001 media=0.242
+
+[ADVERTENCIA] [Iter 2880] nu_efectiva muy alta: 3.14e-04 (31.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2880] gamma min=0.001 media=0.243
+\n[Iter 3000] Convergencia a steady: u=1.46e-02, v=5.54e-01, p=1.81e-01
+
+[ADVERTENCIA] [Iter 3240] nu_efectiva muy alta: 3.55e-04 (35.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3240] gamma min=0.001 media=0.247
+\n[Iter 3500] Convergencia a steady: u=1.66e-02, v=5.97e-01, p=1.20e-01
+
+[ADVERTENCIA] [Iter 3600] nu_efectiva muy alta: 4.37e-04 (43.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3600] gamma min=0.001 media=0.251
+
+[ADVERTENCIA] [Iter 3960] nu_efectiva muy alta: 4.98e-04 (49.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3960] gamma min=0.001 media=0.255
+\n[Iter 4000] Convergencia a steady: u=1.78e-02, v=6.12e-01, p=1.86e-01
+
+[ADVERTENCIA] [Iter 4320] nu_efectiva muy alta: 5.33e-04 (53.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 4320] gamma min=0.001 media=0.256
+\n[Iter 4500] Convergencia a steady: u=1.83e-02, v=6.19e-01, p=1.85e-01
+
+[ADVERTENCIA] [Iter 4680] nu_efectiva muy alta: 6.08e-04 (60.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 4680] gamma min=0.001 media=0.258
+\n[Iter 5000] Convergencia a steady: u=1.76e-02, v=6.17e-01, p=1.57e-01
+
+[ADVERTENCIA] [Iter 5040] nu_efectiva muy alta: 6.17e-04 (61.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5040] gamma min=0.001 media=0.261
+
+[ADVERTENCIA] [Iter 5400] nu_efectiva muy alta: 6.04e-04 (60.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5400] gamma min=0.001 media=0.265
+\n[Iter 5500] Convergencia a steady: u=1.95e-02, v=6.16e-01, p=1.36e-01
+
+[ADVERTENCIA] [Iter 5760] nu_efectiva muy alta: 5.93e-04 (59.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5760] gamma min=0.001 media=0.267
+\n[Iter 6000] Convergencia a steady: u=1.99e-02, v=6.33e-01, p=1.34e-01
+
+[ADVERTENCIA] [Iter 6120] nu_efectiva muy alta: 5.81e-04 (58.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6120] gamma min=0.001 media=0.267
+
+[ADVERTENCIA] [Iter 6480] nu_efectiva muy alta: 5.31e-04 (53.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6480] gamma min=0.001 media=0.267
+\n[Iter 6500] Convergencia a steady: u=1.93e-02, v=6.29e-01, p=1.04e-01
+
+[ADVERTENCIA] [Iter 6840] nu_efectiva muy alta: 5.25e-04 (52.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6840] gamma min=0.001 media=0.268
+\n[Iter 7000] Convergencia a steady: u=1.78e-02, v=5.92e-01, p=1.09e-01
+
+[ADVERTENCIA] [Iter 7200] nu_efectiva muy alta: 4.77e-04 (47.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7200] gamma min=0.001 media=0.270
+\n[Iter 7500] Convergencia a steady: u=2.01e-02, v=5.94e-01, p=1.63e-01
+
+[ADVERTENCIA] [Iter 7560] nu_efectiva muy alta: 4.69e-04 (46.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7560] gamma min=0.001 media=0.270
+
+[ADVERTENCIA] [Iter 7920] nu_efectiva muy alta: 4.88e-04 (48.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7920] gamma min=0.001 media=0.271
+\n[Iter 8000] Convergencia a steady: u=1.85e-02, v=6.10e-01, p=1.05e-01
+
+[ADVERTENCIA] [Iter 8280] nu_efectiva muy alta: 5.36e-04 (53.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 8280] gamma min=0.001 media=0.273
+\n[Iter 8500] Convergencia a steady: u=1.70e-02, v=5.69e-01, p=9.80e-02
+
+[ADVERTENCIA] [Iter 8640] nu_efectiva muy alta: 6.00e-04 (60.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 8640] gamma min=0.001 media=0.273
+
+[ADVERTENCIA] [Iter 9000] nu_efectiva muy alta: 6.30e-04 (63.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9000] gamma min=0.001 media=0.274
+\n[Iter 9000] Convergencia a steady: u=1.75e-02, v=5.70e-01, p=1.37e-01
+
+[ADVERTENCIA] [Iter 9360] nu_efectiva muy alta: 6.40e-04 (64.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9360] gamma min=0.001 media=0.276
+\n[Iter 9500] Convergencia a steady: u=1.76e-02, v=5.78e-01, p=9.56e-02
+
+[ADVERTENCIA] [Iter 9720] nu_efectiva muy alta: 6.26e-04 (62.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9720] gamma min=0.001 media=0.276
+\n[Iter 10000] Convergencia a steady: u=1.78e-02, v=5.39e-01, p=8.17e-02
+
+[ADVERTENCIA] [Iter 10080] nu_efectiva muy alta: 5.23e-04 (52.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10080] gamma min=0.001 media=0.274
+
+[ADVERTENCIA] [Iter 10440] nu_efectiva muy alta: 5.26e-04 (52.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10440] gamma min=0.001 media=0.274
+\n[Iter 10500] Convergencia a steady: u=1.70e-02, v=5.62e-01, p=9.54e-02
+
+[ADVERTENCIA] [Iter 10800] nu_efectiva muy alta: 5.24e-04 (52.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10800] gamma min=0.001 media=0.276
+\n[Iter 11000] Convergencia a steady: u=1.63e-02, v=5.51e-01, p=1.07e-01
+
+[ADVERTENCIA] [Iter 11160] nu_efectiva muy alta: 5.29e-04 (52.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11160] gamma min=0.001 media=0.279
+\n[Iter 11500] Convergencia a steady: u=1.53e-02, v=5.49e-01, p=9.33e-02
+
+[ADVERTENCIA] [Iter 11520] nu_efectiva muy alta: 4.89e-04 (48.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11520] gamma min=0.001 media=0.279
+
+[ADVERTENCIA] [Iter 11880] nu_efectiva muy alta: 4.84e-04 (48.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11880] gamma min=0.001 media=0.279
+\n[Iter 12000] Convergencia a steady: u=1.59e-02, v=5.41e-01, p=1.15e-01
+
+[ADVERTENCIA] [Iter 12240] nu_efectiva muy alta: 4.88e-04 (48.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12240] gamma min=0.001 media=0.279
+\n[Iter 12500] Convergencia a steady: u=1.50e-02, v=5.31e-01, p=6.31e-02
+
+[ADVERTENCIA] [Iter 12600] nu_efectiva muy alta: 4.84e-04 (48.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12600] gamma min=0.001 media=0.279
+
+[ADVERTENCIA] [Iter 12960] nu_efectiva muy alta: 4.83e-04 (48.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12960] gamma min=0.001 media=0.281
+\n[Iter 13000] Convergencia a steady: u=1.36e-02, v=5.08e-01, p=5.55e-02
+
+[ADVERTENCIA] [Iter 13320] nu_efectiva muy alta: 5.02e-04 (50.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 13320] gamma min=0.001 media=0.281
+\n[Iter 13500] Convergencia a steady: u=1.34e-02, v=4.54e-01, p=4.84e-02
+
+[ADVERTENCIA] [Iter 13680] nu_efectiva muy alta: 5.06e-04 (50.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 13680] gamma min=0.001 media=0.280
+\n[Iter 14000] Convergencia a steady: u=1.23e-02, v=4.40e-01, p=4.40e-02
+
+[ADVERTENCIA] [Iter 14040] nu_efectiva muy alta: 5.01e-04 (50.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 14040] gamma min=0.001 media=0.281
+
+[ADVERTENCIA] [Iter 14400] nu_efectiva muy alta: 4.90e-04 (49.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 14400] gamma min=0.001 media=0.283
+\n[Iter 14500] Convergencia a steady: u=1.13e-02, v=4.10e-01, p=4.23e-02
+
+[ADVERTENCIA] [Iter 14760] nu_efectiva muy alta: 4.28e-04 (42.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 14760] gamma min=0.001 media=0.282
+\n[Iter 15000] Convergencia a steady: u=9.79e-03, v=4.04e-01, p=3.21e-02
+
+[ADVERTENCIA] [Iter 15120] nu_efectiva muy alta: 4.42e-04 (44.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 15120] gamma min=0.001 media=0.282
+
+[ADVERTENCIA] [Iter 15480] nu_efectiva muy alta: 4.58e-04 (45.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 15480] gamma min=0.001 media=0.284
+\n[Iter 15500] Convergencia a steady: u=7.84e-03, v=3.46e-01, p=2.93e-02
+
+[ADVERTENCIA] [Iter 15840] nu_efectiva muy alta: 4.72e-04 (47.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 15840] gamma min=0.001 media=0.284
+\n[Iter 16000] Convergencia a steady: u=8.98e-03, v=3.11e-01, p=3.71e-02
+
+[ADVERTENCIA] [Iter 16200] nu_efectiva muy alta: 4.77e-04 (47.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 16200] gamma min=0.001 media=0.282
+\n[Iter 16500] Convergencia a steady: u=9.00e-03, v=3.28e-01, p=3.34e-02
+
+[ADVERTENCIA] [Iter 16560] nu_efectiva muy alta: 4.73e-04 (47.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 16560] gamma min=0.001 media=0.284
+
+[ADVERTENCIA] [Iter 16920] nu_efectiva muy alta: 4.27e-04 (42.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 16920] gamma min=0.001 media=0.283
+\n[Iter 17000] Convergencia a steady: u=8.95e-03, v=3.25e-01, p=3.83e-02
+
+[ADVERTENCIA] [Iter 17280] nu_efectiva muy alta: 4.38e-04 (43.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 17280] gamma min=0.001 media=0.284
+\n[Iter 17500] Convergencia a steady: u=9.83e-03, v=3.62e-01, p=3.75e-02
+
+[ADVERTENCIA] [Iter 17640] nu_efectiva muy alta: 4.50e-04 (45.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 17640] gamma min=0.001 media=0.287
+
+[ADVERTENCIA] [Iter 18000] nu_efectiva muy alta: 4.67e-04 (46.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 18000] gamma min=0.001 media=0.288
+\n[Iter 18000] Convergencia a steady: u=1.04e-02, v=3.56e-01, p=3.73e-02
+
+[ADVERTENCIA] [Iter 18360] nu_efectiva muy alta: 4.86e-04 (48.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 18360] gamma min=0.001 media=0.287
+\n[Iter 18500] Convergencia a steady: u=1.06e-02, v=3.98e-01, p=3.84e-02
+
+[ADVERTENCIA] [Iter 18720] nu_efectiva muy alta: 5.04e-04 (50.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 18720] gamma min=0.001 media=0.289
+\n[Iter 19000] Convergencia a steady: u=9.62e-03, v=3.96e-01, p=3.41e-02
+
+[ADVERTENCIA] [Iter 19080] nu_efectiva muy alta: 5.18e-04 (51.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 19080] gamma min=0.001 media=0.291
+
+[ADVERTENCIA] [Iter 19440] nu_efectiva muy alta: 4.70e-04 (47.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 19440] gamma min=0.001 media=0.290
+\n[Iter 19500] Convergencia a steady: u=9.63e-03, v=3.81e-01, p=3.86e-02
+
+[ADVERTENCIA] [Iter 19800] nu_efectiva muy alta: 4.69e-04 (46.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 19800] gamma min=0.001 media=0.291
+\n[Iter 20000] Convergencia a steady: u=1.01e-02, v=3.81e-01, p=4.09e-02
+
+[ADVERTENCIA] [Iter 20160] nu_efectiva muy alta: 4.60e-04 (46.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 20160] gamma min=0.001 media=0.291
+\n[Iter 20500] Convergencia a steady: u=1.12e-02, v=4.12e-01, p=5.35e-02
+
+[ADVERTENCIA] [Iter 20520] nu_efectiva muy alta: 4.25e-04 (42.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 20520] gamma min=0.001 media=0.291
+
+[ADVERTENCIA] [Iter 20880] nu_efectiva muy alta: 4.33e-04 (43.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 20880] gamma min=0.001 media=0.291
+\n[Iter 21000] Convergencia a steady: u=1.06e-02, v=4.21e-01, p=3.61e-02
+
+[ADVERTENCIA] [Iter 21240] nu_efectiva muy alta: 4.29e-04 (42.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 21240] gamma min=0.001 media=0.291
+\n[Iter 21500] Convergencia a steady: u=8.57e-03, v=3.58e-01, p=2.47e-02
+
+[ADVERTENCIA] [Iter 21600] nu_efectiva muy alta: 4.38e-04 (43.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 21600] gamma min=0.001 media=0.290
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0905 (|tol|=0.05) en iter 21600
+
+[ADVERTENCIA] [Iter 21960] nu_efectiva muy alta: 4.49e-04 (44.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 21960] gamma min=0.001 media=0.289
+\n[Iter 22000] Convergencia a steady: u=7.45e-03, v=3.02e-01, p=2.45e-02
+
+[ADVERTENCIA] [Iter 22320] nu_efectiva muy alta: 4.53e-04 (45.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 22320] gamma min=0.001 media=0.288
+\n[Iter 22500] Convergencia a steady: u=6.48e-03, v=2.54e-01, p=2.55e-02
+
+[ADVERTENCIA] [Iter 22680] nu_efectiva muy alta: 4.55e-04 (45.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 22680] gamma min=0.001 media=0.287
+\n[Iter 23000] Convergencia a steady: u=7.66e-03, v=2.41e-01, p=3.20e-02
+
+[ADVERTENCIA] [Iter 23040] nu_efectiva muy alta: 4.40e-04 (44.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 23040] gamma min=0.001 media=0.285
+
+[ADVERTENCIA] [Iter 23400] nu_efectiva muy alta: 4.44e-04 (44.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 23400] gamma min=0.001 media=0.284
+\n[Iter 23500] Convergencia a steady: u=8.73e-03, v=3.04e-01, p=4.00e-02
+
+[ADVERTENCIA] [Iter 23760] nu_efectiva muy alta: 4.56e-04 (45.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 23760] gamma min=0.001 media=0.285
+\n[Iter 24000] Convergencia a steady: u=9.82e-03, v=3.56e-01, p=3.98e-02
+
+[ADVERTENCIA] [Iter 24120] nu_efectiva muy alta: 4.64e-04 (46.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 24120] gamma min=0.001 media=0.286
+
+[ADVERTENCIA] [Iter 24480] nu_efectiva muy alta: 4.72e-04 (47.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 24480] gamma min=0.001 media=0.286
+\n[Iter 24500] Convergencia a steady: u=8.51e-03, v=3.47e-01, p=3.00e-02
+
+[ADVERTENCIA] [Iter 24840] nu_efectiva muy alta: 4.79e-04 (47.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 24840] gamma min=0.001 media=0.287
+\n[Iter 25000] Convergencia a steady: u=9.45e-03, v=3.50e-01, p=3.04e-02
+
+[ADVERTENCIA] [Iter 25200] nu_efectiva muy alta: 4.76e-04 (47.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 25200] gamma min=0.001 media=0.287
+\n[Iter 25500] Convergencia a steady: u=9.52e-03, v=3.51e-01, p=3.40e-02
+
+[ADVERTENCIA] [Iter 25560] nu_efectiva muy alta: 4.36e-04 (43.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 25560] gamma min=0.001 media=0.287
+
+[ADVERTENCIA] [Iter 25920] nu_efectiva muy alta: 4.24e-04 (42.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 25920] gamma min=0.001 media=0.287
+\n[Iter 26000] Convergencia a steady: u=9.02e-03, v=3.41e-01, p=4.18e-02
+
+[ADVERTENCIA] [Iter 26280] nu_efectiva muy alta: 4.26e-04 (42.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 26280] gamma min=0.001 media=0.286
+\n[Iter 26500] Convergencia a steady: u=1.05e-02, v=3.82e-01, p=3.74e-02
+
+[ADVERTENCIA] [Iter 26640] nu_efectiva muy alta: 4.42e-04 (44.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 26640] gamma min=0.001 media=0.287
+
+[ADVERTENCIA] [Iter 27000] nu_efectiva muy alta: 4.43e-04 (44.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 27000] gamma min=0.001 media=0.287
+\n[Iter 27000] Convergencia a steady: u=9.92e-03, v=3.82e-01, p=2.96e-02
+
+[ADVERTENCIA] [Iter 27360] nu_efectiva muy alta: 4.43e-04 (44.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 27360] gamma min=0.001 media=0.287
+\n[Iter 27500] Convergencia a steady: u=1.02e-02, v=3.79e-01, p=3.28e-02
+
+[ADVERTENCIA] [Iter 27720] nu_efectiva muy alta: 4.48e-04 (44.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 27720] gamma min=0.001 media=0.287
+\n[Iter 28000] Convergencia a steady: u=8.42e-03, v=3.46e-01, p=2.93e-02
+
+[ADVERTENCIA] [Iter 28080] nu_efectiva muy alta: 4.62e-04 (46.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 28080] gamma min=0.001 media=0.288
+
+[ADVERTENCIA] [Iter 28440] nu_efectiva muy alta: 4.37e-04 (43.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 28440] gamma min=0.001 media=0.286
+\n[Iter 28500] Convergencia a steady: u=9.80e-03, v=3.36e-01, p=3.92e-02
+
+[ADVERTENCIA] [Iter 28800] nu_efectiva muy alta: 4.28e-04 (42.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 28800] gamma min=0.001 media=0.286
+\n[Iter 29000] Convergencia a steady: u=9.00e-03, v=3.74e-01, p=2.91e-02
+
+[ADVERTENCIA] [Iter 29160] nu_efectiva muy alta: 4.40e-04 (44.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 29160] gamma min=0.001 media=0.285
+\n[Iter 29500] Convergencia a steady: u=8.42e-03, v=3.32e-01, p=2.70e-02
+
+[ADVERTENCIA] [Iter 29520] nu_efectiva muy alta: 4.52e-04 (45.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 29520] gamma min=0.001 media=0.284
+
+[ADVERTENCIA] [Iter 29880] nu_efectiva muy alta: 4.65e-04 (46.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 29880] gamma min=0.001 media=0.284
+\n[Iter 30000] Convergencia a steady: u=8.82e-03, v=3.21e-01, p=2.72e-02
+
+[ADVERTENCIA] [Iter 30240] nu_efectiva muy alta: 4.74e-04 (47.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 30240] gamma min=0.001 media=0.286
+\n[Iter 30500] Convergencia a steady: u=8.33e-03, v=3.21e-01, p=2.53e-02
+
+[ADVERTENCIA] [Iter 30600] nu_efectiva muy alta: 4.78e-04 (47.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 30600] gamma min=0.001 media=0.286
+
+[ADVERTENCIA] [Iter 30960] nu_efectiva muy alta: 4.28e-04 (42.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 30960] gamma min=0.001 media=0.285
+\n[Iter 31000] Convergencia a steady: u=9.97e-03, v=3.70e-01, p=2.92e-02
+
+[ADVERTENCIA] [Iter 31320] nu_efectiva muy alta: 4.08e-04 (40.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 31320] gamma min=0.001 media=0.286
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0606 (|tol|=0.05) en iter 31320
+\n[Iter 31500] Convergencia a steady: u=7.62e-03, v=3.60e-01, p=2.35e-02
+
+[ADVERTENCIA] [Iter 31680] nu_efectiva muy alta: 4.05e-04 (40.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 31680] gamma min=0.001 media=0.286
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0641 (|tol|=0.05) en iter 31680
+\n[Iter 32000] Convergencia a steady: u=6.95e-03, v=3.16e-01, p=2.90e-02
+
+[ADVERTENCIA] [Iter 32040] nu_efectiva muy alta: 4.16e-04 (41.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 32040] gamma min=0.001 media=0.285
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0757 (|tol|=0.05) en iter 32040
+
+[ADVERTENCIA] [Iter 32400] nu_efectiva muy alta: 4.27e-04 (42.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 32400] gamma min=0.001 media=0.283
+\n[Iter 32500] Convergencia a steady: u=6.99e-03, v=2.82e-01, p=4.26e-02
+
+[ADVERTENCIA] [Iter 32760] nu_efectiva muy alta: 4.30e-04 (43.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 32760] gamma min=0.001 media=0.283
+\n[Iter 33000] Convergencia a steady: u=9.51e-03, v=3.24e-01, p=4.06e-02
+
+[ADVERTENCIA] [Iter 33120] nu_efectiva muy alta: 4.32e-04 (43.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 33120] gamma min=0.001 media=0.281
+
+[ADVERTENCIA] [Iter 33480] nu_efectiva muy alta: 4.34e-04 (43.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 33480] gamma min=0.001 media=0.281
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0546 (|tol|=0.05) en iter 33480
+\n[Iter 33500] Convergencia a steady: u=9.72e-03, v=3.51e-01, p=3.60e-02
+
+[ADVERTENCIA] [Iter 33840] nu_efectiva muy alta: 4.41e-04 (44.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 33840] gamma min=0.001 media=0.284
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0517 (|tol|=0.05) en iter 33840
+\n[Iter 34000] Convergencia a steady: u=7.93e-03, v=3.22e-01, p=3.26e-02
+
+[ADVERTENCIA] [Iter 34200] nu_efectiva muy alta: 4.55e-04 (45.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 34200] gamma min=0.001 media=0.284
+\n[Iter 34500] Convergencia a steady: u=9.23e-03, v=3.06e-01, p=4.02e-02
+
+[ADVERTENCIA] [Iter 34560] nu_efectiva muy alta: 4.68e-04 (46.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 34560] gamma min=0.001 media=0.285
+
+[ADVERTENCIA] [Iter 34920] nu_efectiva muy alta: 4.61e-04 (46.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 34920] gamma min=0.001 media=0.284
+\n[Iter 35000] Convergencia a steady: u=1.10e-02, v=3.94e-01, p=4.11e-02
+
+[ADVERTENCIA] [Iter 35280] nu_efectiva muy alta: 4.57e-04 (45.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 35280] gamma min=0.001 media=0.284
+\n[Iter 35500] Convergencia a steady: u=8.97e-03, v=3.80e-01, p=2.62e-02
+
+[ADVERTENCIA] [Iter 35640] nu_efectiva muy alta: 4.29e-04 (42.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 35640] gamma min=0.001 media=0.283
+
+[ADVERTENCIA] [Iter 36000] nu_efectiva muy alta: 4.37e-04 (43.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 36000] gamma min=0.001 media=0.285
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0717 (|tol|=0.05) en iter 36000
+\n[Iter 36000] Convergencia a steady: u=7.51e-03, v=3.36e-01, p=2.52e-02
+
+[ADVERTENCIA] [Iter 36360] nu_efectiva muy alta: 4.47e-04 (44.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 36360] gamma min=0.001 media=0.286
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0871 (|tol|=0.05) en iter 36360
+\n[Iter 36500] Convergencia a steady: u=7.37e-03, v=3.13e-01, p=2.33e-02
+
+[ADVERTENCIA] [Iter 36720] nu_efectiva muy alta: 4.40e-04 (44.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 36720] gamma min=0.001 media=0.284
+\n[Iter 37000] Convergencia a steady: u=8.44e-03, v=3.04e-01, p=2.65e-02
+
+[ADVERTENCIA] [Iter 37080] nu_efectiva muy alta: 4.28e-04 (42.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 37080] gamma min=0.001 media=0.283
+
+[ADVERTENCIA] [Iter 37440] nu_efectiva muy alta: 4.44e-04 (44.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 37440] gamma min=0.001 media=0.282
+\n[Iter 37500] Convergencia a steady: u=8.06e-03, v=3.14e-01, p=2.45e-02
+
+[ADVERTENCIA] [Iter 37800] nu_efectiva muy alta: 4.53e-04 (45.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 37800] gamma min=0.001 media=0.283
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0652 (|tol|=0.05) en iter 37800
+\n[Iter 38000] Convergencia a steady: u=7.26e-03, v=2.87e-01, p=2.95e-02
+
+[ADVERTENCIA] [Iter 38160] nu_efectiva muy alta: 4.64e-04 (46.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 38160] gamma min=0.001 media=0.284
+\n[Iter 38500] Convergencia a steady: u=8.22e-03, v=2.73e-01, p=3.24e-02
+
+[ADVERTENCIA] [Iter 38520] nu_efectiva muy alta: 4.76e-04 (47.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 38520] gamma min=0.001 media=0.283
+
+[ADVERTENCIA] [Iter 38880] nu_efectiva muy alta: 4.87e-04 (48.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 38880] gamma min=0.001 media=0.284
+\n[Iter 39000] Convergencia a steady: u=1.10e-02, v=3.47e-01, p=3.67e-02
+
+[ADVERTENCIA] [Iter 39240] nu_efectiva muy alta: 4.37e-04 (43.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 39240] gamma min=0.001 media=0.283
+\n[Iter 39500] Convergencia a steady: u=9.74e-03, v=3.72e-01, p=3.62e-02
+
+[ADVERTENCIA] [Iter 39600] nu_efectiva muy alta: 4.39e-04 (43.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 39600] gamma min=0.001 media=0.284
+
+[ADVERTENCIA] [Iter 39960] nu_efectiva muy alta: 4.44e-04 (44.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 39960] gamma min=0.001 media=0.285
+\n[Iter 40000] Convergencia a steady: u=9.95e-03, v=3.85e-01, p=3.21e-02
+
+[ADVERTENCIA] [Iter 40320] nu_efectiva muy alta: 4.52e-04 (45.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 40320] gamma min=0.001 media=0.287
+\n[Iter 40500] Convergencia a steady: u=9.69e-03, v=3.80e-01, p=2.85e-02
+
+[ADVERTENCIA] [Iter 40680] nu_efectiva muy alta: 4.38e-04 (43.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 40680] gamma min=0.001 media=0.287
+\n[Iter 41000] Convergencia a steady: u=9.24e-03, v=3.70e-01, p=2.69e-02
+
+[ADVERTENCIA] [Iter 41040] nu_efectiva muy alta: 4.36e-04 (43.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 41040] gamma min=0.001 media=0.285
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0766 (|tol|=0.05) en iter 41040
+
+[ADVERTENCIA] [Iter 41400] nu_efectiva muy alta: 4.32e-04 (43.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 41400] gamma min=0.001 media=0.285
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0644 (|tol|=0.05) en iter 41400
+\n[Iter 41500] Convergencia a steady: u=7.37e-03, v=3.24e-01, p=2.45e-02
+
+[ADVERTENCIA] [Iter 41760] nu_efectiva muy alta: 4.37e-04 (43.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 41760] gamma min=0.001 media=0.285
+  [KUTTA] violación sostenida: ΔCp_TE=-0.0649 (|tol|=0.05) en iter 41760
+\n[Iter 42000] Convergencia a steady: u=6.27e-03, v=2.72e-01, p=2.27e-02
+
+[ADVERTENCIA] [Iter 42120] nu_efectiva muy alta: 4.45e-04 (44.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 42120] gamma min=0.001 media=0.284
+
+[ADVERTENCIA] [Iter 42480] nu_efectiva muy alta: 4.52e-04 (45.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 42480] gamma min=0.001 media=0.283
+\n[Iter 42500] Convergencia a steady: u=7.19e-03, v=2.40e-01, p=2.91e-02
+
+[ADVERTENCIA] [Iter 42840] nu_efectiva muy alta: 4.31e-04 (43.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 42840] gamma min=0.001 media=0.281
+\n[Iter 43000] Convergencia a steady: u=8.15e-03, v=2.90e-01, p=2.79e-02
+
+[ADVERTENCIA] [Iter 43200] nu_efectiva muy alta: 4.33e-04 (43.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 43200] gamma min=0.001 media=0.281
+\n[Iter 43500] Convergencia a steady: u=7.40e-03, v=2.77e-01, p=2.67e-02
+
+[ADVERTENCIA] [Iter 43560] nu_efectiva muy alta: 4.41e-04 (44.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 43560] gamma min=0.001 media=0.282
+
+[ADVERTENCIA] [Iter 43920] nu_efectiva muy alta: 4.46e-04 (44.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 43920] gamma min=0.001 media=0.283
+\n[Iter 44000] Convergencia a steady: u=8.83e-03, v=3.02e-01, p=2.95e-02
+
+[ADVERTENCIA] [Iter 44280] nu_efectiva muy alta: 4.51e-04 (45.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 44280] gamma min=0.001 media=0.283
+\n[Iter 44500] Convergencia a steady: u=7.21e-03, v=2.89e-01, p=2.42e-02
+
+[ADVERTENCIA] [Iter 44640] nu_efectiva muy alta: 4.48e-04 (44.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 44640] gamma min=0.001 media=0.284
+
+[ADVERTENCIA] [Iter 45000] nu_efectiva muy alta: 4.54e-04 (45.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 45000] gamma min=0.001 media=0.283
+\n[Iter 45000] Convergencia a steady: u=6.61e-03, v=2.38e-01, p=3.62e-02
+
+[ADVERTENCIA] [Iter 45360] nu_efectiva muy alta: 4.62e-04 (46.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 45360] gamma min=0.001 media=0.283
+\n[Iter 45500] Convergencia a steady: u=8.79e-03, v=2.73e-01, p=3.05e-02
+
+[ADVERTENCIA] [Iter 45720] nu_efectiva muy alta: 4.69e-04 (46.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 45720] gamma min=0.001 media=0.283
+\n[Iter 46000] Convergencia a steady: u=7.98e-03, v=2.78e-01, p=3.03e-02
+
+[ADVERTENCIA] [Iter 46080] nu_efectiva muy alta: 4.76e-04 (47.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 46080] gamma min=0.001 media=0.283
+
+[ADVERTENCIA] [Iter 46440] nu_efectiva muy alta: 4.37e-04 (43.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 46440] gamma min=0.001 media=0.282
+\n[Iter 46500] Convergencia a steady: u=8.34e-03, v=2.92e-01, p=2.84e-02
+
+[ADVERTENCIA] [Iter 46800] nu_efectiva muy alta: 4.47e-04 (44.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 46800] gamma min=0.001 media=0.284
+\n[Iter 47000] Convergencia a steady: u=8.82e-03, v=3.05e-01, p=3.40e-02
+
+[ADVERTENCIA] [Iter 47160] nu_efectiva muy alta: 4.52e-04 (45.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 47160] gamma min=0.001 media=0.285
+\n[Iter 47500] Convergencia a steady: u=8.84e-03, v=3.24e-01, p=4.03e-02
+
+[ADVERTENCIA] [Iter 47520] nu_efectiva muy alta: 4.38e-04 (43.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 47520] gamma min=0.001 media=0.284
+
+[ADVERTENCIA] [Iter 47880] nu_efectiva muy alta: 4.54e-04 (45.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 47880] gamma min=0.001 media=0.284
+\n[Iter 48000] Convergencia a steady: u=1.02e-02, v=3.52e-01, p=3.85e-02
+
+[ADVERTENCIA] [Iter 48240] nu_efectiva muy alta: 4.64e-04 (46.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 48240] gamma min=0.001 media=0.286
+\n[Iter 48500] Convergencia a steady: u=9.07e-03, v=3.69e-01, p=3.32e-02
+
+[ADVERTENCIA] [Iter 48600] nu_efectiva muy alta: 4.68e-04 (46.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 48600] gamma min=0.001 media=0.285
+
+[ADVERTENCIA] [Iter 48960] nu_efectiva muy alta: 4.68e-04 (46.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 48960] gamma min=0.001 media=0.286
+\n[Iter 49000] Convergencia a steady: u=8.47e-03, v=3.39e-01, p=3.25e-02
+
+[ADVERTENCIA] [Iter 49320] nu_efectiva muy alta: 4.60e-04 (46.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 49320] gamma min=0.001 media=0.285
+\n[Iter 49500] Convergencia a steady: u=9.98e-03, v=3.25e-01, p=3.82e-02
+
+[ADVERTENCIA] [Iter 49680] nu_efectiva muy alta: 4.68e-04 (46.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 49680] gamma min=0.001 media=0.285
+\n[Iter 50000] Convergencia a steady: u=1.01e-02, v=3.69e-01, p=3.26e-02
+
+[ADVERTENCIA] [Iter 50040] nu_efectiva muy alta: 4.46e-04 (44.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 50040] gamma min=0.001 media=0.284
+
+[ADVERTENCIA] [Iter 50400] nu_efectiva muy alta: 4.23e-04 (42.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 50400] gamma min=0.001 media=0.285
+\n[Iter 50500] Convergencia a steady: u=9.24e-03, v=3.65e-01, p=2.66e-02
+
+[ADVERTENCIA] [Iter 50760] nu_efectiva muy alta: 4.20e-04 (42.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 50760] gamma min=0.001 media=0.286
+\n[Iter 51000] Convergencia a steady: u=7.94e-03, v=3.33e-01, p=2.50e-02
+
+[ADVERTENCIA] [Iter 51120] nu_efectiva muy alta: 4.26e-04 (42.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 51120] gamma min=0.001 media=0.286
+
+[ADVERTENCIA] [Iter 51480] nu_efectiva muy alta: 4.30e-04 (43.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 51480] gamma min=0.001 media=0.285
+\n[Iter 51500] Convergencia a steady: u=7.33e-03, v=2.88e-01, p=2.73e-02
+
+[ADVERTENCIA] [Iter 51840] nu_efectiva muy alta: 4.28e-04 (42.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 51840] gamma min=0.001 media=0.284
+\n[Iter 52000] Convergencia a steady: u=8.92e-03, v=2.89e-01, p=3.34e-02
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 52020 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.0426 s
+Pasos simulados: 52020
+Tiempo total simulación: 2214.27 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................    19.57 s  (  0.9%)
+  Advección.....................   852.69 s  ( 38.5%)
+  Difusión......................   219.33 s  (  9.9%)
+  Proyección....................   971.71 s  ( 43.9%)
+  Guardado/fuerzas..............   145.19 s  (  6.6%)
+    ...fuerzas Cl/Cd............    45.27 s  (  2.0%)
+    ...series y diagnostico.....    53.22 s  (  2.4%)
+    ...memoria compartida.......     2.26 s  (  0.1%)
+    ...save_frame (PNG).........     0.00 s  (  0.0%)
+    ...dump_fields (npz)........    44.44 s  (  2.0%)
+  Otros (overhead)..............     5.77 s  (  0.3%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 971.71 s (43.9% del tiempo total)
+   Tiempo promedio por paso: 0.0187 s
+   Ciclos MG por paso: media=5.01  p95=5.00  max=6
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.017018   0.697307     40.974
+  [save_state] sim_last.npz  (88 arrays, 58 escalares)
+
+--- Resultados (Re=100000, t=41.5039s) ---
+  Cl medio = 0.694491   Cd medio = 0.017673   L/D = 39.30
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.008779      0.351587  N/m
+    Presión                 0.006548      0.351622  N/m
+    Viscosa (fricción)      0.002231     -0.000035  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.017558
+    Cd presión              0.013096  (74.6%)
+    Cd fricción             0.004462  (25.4%)
+  Cl total                  0.703174
+    Cl presión              0.703245  (100.0%)
+    Cl fricción            -0.000071  (-0.0%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.004,7.000] c=0.996  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.86,   7.15]  [   7.82,   8.20]    -0.33540    +0.6735
+   0.40c  [   5.61,   7.40]  [   7.57,   8.45]    -0.31488    +0.6323
+   0.80c  [   5.21,   7.80]  [   7.20,   8.86]    -0.31361    +0.6297
+   1.50c  [   4.58,   8.49]  [   6.53,   9.57]    -0.28768    +0.5777
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.7032
+  Cl (circulación, lazo interior) = +0.6735
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +0.6424
+    ΔCp_TE (extr−intr, x/c≥0.95) = -0.0758  (→0 si Kutta cierra)
+    pico succión Cp_min = -0.665 en x/c=0.015
+────────────────────────────────────────────────────
+[13:28:14] ganador_ag: hecho en 37.0 min  Cl=0.6973 Cd=0.0170 L/D=40.97
+[13:28:14] naca0012: Re=1e+05 alpha=4.0 dx=0.002 iters=52000 dump cada 72 -> 722 frames x 2 ventanas
+Malla variable: 1772 x 713 nodos
+  X: dx_min=0.002000, dx_max=0.100000
+  Y: dy_min=0.002000, dy_max=0.100000
+  [TE trim] Trailing edge recortado: x_cut=0.993087, espesor TE=0.002000 (mín requerido: 0.002000, cuerda efectiva: 0.993087)
+  [Ghost-cell] 1 image points corregidos | 0 irreparables (forzados a 0) | total ghost=995
+dt = 0.001000 s  (CFL=0.5)
+Malla: 1772 x 713 (1,263,436 celdas)
+
+======================================================================
+[CONTROLES] CONTROLES INTERACTIVOS ACTIVOS:
+======================================================================
+  • Presiona Ctrl+C para finalizar limpiamente con outputs completos
+  • Crea 'PLOT_NOW.trigger' para generar gráficos sin detener
+  • Crea 'STOP_SIMULATION.trigger' para detener limpiamente
+  • Crea 'CHANGE_ALPHA.trigger' con el nuevo ángulo (ej: '8.0') para cambiar alpha
+======================================================================
+
+   Progreso en memoria compartida: 48 bytes (iteraciones sincronizadas)
+[WARMUP] Compilando kernels GPU (primer arranque puede tardar 30-90s)...
+[WARMUP] OK (0.0s)
+  0%|          | 0/52020 [00:00<?, ?it/s]  3%|▎         | 1449/52020 [01:00<34:54, 24.15it/s]  3%|▎         | 1449/52020 [01:13<34:54, 24.15it/s]  6%|▌         | 2917/52020 [02:00<33:38, 24.33it/s]  6%|▌         | 2917/52020 [02:13<33:38, 24.33it/s]  8%|▊         | 4382/52020 [03:00<32:35, 24.37it/s]  8%|▊         | 4382/52020 [03:13<32:35, 24.37it/s] 11%|█         | 5841/52020 [04:00<31:36, 24.35it/s] 11%|█         | 5841/52020 [04:13<31:36, 24.35it/s] 14%|█▍        | 7307/52020 [05:00<30:34, 24.38it/s] 14%|█▍        | 7307/52020 [05:13<30:34, 24.38it/s] 17%|█▋        | 8774/52020 [06:00<29:32, 24.40it/s] 17%|█▋        | 8774/52020 [06:13<29:32, 24.40it/s] 20%|█▉        | 10264/52020 [07:00<28:21, 24.54it/s] 20%|█▉        | 10264/52020 [07:13<28:21, 24.54it/s] 23%|██▎       | 11768/52020 [08:00<27:09, 24.70it/s] 23%|██▎       | 11768/52020 [08:13<27:09, 24.70it/s] 26%|██▌       | 13269/52020 [09:00<26:02, 24.80it/s] 26%|██▌       | 13269/52020 [09:13<26:02, 24.80it/s] 28%|██▊       | 14768/52020 [10:00<24:58, 24.85it/s] 28%|██▊       | 14768/52020 [10:13<24:58, 24.85it/s] 31%|███▏      | 16273/52020 [11:00<23:55, 24.91it/s] 31%|███▏      | 16273/52020 [11:13<23:55, 24.91it/s] 34%|███▍      | 17777/52020 [12:00<22:52, 24.96it/s] 34%|███▍      | 17777/52020 [12:13<22:52, 24.96it/s] 37%|███▋      | 19278/52020 [13:00<21:51, 24.97it/s] 37%|███▋      | 19278/52020 [13:13<21:51, 24.97it/s] 40%|███▉      | 20777/52020 [14:00<20:51, 24.97it/s] 40%|███▉      | 20777/52020 [14:13<20:51, 24.97it/s] 43%|████▎     | 22276/52020 [15:00<19:50, 24.98it/s] 43%|████▎     | 22276/52020 [15:13<19:50, 24.98it/s] 46%|████▌     | 23771/52020 [16:00<18:51, 24.96it/s] 46%|████▌     | 23771/52020 [16:13<18:51, 24.96it/s] 49%|████▊     | 25273/52020 [17:00<17:51, 24.96it/s] 49%|████▊     | 25273/52020 [17:13<17:51, 24.96it/s] 51%|█████▏    | 26775/52020 [18:00<16:50, 24.98it/s] 51%|█████▏    | 26775/52020 [18:13<16:50, 24.98it/s] 54%|█████▍    | 28275/52020 [19:00<15:50, 24.99it/s] 54%|█████▍    | 28275/52020 [19:13<15:50, 24.99it/s] 57%|█████▋    | 29773/52020 [20:00<14:50, 24.97it/s] 57%|█████▋    | 29773/52020 [20:13<14:50, 24.97it/s] 60%|██████    | 31274/52020 [21:00<13:50, 24.99it/s] 60%|██████    | 31274/52020 [21:13<13:50, 24.99it/s] 63%|██████▎   | 32772/52020 [22:00<12:50, 24.98it/s] 63%|██████▎   | 32772/52020 [22:13<12:50, 24.98it/s] 66%|██████▌   | 34273/52020 [23:00<11:50, 24.98it/s] 66%|██████▌   | 34273/52020 [23:13<11:50, 24.98it/s] 69%|██████▉   | 35775/52020 [24:00<10:50, 24.99it/s] 69%|██████▉   | 35775/52020 [24:13<10:50, 24.99it/s] 72%|███████▏  | 37275/52020 [25:00<09:50, 24.99it/s] 72%|███████▏  | 37275/52020 [25:13<09:50, 24.99it/s] 75%|███████▍  | 38775/52020 [26:00<08:49, 24.99it/s] 75%|███████▍  | 38775/52020 [26:13<08:49, 24.99it/s] 77%|███████▋  | 40277/52020 [27:00<07:49, 25.00it/s] 77%|███████▋  | 40277/52020 [27:13<07:49, 25.00it/s] 80%|████████  | 41777/52020 [28:00<06:49, 25.00it/s] 80%|████████  | 41777/52020 [28:13<06:49, 25.00it/s] 83%|████████▎ | 43276/52020 [29:00<05:49, 25.00it/s] 83%|████████▎ | 43276/52020 [29:13<05:49, 25.00it/s] 86%|████████▌ | 44779/52020 [30:00<04:49, 25.01it/s] 86%|████████▌ | 44779/52020 [30:13<04:49, 25.01it/s] 89%|████████▉ | 46276/52020 [31:00<03:49, 24.99it/s] 89%|████████▉ | 46276/52020 [31:13<03:49, 24.99it/s] 92%|█████████▏| 47774/52020 [32:00<02:49, 24.98it/s] 92%|█████████▏| 47774/52020 [32:13<02:49, 24.98it/s] 95%|█████████▍| 49272/52020 [33:00<01:50, 24.97it/s] 95%|█████████▍| 49272/52020 [33:13<01:50, 24.97it/s] 98%|█████████▊| 50770/52020 [34:00<00:50, 24.97it/s] 98%|█████████▊| 50770/52020 [34:13<00:50, 24.97it/s]100%|██████████| 52020/52020 [34:50<00:00, 24.88it/s]
+
+[SA-BC] [Iter 0] gamma min=0.185 media=0.185
+
+[ADVERTENCIA] [Iter 360] nu_efectiva muy alta: 1.02e-04 (10.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 360] gamma min=0.003 media=0.197
+\n[Iter 500] Convergencia a steady: u=5.14e-03, v=1.67e-01, p=1.33e+00
+
+[ADVERTENCIA] [Iter 720] nu_efectiva muy alta: 1.52e-04 (15.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 720] gamma min=0.001 media=0.202
+\n[Iter 1000] Convergencia a steady: u=4.90e-03, v=1.54e-01, p=7.85e-01
+
+[ADVERTENCIA] [Iter 1080] nu_efectiva muy alta: 1.82e-04 (18.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1080] gamma min=0.001 media=0.207
+
+[ADVERTENCIA] [Iter 1440] nu_efectiva muy alta: 2.02e-04 (20.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1440] gamma min=0.001 media=0.213
+\n[Iter 1500] Convergencia a steady: u=4.40e-03, v=1.52e-01, p=5.71e-01
+
+[ADVERTENCIA] [Iter 1800] nu_efectiva muy alta: 2.17e-04 (21.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 1800] gamma min=0.001 media=0.220
+\n[Iter 2000] Convergencia a steady: u=1.09e-02, v=2.58e-01, p=4.18e-01
+
+[ADVERTENCIA] [Iter 2160] nu_efectiva muy alta: 2.31e-04 (23.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2160] gamma min=0.001 media=0.226
+\n[Iter 2500] Convergencia a steady: u=1.73e-02, v=5.23e-01, p=4.08e-01
+
+[ADVERTENCIA] [Iter 2520] nu_efectiva muy alta: 2.46e-04 (24.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2520] gamma min=0.001 media=0.232
+
+[ADVERTENCIA] [Iter 2880] nu_efectiva muy alta: 2.95e-04 (29.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 2880] gamma min=0.001 media=0.235
+\n[Iter 3000] Convergencia a steady: u=1.75e-02, v=5.59e-01, p=2.35e-01
+
+[ADVERTENCIA] [Iter 3240] nu_efectiva muy alta: 3.28e-04 (32.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3240] gamma min=0.001 media=0.241
+\n[Iter 3500] Convergencia a steady: u=1.73e-02, v=5.37e-01, p=1.79e-01
+
+[ADVERTENCIA] [Iter 3600] nu_efectiva muy alta: 3.53e-04 (35.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3600] gamma min=0.001 media=0.247
+
+[ADVERTENCIA] [Iter 3960] nu_efectiva muy alta: 3.76e-04 (37.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 3960] gamma min=0.001 media=0.254
+\n[Iter 4000] Convergencia a steady: u=1.69e-02, v=5.27e-01, p=1.63e-01
+
+[ADVERTENCIA] [Iter 4320] nu_efectiva muy alta: 3.99e-04 (39.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 4320] gamma min=0.001 media=0.261
+\n[Iter 4500] Convergencia a steady: u=1.69e-02, v=5.26e-01, p=2.20e-01
+
+[ADVERTENCIA] [Iter 4680] nu_efectiva muy alta: 4.53e-04 (45.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 4680] gamma min=0.001 media=0.266
+\n[Iter 5000] Convergencia a steady: u=1.54e-02, v=4.75e-01, p=2.02e-01
+
+[ADVERTENCIA] [Iter 5040] nu_efectiva muy alta: 5.63e-04 (56.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5040] gamma min=0.001 media=0.267
+
+[ADVERTENCIA] [Iter 5400] nu_efectiva muy alta: 6.03e-04 (60.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5400] gamma min=0.001 media=0.266
+\n[Iter 5500] Convergencia a steady: u=1.46e-02, v=4.27e-01, p=1.65e-01
+
+[ADVERTENCIA] [Iter 5760] nu_efectiva muy alta: 6.18e-04 (61.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 5760] gamma min=0.001 media=0.263
+\n[Iter 6000] Convergencia a steady: u=1.53e-02, v=4.33e-01, p=1.66e-01
+
+[ADVERTENCIA] [Iter 6120] nu_efectiva muy alta: 6.29e-04 (62.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6120] gamma min=0.001 media=0.264
+
+[ADVERTENCIA] [Iter 6480] nu_efectiva muy alta: 6.38e-04 (63.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6480] gamma min=0.001 media=0.266
+\n[Iter 6500] Convergencia a steady: u=1.44e-02, v=4.20e-01, p=1.20e-01
+
+[ADVERTENCIA] [Iter 6840] nu_efectiva muy alta: 6.48e-04 (64.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 6840] gamma min=0.000 media=0.269
+\n[Iter 7000] Convergencia a steady: u=1.53e-02, v=4.46e-01, p=1.63e-01
+
+[ADVERTENCIA] [Iter 7200] nu_efectiva muy alta: 6.74e-04 (67.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7200] gamma min=0.001 media=0.271
+\n[Iter 7500] Convergencia a steady: u=1.59e-02, v=4.77e-01, p=1.35e-01
+
+[ADVERTENCIA] [Iter 7560] nu_efectiva muy alta: 6.90e-04 (69.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7560] gamma min=0.000 media=0.276
+
+[ADVERTENCIA] [Iter 7920] nu_efectiva muy alta: 7.00e-04 (70.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 7920] gamma min=0.001 media=0.278
+\n[Iter 8000] Convergencia a steady: u=1.54e-02, v=4.48e-01, p=1.35e-01
+
+[ADVERTENCIA] [Iter 8280] nu_efectiva muy alta: 7.05e-04 (70.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 8280] gamma min=0.000 media=0.280
+\n[Iter 8500] Convergencia a steady: u=1.57e-02, v=4.54e-01, p=1.36e-01
+
+[ADVERTENCIA] [Iter 8640] nu_efectiva muy alta: 6.65e-04 (66.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 8640] gamma min=0.001 media=0.279
+
+[ADVERTENCIA] [Iter 9000] nu_efectiva muy alta: 6.55e-04 (65.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9000] gamma min=0.001 media=0.281
+\n[Iter 9000] Convergencia a steady: u=1.60e-02, v=4.58e-01, p=1.60e-01
+
+[ADVERTENCIA] [Iter 9360] nu_efectiva muy alta: 6.48e-04 (64.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9360] gamma min=0.001 media=0.280
+\n[Iter 9500] Convergencia a steady: u=1.44e-02, v=4.24e-01, p=1.19e-01
+
+[ADVERTENCIA] [Iter 9720] nu_efectiva muy alta: 7.01e-04 (70.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 9720] gamma min=0.000 media=0.283
+\n[Iter 10000] Convergencia a steady: u=1.39e-02, v=4.14e-01, p=1.29e-01
+
+[ADVERTENCIA] [Iter 10080] nu_efectiva muy alta: 7.29e-04 (72.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10080] gamma min=0.001 media=0.283
+
+[ADVERTENCIA] [Iter 10440] nu_efectiva muy alta: 7.45e-04 (74.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10440] gamma min=0.001 media=0.283
+\n[Iter 10500] Convergencia a steady: u=1.27e-02, v=3.88e-01, p=1.07e-01
+
+[ADVERTENCIA] [Iter 10800] nu_efectiva muy alta: 7.54e-04 (75.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 10800] gamma min=0.001 media=0.283
+\n[Iter 11000] Convergencia a steady: u=1.24e-02, v=4.00e-01, p=8.92e-02
+
+[ADVERTENCIA] [Iter 11160] nu_efectiva muy alta: 7.59e-04 (75.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11160] gamma min=0.001 media=0.284
+\n[Iter 11500] Convergencia a steady: u=1.27e-02, v=4.00e-01, p=9.38e-02
+
+[ADVERTENCIA] [Iter 11520] nu_efectiva muy alta: 7.47e-04 (74.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11520] gamma min=0.001 media=0.284
+
+[ADVERTENCIA] [Iter 11880] nu_efectiva muy alta: 7.29e-04 (72.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 11880] gamma min=0.000 media=0.284
+\n[Iter 12000] Convergencia a steady: u=1.38e-02, v=4.15e-01, p=1.07e-01
+
+[ADVERTENCIA] [Iter 12240] nu_efectiva muy alta: 7.62e-04 (76.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12240] gamma min=0.001 media=0.286
+\n[Iter 12500] Convergencia a steady: u=1.40e-02, v=4.27e-01, p=1.07e-01
+
+[ADVERTENCIA] [Iter 12600] nu_efectiva muy alta: 7.81e-04 (78.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12600] gamma min=0.001 media=0.288
+
+[ADVERTENCIA] [Iter 12960] nu_efectiva muy alta: 7.91e-04 (79.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 12960] gamma min=0.001 media=0.293
+\n[Iter 13000] Convergencia a steady: u=1.29e-02, v=4.28e-01, p=9.34e-02
+
+[ADVERTENCIA] [Iter 13320] nu_efectiva muy alta: 7.95e-04 (79.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 13320] gamma min=0.001 media=0.293
+\n[Iter 13500] Convergencia a steady: u=1.24e-02, v=4.24e-01, p=1.02e-01
+
+[ADVERTENCIA] [Iter 13680] nu_efectiva muy alta: 7.14e-04 (71.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 13680] gamma min=0.001 media=0.292
+\n[Iter 14000] Convergencia a steady: u=1.31e-02, v=4.15e-01, p=1.30e-01
+
+[ADVERTENCIA] [Iter 14040] nu_efectiva muy alta: 7.14e-04 (71.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 14040] gamma min=0.000 media=0.294
+
+[ADVERTENCIA] [Iter 14400] nu_efectiva muy alta: 6.62e-04 (66.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 14400] gamma min=0.001 media=0.294
+\n[Iter 14500] Convergencia a steady: u=1.35e-02, v=4.27e-01, p=1.04e-01
+
+[ADVERTENCIA] [Iter 14760] nu_efectiva muy alta: 6.67e-04 (66.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 14760] gamma min=0.001 media=0.295
+\n[Iter 15000] Convergencia a steady: u=1.31e-02, v=4.24e-01, p=1.06e-01
+
+[ADVERTENCIA] [Iter 15120] nu_efectiva muy alta: 6.54e-04 (65.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 15120] gamma min=0.001 media=0.294
+
+[ADVERTENCIA] [Iter 15480] nu_efectiva muy alta: 6.68e-04 (66.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 15480] gamma min=0.001 media=0.293
+\n[Iter 15500] Convergencia a steady: u=1.23e-02, v=4.25e-01, p=1.10e-01
+
+[ADVERTENCIA] [Iter 15840] nu_efectiva muy alta: 6.88e-04 (68.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 15840] gamma min=0.001 media=0.293
+\n[Iter 16000] Convergencia a steady: u=1.23e-02, v=4.14e-01, p=1.15e-01
+
+[ADVERTENCIA] [Iter 16200] nu_efectiva muy alta: 7.04e-04 (70.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 16200] gamma min=0.000 media=0.293
+\n[Iter 16500] Convergencia a steady: u=1.11e-02, v=3.97e-01, p=7.03e-02
+
+[ADVERTENCIA] [Iter 16560] nu_efectiva muy alta: 7.15e-04 (71.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 16560] gamma min=0.001 media=0.295
+
+[ADVERTENCIA] [Iter 16920] nu_efectiva muy alta: 7.19e-04 (71.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 16920] gamma min=0.000 media=0.296
+\n[Iter 17000] Convergencia a steady: u=1.02e-02, v=3.61e-01, p=6.56e-02
+
+[ADVERTENCIA] [Iter 17280] nu_efectiva muy alta: 6.96e-04 (69.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 17280] gamma min=0.001 media=0.295
+\n[Iter 17500] Convergencia a steady: u=1.20e-02, v=4.03e-01, p=1.01e-01
+
+[ADVERTENCIA] [Iter 17640] nu_efectiva muy alta: 6.85e-04 (68.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 17640] gamma min=0.001 media=0.294
+
+[ADVERTENCIA] [Iter 18000] nu_efectiva muy alta: 6.86e-04 (68.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 18000] gamma min=0.001 media=0.294
+\n[Iter 18000] Convergencia a steady: u=1.24e-02, v=3.88e-01, p=1.11e-01
+
+[ADVERTENCIA] [Iter 18360] nu_efectiva muy alta: 6.92e-04 (69.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 18360] gamma min=0.001 media=0.296
+\n[Iter 18500] Convergencia a steady: u=1.27e-02, v=3.97e-01, p=1.06e-01
+
+[ADVERTENCIA] [Iter 18720] nu_efectiva muy alta: 7.37e-04 (73.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 18720] gamma min=0.001 media=0.297
+\n[Iter 19000] Convergencia a steady: u=1.16e-02, v=3.59e-01, p=7.57e-02
+
+[ADVERTENCIA] [Iter 19080] nu_efectiva muy alta: 7.66e-04 (76.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 19080] gamma min=0.001 media=0.298
+
+[ADVERTENCIA] [Iter 19440] nu_efectiva muy alta: 7.86e-04 (78.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 19440] gamma min=0.001 media=0.300
+\n[Iter 19500] Convergencia a steady: u=1.26e-02, v=3.66e-01, p=9.15e-02
+
+[ADVERTENCIA] [Iter 19800] nu_efectiva muy alta: 8.01e-04 (80.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 19800] gamma min=0.001 media=0.303
+\n[Iter 20000] Convergencia a steady: u=1.15e-02, v=3.64e-01, p=7.15e-02
+
+[ADVERTENCIA] [Iter 20160] nu_efectiva muy alta: 7.97e-04 (79.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 20160] gamma min=0.001 media=0.303
+\n[Iter 20500] Convergencia a steady: u=1.16e-02, v=3.40e-01, p=6.90e-02
+
+[ADVERTENCIA] [Iter 20520] nu_efectiva muy alta: 6.57e-04 (65.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 20520] gamma min=0.001 media=0.303
+
+[ADVERTENCIA] [Iter 20880] nu_efectiva muy alta: 6.39e-04 (63.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 20880] gamma min=0.001 media=0.304
+\n[Iter 21000] Convergencia a steady: u=1.21e-02, v=3.73e-01, p=9.34e-02
+
+[ADVERTENCIA] [Iter 21240] nu_efectiva muy alta: 6.47e-04 (64.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 21240] gamma min=0.001 media=0.304
+\n[Iter 21500] Convergencia a steady: u=1.26e-02, v=3.89e-01, p=8.71e-02
+
+[ADVERTENCIA] [Iter 21600] nu_efectiva muy alta: 7.03e-04 (70.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 21600] gamma min=0.001 media=0.304
+
+[ADVERTENCIA] [Iter 21960] nu_efectiva muy alta: 7.61e-04 (76.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 21960] gamma min=0.001 media=0.305
+\n[Iter 22000] Convergencia a steady: u=1.24e-02, v=3.84e-01, p=1.06e-01
+
+[ADVERTENCIA] [Iter 22320] nu_efectiva muy alta: 7.94e-04 (79.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 22320] gamma min=0.001 media=0.304
+\n[Iter 22500] Convergencia a steady: u=1.31e-02, v=3.89e-01, p=1.01e-01
+
+[ADVERTENCIA] [Iter 22680] nu_efectiva muy alta: 8.15e-04 (81.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 22680] gamma min=0.001 media=0.306
+\n[Iter 23000] Convergencia a steady: u=1.25e-02, v=3.96e-01, p=9.95e-02
+
+[ADVERTENCIA] [Iter 23040] nu_efectiva muy alta: 8.31e-04 (83.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 23040] gamma min=0.001 media=0.306
+
+[ADVERTENCIA] [Iter 23400] nu_efectiva muy alta: 8.41e-04 (84.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 23400] gamma min=0.001 media=0.309
+\n[Iter 23500] Convergencia a steady: u=1.28e-02, v=4.02e-01, p=1.14e-01
+
+[ADVERTENCIA] [Iter 23760] nu_efectiva muy alta: 8.00e-04 (80.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 23760] gamma min=0.001 media=0.308
+\n[Iter 24000] Convergencia a steady: u=1.23e-02, v=4.12e-01, p=8.90e-02
+
+[ADVERTENCIA] [Iter 24120] nu_efectiva muy alta: 7.11e-04 (71.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 24120] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 24480] nu_efectiva muy alta: 7.25e-04 (72.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 24480] gamma min=0.001 media=0.307
+\n[Iter 24500] Convergencia a steady: u=1.24e-02, v=4.16e-01, p=1.01e-01
+
+[ADVERTENCIA] [Iter 24840] nu_efectiva muy alta: 7.34e-04 (73.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 24840] gamma min=0.001 media=0.309
+\n[Iter 25000] Convergencia a steady: u=1.27e-02, v=4.18e-01, p=9.41e-02
+
+[ADVERTENCIA] [Iter 25200] nu_efectiva muy alta: 7.38e-04 (73.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 25200] gamma min=0.001 media=0.308
+\n[Iter 25500] Convergencia a steady: u=1.28e-02, v=3.86e-01, p=9.75e-02
+
+[ADVERTENCIA] [Iter 25560] nu_efectiva muy alta: 7.28e-04 (72.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 25560] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 25920] nu_efectiva muy alta: 7.36e-04 (73.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 25920] gamma min=0.001 media=0.306
+\n[Iter 26000] Convergencia a steady: u=1.38e-02, v=4.19e-01, p=1.04e-01
+
+[ADVERTENCIA] [Iter 26280] nu_efectiva muy alta: 7.40e-04 (74.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 26280] gamma min=0.001 media=0.308
+\n[Iter 26500] Convergencia a steady: u=1.34e-02, v=4.14e-01, p=1.03e-01
+
+[ADVERTENCIA] [Iter 26640] nu_efectiva muy alta: 7.04e-04 (70.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 26640] gamma min=0.001 media=0.308
+
+[ADVERTENCIA] [Iter 27000] nu_efectiva muy alta: 7.15e-04 (71.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 27000] gamma min=0.001 media=0.309
+\n[Iter 27000] Convergencia a steady: u=1.29e-02, v=4.07e-01, p=9.87e-02
+
+[ADVERTENCIA] [Iter 27360] nu_efectiva muy alta: 7.23e-04 (72.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 27360] gamma min=0.001 media=0.310
+\n[Iter 27500] Convergencia a steady: u=1.38e-02, v=4.18e-01, p=1.18e-01
+
+[ADVERTENCIA] [Iter 27720] nu_efectiva muy alta: 6.62e-04 (66.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 27720] gamma min=0.001 media=0.308
+\n[Iter 28000] Convergencia a steady: u=1.41e-02, v=4.29e-01, p=1.14e-01
+
+[ADVERTENCIA] [Iter 28080] nu_efectiva muy alta: 6.73e-04 (67.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 28080] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 28440] nu_efectiva muy alta: 6.83e-04 (68.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 28440] gamma min=0.001 media=0.308
+\n[Iter 28500] Convergencia a steady: u=1.26e-02, v=4.17e-01, p=1.01e-01
+
+[ADVERTENCIA] [Iter 28800] nu_efectiva muy alta: 6.90e-04 (69.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 28800] gamma min=0.001 media=0.307
+\n[Iter 29000] Convergencia a steady: u=1.22e-02, v=4.11e-01, p=8.10e-02
+
+[ADVERTENCIA] [Iter 29160] nu_efectiva muy alta: 6.81e-04 (68.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 29160] gamma min=0.001 media=0.307
+\n[Iter 29500] Convergencia a steady: u=1.22e-02, v=4.06e-01, p=8.29e-02
+
+[ADVERTENCIA] [Iter 29520] nu_efectiva muy alta: 6.98e-04 (69.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 29520] gamma min=0.000 media=0.306
+
+[ADVERTENCIA] [Iter 29880] nu_efectiva muy alta: 7.14e-04 (71.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 29880] gamma min=0.001 media=0.306
+\n[Iter 30000] Convergencia a steady: u=1.18e-02, v=4.00e-01, p=8.53e-02
+
+[ADVERTENCIA] [Iter 30240] nu_efectiva muy alta: 7.26e-04 (72.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 30240] gamma min=0.000 media=0.306
+\n[Iter 30500] Convergencia a steady: u=1.26e-02, v=4.29e-01, p=1.13e-01
+
+[ADVERTENCIA] [Iter 30600] nu_efectiva muy alta: 6.84e-04 (68.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 30600] gamma min=0.001 media=0.303
+
+[ADVERTENCIA] [Iter 30960] nu_efectiva muy alta: 6.82e-04 (68.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 30960] gamma min=0.001 media=0.304
+\n[Iter 31000] Convergencia a steady: u=1.25e-02, v=4.08e-01, p=7.49e-02
+
+[ADVERTENCIA] [Iter 31320] nu_efectiva muy alta: 6.73e-04 (67.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 31320] gamma min=0.001 media=0.306
+\n[Iter 31500] Convergencia a steady: u=1.19e-02, v=3.99e-01, p=8.22e-02
+
+[ADVERTENCIA] [Iter 31680] nu_efectiva muy alta: 6.83e-04 (68.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 31680] gamma min=0.001 media=0.306
+\n[Iter 32000] Convergencia a steady: u=1.17e-02, v=3.63e-01, p=8.41e-02
+
+[ADVERTENCIA] [Iter 32040] nu_efectiva muy alta: 7.10e-04 (71.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 32040] gamma min=0.001 media=0.306
+
+[ADVERTENCIA] [Iter 32400] nu_efectiva muy alta: 7.30e-04 (73.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 32400] gamma min=0.001 media=0.305
+\n[Iter 32500] Convergencia a steady: u=1.20e-02, v=3.58e-01, p=9.94e-02
+
+[ADVERTENCIA] [Iter 32760] nu_efectiva muy alta: 7.45e-04 (74.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 32760] gamma min=0.001 media=0.307
+\n[Iter 33000] Convergencia a steady: u=1.21e-02, v=3.62e-01, p=9.52e-02
+
+[ADVERTENCIA] [Iter 33120] nu_efectiva muy alta: 7.55e-04 (75.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 33120] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 33480] nu_efectiva muy alta: 6.86e-04 (68.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 33480] gamma min=0.001 media=0.306
+\n[Iter 33500] Convergencia a steady: u=1.26e-02, v=3.98e-01, p=1.11e-01
+
+[ADVERTENCIA] [Iter 33840] nu_efectiva muy alta: 6.86e-04 (68.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 33840] gamma min=0.001 media=0.306
+\n[Iter 34000] Convergencia a steady: u=1.19e-02, v=4.02e-01, p=8.01e-02
+
+[ADVERTENCIA] [Iter 34200] nu_efectiva muy alta: 6.77e-04 (67.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 34200] gamma min=0.001 media=0.307
+\n[Iter 34500] Convergencia a steady: u=1.24e-02, v=4.05e-01, p=1.11e-01
+
+[ADVERTENCIA] [Iter 34560] nu_efectiva muy alta: 6.88e-04 (68.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 34560] gamma min=0.000 media=0.307
+
+[ADVERTENCIA] [Iter 34920] nu_efectiva muy alta: 6.72e-04 (67.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 34920] gamma min=0.001 media=0.305
+\n[Iter 35000] Convergencia a steady: u=1.35e-02, v=4.16e-01, p=1.23e-01
+
+[ADVERTENCIA] [Iter 35280] nu_efectiva muy alta: 6.87e-04 (68.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 35280] gamma min=0.001 media=0.306
+\n[Iter 35500] Convergencia a steady: u=1.31e-02, v=4.29e-01, p=1.06e-01
+
+[ADVERTENCIA] [Iter 35640] nu_efectiva muy alta: 7.02e-04 (70.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 35640] gamma min=0.001 media=0.308
+
+[ADVERTENCIA] [Iter 36000] nu_efectiva muy alta: 6.82e-04 (68.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 36000] gamma min=0.001 media=0.308
+\n[Iter 36000] Convergencia a steady: u=1.29e-02, v=4.32e-01, p=1.02e-01
+
+[ADVERTENCIA] [Iter 36360] nu_efectiva muy alta: 6.99e-04 (69.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 36360] gamma min=0.000 media=0.309
+\n[Iter 36500] Convergencia a steady: u=1.25e-02, v=4.15e-01, p=8.75e-02
+
+[ADVERTENCIA] [Iter 36720] nu_efectiva muy alta: 7.21e-04 (72.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 36720] gamma min=0.001 media=0.308
+\n[Iter 37000] Convergencia a steady: u=1.31e-02, v=4.02e-01, p=1.17e-01
+
+[ADVERTENCIA] [Iter 37080] nu_efectiva muy alta: 7.41e-04 (74.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 37080] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 37440] nu_efectiva muy alta: 7.56e-04 (75.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 37440] gamma min=0.001 media=0.307
+\n[Iter 37500] Convergencia a steady: u=1.30e-02, v=4.10e-01, p=1.01e-01
+
+[ADVERTENCIA] [Iter 37800] nu_efectiva muy alta: 7.59e-04 (75.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 37800] gamma min=0.001 media=0.307
+\n[Iter 38000] Convergencia a steady: u=1.11e-02, v=3.74e-01, p=7.38e-02
+
+[ADVERTENCIA] [Iter 38160] nu_efectiva muy alta: 6.49e-04 (64.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 38160] gamma min=0.001 media=0.307
+\n[Iter 38500] Convergencia a steady: u=1.15e-02, v=3.69e-01, p=9.08e-02
+
+[ADVERTENCIA] [Iter 38520] nu_efectiva muy alta: 6.57e-04 (65.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 38520] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 38880] nu_efectiva muy alta: 6.76e-04 (67.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 38880] gamma min=0.001 media=0.307
+\n[Iter 39000] Convergencia a steady: u=1.19e-02, v=3.90e-01, p=9.31e-02
+
+[ADVERTENCIA] [Iter 39240] nu_efectiva muy alta: 6.94e-04 (69.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 39240] gamma min=0.001 media=0.306
+\n[Iter 39500] Convergencia a steady: u=1.24e-02, v=4.14e-01, p=9.48e-02
+
+[ADVERTENCIA] [Iter 39600] nu_efectiva muy alta: 7.09e-04 (70.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 39600] gamma min=0.001 media=0.308
+
+[ADVERTENCIA] [Iter 39960] nu_efectiva muy alta: 6.60e-04 (66.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 39960] gamma min=0.001 media=0.307
+\n[Iter 40000] Convergencia a steady: u=1.21e-02, v=4.17e-01, p=9.73e-02
+
+[ADVERTENCIA] [Iter 40320] nu_efectiva muy alta: 6.80e-04 (68.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 40320] gamma min=0.000 media=0.307
+\n[Iter 40500] Convergencia a steady: u=1.14e-02, v=4.02e-01, p=9.55e-02
+
+[ADVERTENCIA] [Iter 40680] nu_efectiva muy alta: 6.93e-04 (69.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 40680] gamma min=0.001 media=0.307
+\n[Iter 41000] Convergencia a steady: u=1.24e-02, v=4.08e-01, p=8.67e-02
+
+[ADVERTENCIA] [Iter 41040] nu_efectiva muy alta: 7.05e-04 (70.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 41040] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 41400] nu_efectiva muy alta: 7.14e-04 (71.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 41400] gamma min=0.000 media=0.308
+\n[Iter 41500] Convergencia a steady: u=1.27e-02, v=4.22e-01, p=1.02e-01
+
+[ADVERTENCIA] [Iter 41760] nu_efectiva muy alta: 6.77e-04 (67.7x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 41760] gamma min=0.001 media=0.307
+\n[Iter 42000] Convergencia a steady: u=1.31e-02, v=4.19e-01, p=1.15e-01
+
+[ADVERTENCIA] [Iter 42120] nu_efectiva muy alta: 6.58e-04 (65.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 42120] gamma min=0.001 media=0.306
+
+[ADVERTENCIA] [Iter 42480] nu_efectiva muy alta: 7.09e-04 (70.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 42480] gamma min=0.000 media=0.306
+\n[Iter 42500] Convergencia a steady: u=1.19e-02, v=3.92e-01, p=9.24e-02
+
+[ADVERTENCIA] [Iter 42840] nu_efectiva muy alta: 7.40e-04 (74.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 42840] gamma min=0.000 media=0.307
+\n[Iter 43000] Convergencia a steady: u=1.26e-02, v=3.84e-01, p=1.20e-01
+
+[ADVERTENCIA] [Iter 43200] nu_efectiva muy alta: 7.56e-04 (75.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 43200] gamma min=0.000 media=0.309
+\n[Iter 43500] Convergencia a steady: u=1.23e-02, v=3.95e-01, p=8.64e-02
+
+[ADVERTENCIA] [Iter 43560] nu_efectiva muy alta: 7.65e-04 (76.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 43560] gamma min=0.001 media=0.311
+
+[ADVERTENCIA] [Iter 43920] nu_efectiva muy alta: 7.69e-04 (76.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 43920] gamma min=0.001 media=0.310
+\n[Iter 44000] Convergencia a steady: u=1.20e-02, v=3.96e-01, p=7.25e-02
+
+[ADVERTENCIA] [Iter 44280] nu_efectiva muy alta: 7.53e-04 (75.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 44280] gamma min=0.001 media=0.309
+\n[Iter 44500] Convergencia a steady: u=1.17e-02, v=3.80e-01, p=7.83e-02
+
+[ADVERTENCIA] [Iter 44640] nu_efectiva muy alta: 6.93e-04 (69.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 44640] gamma min=0.001 media=0.308
+
+[ADVERTENCIA] [Iter 45000] nu_efectiva muy alta: 7.08e-04 (70.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 45000] gamma min=0.001 media=0.306
+\n[Iter 45000] Convergencia a steady: u=1.19e-02, v=3.99e-01, p=8.18e-02
+
+[ADVERTENCIA] [Iter 45360] nu_efectiva muy alta: 7.24e-04 (72.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 45360] gamma min=0.000 media=0.308
+\n[Iter 45500] Convergencia a steady: u=1.19e-02, v=4.15e-01, p=8.42e-02
+
+[ADVERTENCIA] [Iter 45720] nu_efectiva muy alta: 7.38e-04 (73.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 45720] gamma min=0.000 media=0.310
+\n[Iter 46000] Convergencia a steady: u=1.22e-02, v=4.09e-01, p=8.23e-02
+
+[ADVERTENCIA] [Iter 46080] nu_efectiva muy alta: 7.36e-04 (73.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 46080] gamma min=0.001 media=0.310
+
+[ADVERTENCIA] [Iter 46440] nu_efectiva muy alta: 6.86e-04 (68.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 46440] gamma min=0.001 media=0.308
+\n[Iter 46500] Convergencia a steady: u=1.28e-02, v=4.33e-01, p=9.91e-02
+
+[ADVERTENCIA] [Iter 46800] nu_efectiva muy alta: 6.90e-04 (69.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 46800] gamma min=0.001 media=0.307
+\n[Iter 47000] Convergencia a steady: u=1.28e-02, v=4.30e-01, p=1.18e-01
+
+[ADVERTENCIA] [Iter 47160] nu_efectiva muy alta: 6.93e-04 (69.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 47160] gamma min=0.001 media=0.307
+\n[Iter 47500] Convergencia a steady: u=1.15e-02, v=4.15e-01, p=8.13e-02
+
+[ADVERTENCIA] [Iter 47520] nu_efectiva muy alta: 6.82e-04 (68.2x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 47520] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 47880] nu_efectiva muy alta: 6.90e-04 (69.0x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 47880] gamma min=0.001 media=0.307
+\n[Iter 48000] Convergencia a steady: u=1.12e-02, v=3.89e-01, p=8.19e-02
+
+[ADVERTENCIA] [Iter 48240] nu_efectiva muy alta: 6.94e-04 (69.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 48240] gamma min=0.001 media=0.307
+\n[Iter 48500] Convergencia a steady: u=1.28e-02, v=3.92e-01, p=1.01e-01
+
+[ADVERTENCIA] [Iter 48600] nu_efectiva muy alta: 7.25e-04 (72.5x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 48600] gamma min=0.001 media=0.307
+
+[ADVERTENCIA] [Iter 48960] nu_efectiva muy alta: 7.44e-04 (74.4x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 48960] gamma min=0.001 media=0.306
+\n[Iter 49000] Convergencia a steady: u=1.33e-02, v=4.08e-01, p=1.08e-01
+
+[ADVERTENCIA] [Iter 49320] nu_efectiva muy alta: 7.56e-04 (75.6x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 49320] gamma min=0.001 media=0.306
+\n[Iter 49500] Convergencia a steady: u=1.29e-02, v=4.01e-01, p=1.03e-01
+
+[ADVERTENCIA] [Iter 49680] nu_efectiva muy alta: 7.61e-04 (76.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 49680] gamma min=0.000 media=0.307
+\n[Iter 50000] Convergencia a steady: u=1.30e-02, v=4.00e-01, p=1.16e-01
+
+[ADVERTENCIA] [Iter 50040] nu_efectiva muy alta: 7.11e-04 (71.1x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 50040] gamma min=0.001 media=0.306
+
+[ADVERTENCIA] [Iter 50400] nu_efectiva muy alta: 7.18e-04 (71.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 50400] gamma min=0.001 media=0.308
+\n[Iter 50500] Convergencia a steady: u=1.29e-02, v=4.28e-01, p=9.95e-02
+
+[ADVERTENCIA] [Iter 50760] nu_efectiva muy alta: 7.29e-04 (72.9x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 50760] gamma min=0.001 media=0.308
+\n[Iter 51000] Convergencia a steady: u=1.22e-02, v=4.12e-01, p=9.56e-02
+
+[ADVERTENCIA] [Iter 51120] nu_efectiva muy alta: 7.38e-04 (73.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 51120] gamma min=0.001 media=0.309
+
+[ADVERTENCIA] [Iter 51480] nu_efectiva muy alta: 7.08e-04 (70.8x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 51480] gamma min=0.001 media=0.308
+\n[Iter 51500] Convergencia a steady: u=1.16e-02, v=4.01e-01, p=9.26e-02
+
+[ADVERTENCIA] [Iter 51840] nu_efectiva muy alta: 7.03e-04 (70.3x nu molecular)
+    Esto puede reducir dt significativamente
+
+[SA-BC] [Iter 51840] gamma min=0.000 media=0.307
+\n[Iter 52000] Convergencia a steady: u=1.06e-02, v=3.81e-01, p=7.44e-02
+
+======================================================================
+[OK] SIMULACIÓN COMPLETADA
+======================================================================
+  Se ejecutaron todas las 52020 iteraciones programadas.
+  (Nota: chequeo de convergencia steady desactivado)
+======================================================================
+
+======================================================================
+ESTADÍSTICAS DE RENDIMIENTO
+======================================================================
+
+Tiempo promedio por paso dt: 0.0402 s
+Pasos simulados: 52020
+Tiempo total simulación: 2090.81 s
+
+Desglose por componente (tiempo total | % del total):
+----------------------------------------------------------------------
+  Recálculo dt..................    19.53 s  (  0.9%)
+  Advección.....................   839.03 s  ( 40.1%)
+  Difusión......................   206.07 s  (  9.9%)
+  Proyección....................   872.77 s  ( 41.7%)
+  Guardado/fuerzas..............   147.64 s  (  7.1%)
+    ...fuerzas Cl/Cd............    45.31 s  (  2.2%)
+    ...series y diagnostico.....    53.28 s  (  2.5%)
+    ...memoria compartida.......     2.33 s  (  0.1%)
+    ...save_frame (PNG).........     0.00 s  (  0.0%)
+    ...dump_fields (npz)........    46.72 s  (  2.2%)
+  Otros (overhead)..............     5.77 s  (  0.3%)
+----------------------------------------------------------------------
+
+[ANALISIS]:
+   Componente más costoso: Proyección
+   Consume: 872.77 s (41.7% del tiempo total)
+   Tiempo promedio por paso: 0.0168 s
+   Ciclos MG por paso: media=4.18  p95=5.00  max=6
+======================================================================
+
+
+[OK] Polar completa guardada: 1 puntos en polar_results.json
+
+   alpha         Cd         Cl      Cl/Cd
+------------------------------------------
+    4.00   0.027570   0.499990     18.135
+  [save_state] sim_last.npz  (88 arrays, 58 escalares)
+
+--- Resultados (Re=100000, t=35.3896s) ---
+  Cl medio = 0.496695   Cd medio = 0.027630   L/D = 17.98
+────────────────────────────────────────────────────
+  Descomposición de fuerzas (valor instantáneo final):
+                            Drag (X)      Lift (Y)
+  ──────────────────────────────────────────────────
+  TOTAL                     0.014286      0.255171  N/m
+    Presión                 0.011418      0.255392  N/m
+    Viscosa (fricción)      0.002868     -0.000221  N/m
+  ──────────────────────────────────────────────────
+  Cd total                  0.028572
+    Cd presión              0.022837  (79.9%)
+    Cd fricción             0.005735  (20.1%)
+  Cl total                  0.510342
+    Cl presión              0.510784  (100.1%)
+    Cl fricción            -0.000442  (-0.1%)
+────────────────────────────────────────────────────
+
+[Circulación]  perfil x∈[6.002,6.990] c=0.988  U∞=1.000
+    lazo          ventana x          ventana y     Γ (CCW)    Cl_circ
+   0.15c  [   5.85,   7.14]  [   7.78,   8.21]    -0.22078    +0.4469
+   0.40c  [   5.61,   7.39]  [   7.54,   8.46]    -0.21092    +0.4270
+   0.80c  [   5.26,   7.78]  [   7.17,   8.86]    -0.20945    +0.4240
+   1.50c  [   4.58,   8.47]  [   6.53,   9.57]    -0.21097    +0.4271
+  ──────────────────────────────────────────────────
+  Cl (integral superficie) = +0.5103
+  Cl (circulación, lazo interior) = +0.4469
+  → si ambos ~iguales y >>0.55: campo sobre-circulado (Kutta rota)
+  → si difieren mucho: la integral de fuerzas es la sospechosa
+────────────────────────────────────────────────────
+  ──────────────────────────────────────────────────
+  [Cp diag]  Cl(∮ΔCp en cuerda) = +0.4425
+    ΔCp_TE (extr−intr, x/c≥0.95) = -0.0208  (→0 si Kutta cierra)
+    pico succión Cp_min = -1.207 en x/c=0.015
+────────────────────────────────────────────────────
+[14:03:08] naca0012: hecho en 34.9 min  Cl=0.5000 Cd=0.0276 L/D=18.13
+[14:07:48] ganador_ag/refinado: ok (723 frames, 30.1 s)
+[14:12:41] ganador_ag/completo: ok (723 frames, 30.1 s)
+[14:17:22] naca0012/refinado: ok (723 frames, 30.1 s)
+[14:22:15] naca0012/completo: ok (723 frames, 30.1 s)
+[14:22:15] === 4 videos ===
+[14:22:15]   results/videos_largos/ganador_ag/ganador_ag_refinado.mp4
+[14:22:15]   results/videos_largos/ganador_ag/ganador_ag_completo.mp4
+[14:22:15]   results/videos_largos/naca0012/naca0012_refinado.mp4
+[14:22:15]   results/videos_largos/naca0012/naca0012_completo.mp4

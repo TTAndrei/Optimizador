@@ -70,3 +70,29 @@ results/coste_salida/_sandbox/
 PARAR_GUI.trigger
 results/gui_demo/corrida_*/
 results/gui_demo/capturas/
+
+# Figuras y videos: 499 MB de PNG/MP4 regenerables desde los .npz de series y los
+# scripts de figuras. Inflaban cada commit y el clon del repo. Se conservan en
+# local; al repo van los datos numericos y los scripts que los dibujan.
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.mp4
+*.avi
+*.mov
+*.webm
+*.mkv
+
+# Campos de velocidad/presion: 2.1 GB de volcados u/v/p/mascara. Regenerables
+# desde la geometria y el json de cada caso. Las *_series.npz (KB) y los json de
+# metricas SI se versionan: son los que alimentan las figuras y las tablas.
+**/campos/
+**/campo_final.npz
+results/1eraGranOptimizacion/agent_tests/*.npz
+results/1eraGranOptimizacion/cfl_sweep/*.npz
+
+# Frames submuestreados de los videos largos: 2.6 GB de png+npz por instante.
+# Los regenera scripts/agent_tests/render_videos_largos.py.
+results/videos_largos/

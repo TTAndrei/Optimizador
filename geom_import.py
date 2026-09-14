@@ -48,13 +48,34 @@ class GeometriaAbierta(Exception):
             f"Sube la tolerancia de cosido o cierra el contorno en el CAD.")
 
 
+# Nombre legible de cada codigo $INSUNITS, para poder decirlo en la interfaz.
+_NOMBRE_UNIDAD = {
+    0: "sin declarar", 1: "pulgadas", 2: "pies", 4: "milímetros",
+    5: "centímetros", 6: "metros", 9: "micras", 10: "yardas",
+}
+
+
+def unidades(path):
+    """(codigo $INSUNITS, factor a metros, nombre) sin leer la geometria.
+
+    Sirve para preguntar por las unidades ANTES de importar: el codigo 0 —«sin
+    declarar»— es la mitad de los DXF que salen de un CAD, y entonces se asume
+    metros. Una pieza de 275 mm leida como 275 m pide 1e12 celdas.
+    """
+    import ezdxf
+    doc = ezdxf.readfile(path)
+    cod = int(doc.header.get("$INSUNITS", 0))
+    return cod, _UNIDADES.get(cod, 1.0), _NOMBRE_UNIDAD.get(cod, f"código {cod}")
+
+
 def cargar_dxf(path, capa=None, tol_cordal=0.01, tol_cosido=None,
                escala=None, estricto=True):
     """DXF -> lista de contornos cerrados.
 
     capa        : si se da, solo se leen entidades de esa capa (o lista de capas).
-    tol_cordal  : error maximo de cuerda al aplanar arcos y splines, en unidades
-                  del DXF. Ponerlo a dx_min/4.
+    tol_cordal  : error maximo de cuerda al aplanar arcos y splines, EN METROS
+                  (se convierte a unidades del fichero por dentro). Ponerlo a
+                  dx_min/4: refinar la geometria mas que la malla no aporta nada.
     tol_cosido  : distancia bajo la cual dos extremos se consideran el mismo
                   punto. Por defecto 2*tol_cordal.
     escala      : factor a metros. None = deducirlo de $INSUNITS.
@@ -78,6 +99,12 @@ def cargar_dxf(path, capa=None, tol_cordal=0.01, tol_cosido=None,
 
     capas = {capa} if isinstance(capa, str) else (set(capa) if capa else None)
     tol_cosido = tol_cosido if tol_cosido is not None else 2.0 * tol_cordal
+    # El aplanado y el cosido ocurren ANTES de escalar, asi que las tolerancias
+    # hay que pasarlas a unidades del fichero. Sin esto, un DXF en milimetros se
+    # aplana mil veces mas fino de lo que hace falta y cada arco se convierte en
+    # decenas de miles de puntos.
+    tol_cordal_arch = float(tol_cordal) / max(float(escala), 1e-30)
+    tol_cosido_arch = float(tol_cosido) / max(float(escala), 1e-30)
 
     trozos = []   # (array Nx2, nombre de capa)
     for e in doc.modelspace():
@@ -89,7 +116,7 @@ def cargar_dxf(path, capa=None, tol_cordal=0.01, tol_cosido=None,
             p = ezpath.make_path(e)
         except Exception:
             continue
-        pts = np.array([(v.x, v.y) for v in p.flattening(distance=tol_cordal)])
+        pts = np.array([(v.x, v.y) for v in p.flattening(distance=tol_cordal_arch)])
         if len(pts) >= 2:
             trozos.append((pts, e.dxf.layer))
 
@@ -97,7 +124,7 @@ def cargar_dxf(path, capa=None, tol_cordal=0.01, tol_cosido=None,
         raise ValueError(f"El DXF no contiene entidades utilizables "
                          f"({'/'.join(TIPOS)}) en las capas pedidas.")
 
-    lazos = coser(trozos, tol_cosido)
+    lazos = coser(trozos, tol_cosido_arch)
 
     abiertos = [l for l in lazos if not l["cerrado"]]
     if abiertos and estricto:

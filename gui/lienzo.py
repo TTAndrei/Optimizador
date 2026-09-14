@@ -11,6 +11,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 # Un color por tipo de frontera. Los mismos en el lienzo y en la leyenda.
+LADOS = ("left", "right", "top", "bottom")
 COLOR_BC = {
     "inflow":  "#2f8f4e",
     "outflow": "#c05a2a",
@@ -32,6 +33,7 @@ class Lienzo(pg.PlotWidget):
     usuario hace click en un tramo del perimetro."""
 
     parche_pedido = QtCore.pyqtSignal(str, float, float)
+    arista_pedida = QtCore.pyqtSignal(int, int)        # i_contorno, k_arista
     refinado_cambiado = QtCore.pyqtSignal(float, float, float, float)  # x0,x1,y0,y1
 
     def __init__(self, parent=None):
@@ -85,16 +87,35 @@ class Lienzo(pg.PlotWidget):
         for c in escena.contornos:
             x, y = c.arrays()
             color = COLOR_EXTERIOR if c.rol == "exterior" else COLOR_CUERPO
-            relleno = pg.mkBrush(QtGui.QColor(color).lighter(160)) \
-                if c.rol == "cuerpo" else None
-            self._add(pg.PlotDataItem(x, y, pen=pg.mkPen(color, width=2),
-                                      fillLevel=None, brush=relleno))
+            if c.rol == "cuerpo":
+                self._add(pg.PlotDataItem(
+                    x, y, pen=None, fillLevel=None,
+                    brush=pg.mkBrush(QtGui.QColor(color).lighter(160))))
+            # El contorno se pinta arista a arista con el color de SU condicion,
+            # no de un tiron: es lo unico que hace visible que la pared
+            # inclinada de un conducto desliza y el techo no.
+            for k, (xs, ys) in enumerate(c.aristas()):
+                borde = escena.lado_de_arista(xs, ys)
+                tipo = (escena.tipo_en(borde[0], 0.5 * (borde[1] + borde[2]))
+                        if borde else c.tipo_arista(k))
+                self._add(pg.PlotDataItem(
+                    xs, ys, pen=pg.mkPen(COLOR_BC.get(tipo, color), width=3)))
 
-        for p, (lado, a, b) in self._tramos():
-            x, y = self._coords_tramo(lado, a, b)
-            self._add(pg.PlotDataItem(
-                x, y, pen=pg.mkPen(COLOR_BC[p.tipo], width=7,
-                                   cap=QtCore.Qt.PenCapStyle.FlatCap)))
+        # Primero el perimetro entero en color de pared, y encima solo los
+        # trozos de cada parche que caen en boca abierta. Asi se ve de un
+        # vistazo que parte de un inflow es inerte porque detras hay solido.
+        for lado in LADOS:
+            largo = escena.Ly if lado in ("left", "right") else escena.Lx
+            x, y = self._coords_tramo(lado, 0.0, largo)
+            self._add(pg.PlotDataItem(x, y, pen=pg.mkPen(
+                COLOR_BC["noslip"], width=7,
+                cap=QtCore.Qt.PenCapStyle.FlatCap)))
+        for p in escena.parches:
+            for a, b in escena.recortar_a_bocas(p):
+                x, y = self._coords_tramo(p.lado, a, b)
+                self._add(pg.PlotDataItem(
+                    x, y, pen=pg.mkPen(COLOR_BC[p.tipo], width=7,
+                                       cap=QtCore.Qt.PenCapStyle.FlatCap)))
 
         self.autoRange()
 
@@ -180,17 +201,6 @@ class Lienzo(pg.PlotWidget):
         self.barra.show()
 
     # ------------------------------------------------------------------
-    def _tramos(self):
-        """(parche, (lado, desde, hasta)) con los None ya resueltos."""
-        if self.escena is None:
-            return
-        for p in self.escena.parches:
-            largo = (self.escena.Ly if p.lado in ("left", "right")
-                     else self.escena.Lx)
-            yield p, (p.lado,
-                      0.0 if p.desde is None else p.desde,
-                      largo if p.hasta is None else p.hasta)
-
     def _coords_tramo(self, lado, a, b):
         e = self.escena
         if lado == "left":
@@ -208,6 +218,13 @@ class Lienzo(pg.PlotWidget):
         x, y, e = pt.x(), pt.y(), self.escena
         # Tolerancia del 3% de la dimension menor: en pantalla son unos milimetros.
         tol = 0.03 * min(e.Lx, e.Ly)
+        # La arista del DXF manda sobre el lado de la caja: cuando el contorno
+        # cae encima del borde —una boca de conducto— las dos cosas estan al
+        # mismo sitio, y lo que el usuario esta pinchando es la geometria.
+        cerca_arista = e.arista_cercana(x, y, tol)
+        if cerca_arista is not None:
+            self.arista_pedida.emit(cerca_arista[0], cerca_arista[1])
+            return
         cerca = {
             "left": abs(x - 0.0), "right": abs(x - e.Lx),
             "bottom": abs(y - 0.0), "top": abs(y - e.Ly),
@@ -219,7 +236,15 @@ class Lienzo(pg.PlotWidget):
         largo = e.Ly if lado in ("left", "right") else e.Lx
         if not (-tol <= s <= largo + tol):
             return
-        self.parche_pedido.emit(lado, max(0.0, s), largo)
+        s = min(max(0.0, s), largo)
+        # El tramo que se propone es la BOCA que se ha pinchado, no "de aqui al
+        # final del lado": pinchar una pared es querer esa pared entera.
+        a, b = 0.0, largo
+        for u, v in e.tramos_abiertos(lado):
+            if u - tol <= s <= v + tol:
+                a, b = u, v
+                break
+        self.parche_pedido.emit(lado, a, b)
 
     def _rect(self, x, y, w, h, color, ancho=1, guiones=False):
         pen = pg.mkPen(color, width=ancho)

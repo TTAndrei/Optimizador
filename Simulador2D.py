@@ -1348,6 +1348,40 @@ class Mesh:
             self._mg_solids.append(
                 opt_solver.coarsen_solid(_coarsen_mask, self._mg_solids[-1], sx, sy))
 
+        # Guarda de canal estrecho. El engrosado es un OR 3x3, asi que cada nivel
+        # adelgaza el canal de fluido; con un conducto estrecho el canal puede
+        # cerrarse del todo en un nivel profundo, y entonces el operador grueso
+        # se queda sin fluido interior y el multigrid degrada a suavizado SIN
+        # DECIRLO. Solo en la ruta nueva: con un perfil en una caja no se dispara
+        # nunca, y tocar `_mg_niveles` en la ruta antigua moveria resultados ya
+        # publicados.
+        if self._geom_arbitrary and self._mg_niveles > 0:
+            for lvl in range(1, self._mg_niveles + 1):
+                # Sin el anillo de borde: el engrosado deja media celda gruesa
+                # suelta en el primer y ultimo indice, y esa media celda mide 1
+                # y hace saltar la guarda en un canal perfectamente resuelto.
+                fl = (~self._mg_solids[lvl])[1:-1, 1:-1]
+                if fl.size == 0 or not bool(cp.any(fl)):
+                    paso = 0
+                else:
+                    # Ancho del paso de fluido: minimo, por filas y por columnas,
+                    # de cuantas celdas de fluido hay. NO se mira la fraccion de
+                    # fluido: un conducto estrecho pero bien resuelto ocupa poca
+                    # fraccion del dominio y no tiene nada de malo (medido: un
+                    # canal de 30 celdas ocupa el 30 % y va perfecto).
+                    paso = min(int(n[n > 0].min()) if bool((n > 0).any()) else 0
+                               for n in (cp.count_nonzero(fl, axis=0),
+                                         cp.count_nonzero(fl, axis=1)))
+                if paso < 2:
+                    print(f"  [MG] nivel {lvl}: el paso de fluido queda en "
+                          f"{paso} celda(s). El engrosado 3x3 ha cerrado el "
+                          f"canal, así que el operador grueso se quedaría sin "
+                          f"fluido interior: niveles de multigrid reducidos de "
+                          f"{self._mg_niveles} a {lvl - 1}.")
+                    self._mg_niveles = lvl - 1
+                    del self._mg_solids[lvl:]
+                    break
+
         # Jerarquía Dirichlet
         # El cache de mascaras de borde de opt_solver se indexa SOLO por nivel y
         # nunca caducaba: cualquier cambio posterior en la geometria o en la
@@ -1716,6 +1750,48 @@ class Mesh:
                 m |= (self.body_id == cp.int16(b["id"]))
         return m
 
+    def _slip_en_celdas(self, gi, gj):
+        """Pared deslizante de cada celda dada, arista a arista.
+
+        Un cuerpo puede traer `paredes_seg`: el tipo de pared de cada tramo de
+        su poligono, que es lo que sale de marcar aristas sueltas en la GUI (la
+        pared inclinada de una tobera deslizante y el resto no). Ahi el tipo ya
+        no es una propiedad del cuerpo sino del sitio, asi que a cada celda le
+        toca el del segmento mas proximo a su centro. Sin `paredes_seg` no se
+        busca nada y queda el camino de siempre, una pared por cuerpo.
+        """
+        flag = self._mascara_pared_slip()[gi, gj]
+        finos = [b for b in self.bodies if b.get("paredes_seg") is not None]
+        if not finos:
+            return flag
+        gi_np, gj_np = cp.asnumpy(gi), cp.asnumpy(gj)
+        bid = cp.asnumpy(self.body_id[gi, gj])
+        xc, yc = self._cell_centers()
+        flag_np = cp.asnumpy(flag)
+        for b in finos:
+            sel = np.flatnonzero(bid == b["id"])
+            if not len(sel):
+                continue
+            tipos = np.asarray(b["paredes_seg"])
+            ax, ay = b["poly_x"][:-1], b["poly_y"][:-1]
+            bx, by = b["poly_x"][1:], b["poly_y"][1:]
+            n = min(len(ax), len(tipos))
+            ax, ay, bx, by, tipos = ax[:n], ay[:n], bx[:n], by[:n], tipos[:n]
+            ex, ey = bx - ax, by - ay
+            L2 = np.maximum(ex * ex + ey * ey, 1e-30)
+            px, py = xc[gj_np[sel]], yc[gi_np[sel]]
+            # A trozos: el producto celdas x segmentos son decenas de miles por
+            # miles y en un solo array son gigabytes.
+            paso = max(1, int(4e6 // n))
+            for k0 in range(0, len(sel), paso):
+                q = slice(k0, k0 + paso)
+                dx = px[q, None] - ax[None, :]
+                dy = py[q, None] - ay[None, :]
+                t = np.clip((dx * ex + dy * ey) / L2, 0.0, 1.0)
+                d2 = (dx - t * ex) ** 2 + (dy - t * ey) ** 2
+                flag_np[sel[q]] = tipos[np.argmin(d2, axis=1)] == "slip"
+        return cp.asarray(flag_np)
+
     def _precomputar_ghost_cell(self):
         """
         Precomputa los datos necesarios para el método Ghost-Cell IBM.
@@ -1831,8 +1907,8 @@ class Mesh:
         # en las paredes deslizantes.
         self._ghost_nx = nx_g
         self._ghost_ny = ny_g
-        self._ghost_slip = self._mascara_pared_slip()[ghost_indices[0],
-                                                      ghost_indices[1]]
+        self._ghost_slip = self._slip_en_celdas(ghost_indices[0],
+                                                ghost_indices[1])
         n_slip = int(cp.count_nonzero(self._ghost_slip))
         if n_slip:
             print(f"  [Ghost-cell] {n_slip} de {n_ghost} celdas fantasma con "
@@ -2124,6 +2200,45 @@ class Mesh:
                                        | self.fixed_pressure_mask_bc)
         self._mg_initialized = False
         self._opt_bc_cache = None
+
+    def balance_de_masa(self, rho=1.0):
+        """Caudal masico por parche de frontera y cuanto falta por cuadrar.
+
+        Es la comprobacion primaria de un conducto y no habia ninguna: sin esto,
+        una pared que fuga da un campo con buena pinta y numeros mudos. Se mide
+        con los volumenes de control reales (`vol_x`, `vol_y`), no con dx, que en
+        malla estirada no es el ancho de la celda del borde.
+
+        Devuelve {"parches": {(lado, tipo): m_dot}, "entra", "sale", "neto",
+        "rel"}, con m_dot POSITIVO si el flujo entra al dominio.
+        """
+        if self._bc_m is None:
+            self._rebuild_bc_masks()
+        r = cp.float32(rho)
+        # signo: en left y bottom la normal entrante es +; en right y top, -.
+        campos = {
+            "left":   (self.u[:, 0], self.vol_y, +1.0),
+            "right":  (self.u[:, -1], self.vol_y, -1.0),
+            "bottom": (self.v[0, :], self.vol_x, +1.0),
+            "top":    (self.v[-1, :], self.vol_x, -1.0),
+        }
+        solid_edge = {"left": self.solid[:, 0], "right": self.solid[:, -1],
+                      "bottom": self.solid[0, :], "top": self.solid[-1, :]}
+        parches, entra, sale = {}, 0.0, 0.0
+        for lado, (vel, dl, signo) in campos.items():
+            for tipo in ("inflow", "outflow", "slip", "noslip"):
+                m = self._bc_m[lado][tipo] & ~solid_edge[lado]
+                if not bool(cp.any(m)):
+                    continue
+                q = float(cp.sum(cp.where(m, r * vel * dl, cp.float32(0.0)))) * signo
+                parches[(lado, tipo)] = q
+                if q >= 0:
+                    entra += q
+                else:
+                    sale -= q
+        neto = entra - sale
+        return {"parches": parches, "entra": entra, "sale": sale, "neto": neto,
+                "rel": abs(neto) / max(entra, 1e-30)}
 
     def apply_boundaries(self, after_projection=False):
         """
@@ -4943,7 +5058,7 @@ class Mesh:
         self.apply_boundaries()
 
     def add_body(self, px, py, rol="cuerpo", pared="noslip", nombre="",
-                 es_perfil=False):
+                 es_perfil=False, paredes_seg=None):
         """Anade un cuerpo (o el contorno exterior) y devuelve su body_id.
 
         rol="exterior" rasteriza el COMPLEMENTO del poligono: el fluido queda
@@ -4961,6 +5076,10 @@ class Mesh:
         self.bodies.append({
             "id": bid, "nombre": nombre or f"cuerpo{bid}", "rol": rol,
             "pared": pared, "es_perfil": bool(es_perfil),
+            # Tipo de pared por segmento del poligono, o None si el cuerpo
+            # entero comparte `pared`. Ver `_slip_en_celdas`.
+            "paredes_seg": (None if paredes_seg is None
+                            else np.asarray(paredes_seg, dtype="<U8")),
             "poly_x": np.asarray(px, dtype=np.float64),
             "poly_y": np.asarray(py, dtype=np.float64),
             "celdas": int(mask.sum()),
@@ -5249,9 +5368,25 @@ class Mesh:
         else:
             plt.close()
 
-    def _airfoil_bbox(self):
-        """(x_le, x_te, y_lo, y_hi, chord, yc) del sólido en coords físicas."""
-        solid = cp.asnumpy(self.solid)
+    def _airfoil_bbox(self, body=None):
+        """(x_le, x_te, y_lo, y_hi, chord, yc) del sólido en coords físicas.
+
+        Con `body` se restringe a ese cuerpo. Sin el, toma TODA la mascara
+        solida: con un conducto eso es el dominio entero, y de ahi sale una
+        "cuerda" que no significa nada y que envenena todo lo que se normalice
+        con ella. Por eso, en cuanto la escena es ambigua, se exige decir el
+        cuerpo en vez de devolver un numero plausible y falso.
+        """
+        if body is None and len(self.bodies) > 1:
+            nombres = [b["nombre"] for b in self.bodies]
+            raise ValueError(
+                f"hay {len(self.bodies)} cuerpos ({nombres}): la cuerda no está "
+                f"definida para el conjunto. Pasa body=<id o nombre>.")
+        if body is None and len(self.bodies) == 1 and self.bodies[0]["rol"] == "exterior":
+            raise ValueError(
+                "el único cuerpo es el contorno exterior del dominio: no tiene "
+                "cuerda ni borde de salida.")
+        solid = cp.asnumpy(self._mascara_cuerpo(body))
         cols = np.where(solid.any(axis=0))[0]
         rows = np.where(solid.any(axis=1))[0]
         x1d = cp.asnumpy(self.X_1d)
@@ -5276,7 +5411,8 @@ class Mesh:
         return (f00 * (1 - TX) * (1 - TY) + f10 * TX * (1 - TY)
                 + f01 * (1 - TX) * TY + f11 * TX * TY)
 
-    def compute_circulation(self, loop_margins=(0.15, 0.4, 0.8, 1.5), verbose=True):
+    def compute_circulation(self, loop_margins=(0.15, 0.4, 0.8, 1.5), verbose=True,
+                            body=None):
         """
         Circulación Γ = ∮ u·dl (sentido antihorario) en lazos rectangulares que
         rodean el perfil, para varios tamaños.
@@ -5295,7 +5431,7 @@ class Mesh:
         v = cp.asnumpy(self.v)
         x1d = cp.asnumpy(self.X_1d)
         y1d = cp.asnumpy(self.Y_1d)
-        x_le, x_te, y_lo, y_hi, chord, yc = self._airfoil_bbox()
+        x_le, x_te, y_lo, y_hi, chord, yc = self._airfoil_bbox(body)
         U = float(getattr(self, '_U_ref', getattr(self, '_vel_ref', 1.0)))
         U = max(U, 1e-12)
 
@@ -5331,7 +5467,7 @@ class Mesh:
         return results
 
     def plot_streamlines(self, windows=None, n_grid=360, density=2.2,
-                         show=True, save_path=None, return_fig=False):
+                         show=True, save_path=None, return_fig=False, body=None):
         """
         Líneas de corriente sobre fondo |u|, con varios encuadres para diagnosticar
         el borde de fuga (Kutta): perfil completo, zoom TE y zoom LE.
@@ -5342,7 +5478,7 @@ class Mesh:
             a la otra; estación de estancamiento posterior desplazada del borde; estela
             muy deflectada hacia arriba.
         """
-        x_le, x_te, y_lo, y_hi, chord, yc = self._airfoil_bbox()
+        x_le, x_te, y_lo, y_hi, chord, yc = self._airfoil_bbox(body)
         if windows is None:
             windows = [
                 ("Perfil completo", (x_le - 0.5 * chord, x_te + 1.2 * chord),
@@ -7081,13 +7217,14 @@ class Mesh:
             rows.append(row)
         return rows
 
-    def update_cp_profile(self, mu=1.0, rho=1.0, return_face_data=False):
+    def update_cp_profile(self, mu=1.0, rho=1.0, return_face_data=False, body=None):
         """
         Muestrea Cp instantáneo en las caras frontera y actualiza la suma y contador
         para el promedio temporal por punto de cuerda (bins en `self.cp_bins`).
         Con return_face_data=True devuelve el dict per-face (para monitor Kutta).
         """
-        data = self.compute_surface_forces_definitive(mu=mu, rho=rho, return_per_face=True, return_cp=True)
+        data = self.compute_surface_forces_definitive(mu=mu, rho=rho, return_per_face=True,
+                                                     return_cp=True, body=body)
         # obtener referencia de cuerda usando todas las caras (si existen)
         Xb = data.get('Xb', None)
         if Xb is None or Xb.size == 0:
@@ -7222,7 +7359,8 @@ class Mesh:
             else:
                 return {'x': None, 'cp_mean_extrados': None, 'cp_mean_intrados': None, 'fig': fig}
 
-    def compute_cp_diagnostics(self, mu=1.0, rho=1.0, te_window=0.05, verbose=True):
+    def compute_cp_diagnostics(self, mu=1.0, rho=1.0, te_window=0.05, verbose=True,
+                               body=None):
         """
         Métricas de sustentación y Kutta a partir del Cp:
           - Cl(∮ΔCp): integral en cuerda de (Cp_intrados - Cp_extrados) d(x/c).
@@ -7237,7 +7375,11 @@ class Mesh:
         counts_in = cp.asnumpy(self.cp_profile_count_in)
         x, mean_ex, mean_in = self.get_cp_profile_mean()
 
-        if x.size > 0 and ((counts_ex > 0) & (counts_in > 0)).sum() >= 5:
+        # Con `body` se ignora el perfil promediado: `cp_profile_*` se acumula
+        # sobre TODA la mascara solida, asi que en una escena multicuerpo mezcla
+        # el perfil con la pared del conducto. Se usa el instantaneo, que si se
+        # puede restringir.
+        if body is None and x.size > 0 and ((counts_ex > 0) & (counts_in > 0)).sum() >= 5:
             valid = (counts_ex > 0) & (counts_in > 0)
             xv, ce_v, ci_v = x[valid], mean_ex[valid], mean_in[valid]
             xg = np.linspace(float(xv.min()), float(xv.max()), 200)
@@ -7245,8 +7387,8 @@ class Mesh:
             ci = np.interp(xg, xv, ci_v)
         else:
             # Fallback instantáneo
-            data = self.compute_surface_forces_definitive(mu=mu, rho=rho,
-                                                          return_per_face=True, return_cp=True)
+            data = self.compute_surface_forces_definitive(
+                mu=mu, rho=rho, return_per_face=True, return_cp=True, body=body)
             X_ex, Cp_ex = data.get('X_extrados'), data.get('Cp_extrados')
             X_in, Cp_in = data.get('X_intrados'), data.get('Cp_intrados')
             if X_ex is None or X_in is None or X_ex.size == 0 or X_in.size == 0:
@@ -7469,9 +7611,23 @@ def generar_graficos_y_outputs(mesh_gruesa: 'Mesh', iteraciones: int, guardado: 
     # el Cp_min. Se desactivan a propósito: un número plausible y equivocado es
     # peor que ninguno.
     if getattr(mesh_gruesa, "_geom_arbitrary", False):
-        print("  [diagnósticos de perfil] desactivados: la geometría no es un "
-              "perfil único en una caja (circulación, Cp y cuerda no están "
-              "definidos). Las fuerzas por cuerpo están en mesh.bodies.")
+        # Ya no se apagan del todo: se restringen a los cuerpos marcados como
+        # perfil, que son los unicos donde la cuerda y el borde de salida
+        # significan algo. Sobre una pared de conducto no se calculan.
+        perfiles = [b for b in mesh_gruesa.bodies if b["es_perfil"]]
+        if not perfiles:
+            print("  [diagnósticos de perfil] desactivados: ningún cuerpo está "
+                  "marcado como perfil, y sobre una pared de conducto la "
+                  "circulación, el Cp y la cuerda no están definidos. Las "
+                  "fuerzas por cuerpo salen arriba.")
+        for b in perfiles:
+            print(f"  {'─'*50}")
+            print(f"  Diagnósticos del perfil «{b['nombre']}»")
+            circ = mesh_gruesa.compute_circulation(body=b["id"])
+            if circ:
+                print(f"  Cl (circulación, lazo interior) = "
+                      f"{circ[0]['cl_circ']:+.4f}")
+            mesh_gruesa.compute_cp_diagnostics(mu, rho, body=b["id"])
     elif bool(mesh_gruesa.solid.any()):
         circ = mesh_gruesa.compute_circulation()
         if circ:
@@ -7914,6 +8070,11 @@ def main(
     dump_fields_dir=None,
     dump_fields_cada=None,
     dump_fields_max_nx=1000,
+    # Segunda ventana, el dominio entero, en el mismo evento. Sin esto un video
+    # de la estela completa obliga a repetir la corrida: la ventana del volcado
+    # es la refinada y recortarla no devuelve lo que quedo fuera.
+    dump_fields_dir_grueso=None,
+    dump_fields_max_nx_grueso=1000,
     # np.savez_compressed comprime con zlib en el hilo principal: mono-hilo y
     # bloqueante, con la GPU parada mientras tanto. False escribe sin comprimir.
     dump_fields_comprimir=True,
@@ -8208,7 +8369,8 @@ def main(
             mesh_gruesa.add_body(
                 c["x"], c["y"], rol=c.get("rol", "cuerpo"),
                 pared=c.get("pared", "noslip"), nombre=c.get("nombre", ""),
-                es_perfil=bool(c.get("es_perfil", False)))
+                es_perfil=bool(c.get("es_perfil", False)),
+                paredes_seg=c.get("paredes_seg"))
         n_sol = int(mesh_gruesa.solid.sum())
         print(f"  [escena] {len(mesh_gruesa.bodies)} cuerpo(s), "
               f"{n_sol} celdas sólidas ({100.0 * n_sol / (mesh_gruesa.ny * mesh_gruesa.nx):.1f} %)")
@@ -9029,6 +9191,17 @@ def main(
                 _t_fuerzas = _tmark()
                 timing_stats['guardado_fuerzas'] += _t_fuerzas - t0
 
+                # Balance de masa: la comprobacion primaria de un conducto. Cl y
+                # Cd no dicen si una pared fuga; esto si. Solo con geometria
+                # arbitraria, que es donde hay paredes que pueden fugar.
+                if getattr(mesh_gruesa, "_geom_arbitrary", False):
+                    _bal = mesh_gruesa.balance_de_masa(rho=rho)
+                    if _bal["entra"] > 0:
+                        print(f"  [masa] entra {_bal['entra']:.5f}  sale "
+                              f"{_bal['sale']:.5f}  desbalance "
+                              f"{100 * _bal['rel']:.2f} %"
+                              + ("   <-- fuga" if _bal["rel"] > 0.05 else ""))
+
                 # Chequear NaN en coeficientes aerodinámicos
                 if np.isnan(cd_val) or np.isnan(cl_val):
                     print(f"\n{'='*70}")
@@ -9232,6 +9405,14 @@ def main(
                             t_fisico=float(tiempo_fisico_acumulado),
                             comprimir=bool(dump_fields_comprimir),
                         )
+                        if dump_fields_dir_grueso:
+                            mesh_gruesa.dump_field_window(
+                                dump_fields_dir_grueso, it,
+                                xlim=None, ylim=None,
+                                max_nx=int(dump_fields_max_nx_grueso),
+                                t_fisico=float(tiempo_fisico_acumulado),
+                                comprimir=bool(dump_fields_comprimir),
+                            )
 
                 timing_stats['guardado_dump'] += _tmark() - _t_post_frames
 

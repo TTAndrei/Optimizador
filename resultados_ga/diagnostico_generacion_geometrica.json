@@ -1,0 +1,28 @@
+{
+  "muestras": 200,
+  "semilla": 42,
+  "modo": "legacy",
+  "pool_size_inicial": 24,
+  "intentos_pool_inicial": 24,
+  "validos": 200,
+  "invalidos": 0,
+  "tasa_validez": 1.0,
+  "modos_usados": {
+    "legacy": 200
+  },
+  "motivos_fallo": {},
+  "restricciones": {
+    "te_base": 0.0,
+    "te_gap_min": 0.0025,
+    "te_gap_max": 0.003125,
+    "le_radio_base": 0.018111151738763546,
+    "le_radius_min": 0.007244460695505418,
+    "n_muestras": 201
+  },
+  "metricas_validos": {
+    "te_gap_min": 0.0024999999999999988,
+    "te_gap_max": 0.003125000000000001,
+    "espesor_min_global": 0.00024964616145086837,
+    "radio_le_min": 0.005873533673352811
+  }
+}

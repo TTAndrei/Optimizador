@@ -14,7 +14,6 @@ import os
 import sys
 
 import numpy as np
-from scipy.interpolate import PchipInterpolator
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -31,15 +30,6 @@ ANG = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
 DPI = 190
 
 C_XF, C_FINA, C_EXT = "#2e7d32", "#1f4e79", "#c0392b"
-
-
-def suave(x, y, n=400):
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
-    if len(x) < 3:
-        return x, y
-    xf = np.linspace(x.min(), x.max(), n)
-    return xf, PchipInterpolator(x, y)(xf)
 
 
 def carga():
@@ -122,9 +112,8 @@ def main():
         for src, aa, col, mk, nom in series:
             y = [src[a][i] for a in aa]
             ls = "--" if col == C_EXT else "-"
-            xs, ys = suave(aa, y)
-            ax.plot(xs, ys, color=col, lw=2.2 if col == C_EXT else 1.5, ls=ls)
-            ax.plot(aa, y, color=col, marker=mk, ms=6, ls="none", label=nom)
+            ax.plot(aa, y, color=col, lw=2.2 if col == C_EXT else 1.5, ls=ls,
+                    marker=mk, ms=6, label=nom)
         ax.set_xlabel(r"$\alpha$ [$^\circ$]")
         ax.set_ylabel(lab)
         ax.set_xticks(ANG)
@@ -145,10 +134,8 @@ def main():
         for src, col, mk, nom in ((fina, C_FINA, "s", "malla fina"),
                                   (ext, C_EXT, "D", "extrapolado")):
             y = [err(src[a][i], xf[a][i]) for a in an]
-            xs, ys = suave(an, y)
-            ax.plot(xs, ys, color=col, lw=2.0,
-                    ls="--" if col == C_EXT else "-")
-            ax.plot(an, y, color=col, marker=mk, ms=6, ls="none", label=nom)
+            ax.plot(an, y, color=col, lw=2.0, ls="--" if col == C_EXT else "-",
+                    marker=mk, ms=6, label=nom)
         ax.axhline(0, color="k", lw=1.0)
         ax.set_xlabel(r"$\alpha$ [$^\circ$]")
         ax.set_ylabel(lab)

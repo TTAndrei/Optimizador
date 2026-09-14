@@ -1164,12 +1164,14 @@ class GAParamPanel(QScrollArea):
         # ── Restricciones Geom ───────────────────────────────────────────
         s = CollapsibleSection("RESTRICCIONES GEOM", collapsed=True)
         self.e_esp_min_g   = float_edit(2e-4);  s.add_row(make_row("espesor_min_global", self.e_esp_min_g))
-        self.e_te_abs      = float_edit(3e-4);  s.add_row(make_row("te_esp_min_abs", self.e_te_abs))
+        self.e_te_abs      = float_edit(0.0025); s.add_row(make_row("te_esp_min_abs", self.e_te_abs))
         self.e_te_rel_min  = float_edit(0.65);  s.add_row(make_row("te_esp_rel_min", self.e_te_rel_min))
         self.e_te_rel_max  = float_edit(3.50);  s.add_row(make_row("te_esp_rel_max", self.e_te_rel_max))
         self.e_te_tol      = float_edit(1e-9);  s.add_row(make_row("te_validacion_tol", self.e_te_tol))
         self.e_le_fac      = float_edit(0.40);  s.add_row(make_row("le_radio_factor_min", self.e_le_fac))
-        self.e_le_abs      = float_edit(2e-4);  s.add_row(make_row("le_radio_min_abs", self.e_le_abs))
+        self.e_le_abs      = float_edit(0.005); s.add_row(make_row("le_radio_min_abs", self.e_le_abs))
+        self.e_punta_min   = float_edit(0.010); s.add_row(make_row("punta_espesor_min", self.e_punta_min))
+        self.e_esp_max_min = float_edit(0.0);   s.add_row(make_row("espesor_max_min", self.e_esp_max_min))
         self.e_le_pts      = int_spin(5, 0, 30); s.add_row(make_row("le_puntos_preservar", self.e_le_pts))
         self.e_max_int     = int_spin(120, 1, 5000); s.add_row(make_row("max_intentos_geom", self.e_max_int))
         self.cb_diag_geom  = QCheckBox(); self.cb_diag_geom.setChecked(True)
@@ -1265,12 +1267,14 @@ class GAParamPanel(QScrollArea):
             'te_espesor_shift_std':             self._f(self.e_te_esp_std, 0.0012),
             'le_proteccion_x':                  self._f(self.e_le_prot, 0.06),
             'espesor_min_global':               self._f(self.e_esp_min_g, 2e-4),
-            'te_espesor_min_absoluto':          self._f(self.e_te_abs, 3e-4),
+            'te_espesor_min_absoluto':          self._f(self.e_te_abs, 0.0025),
             'te_espesor_rel_min':               self._f(self.e_te_rel_min, 0.65),
             'te_espesor_rel_max':               self._f(self.e_te_rel_max, 3.50),
             'te_validacion_tol':                self._f(self.e_te_tol, 1e-9),
             'le_radio_factor_min':              self._f(self.e_le_fac, 0.40),
-            'le_radio_min_absoluto':            self._f(self.e_le_abs, 2e-4),
+            'le_radio_min_absoluto':            self._f(self.e_le_abs, 0.005),
+            'punta_espesor_min':                self._f(self.e_punta_min, 0.010),
+            'espesor_max_min':                  self._f(self.e_esp_max_min, 0.0),
             'le_puntos_preservar':              self.e_le_pts.value(),
             'max_intentos_geometria':           self.e_max_int.value(),
             'reportar_diagnostico_geometria':   self.cb_diag_geom.isChecked(),
@@ -1319,12 +1323,14 @@ class GAParamPanel(QScrollArea):
         sf(self.e_te_esp_std,  cfg.get('te_espesor_shift_std', 0.0012))
         sf(self.e_le_prot,     cfg.get('le_proteccion_x', 0.06))
         sf(self.e_esp_min_g,   cfg.get('espesor_min_global', 2e-4))
-        sf(self.e_te_abs,      cfg.get('te_espesor_min_absoluto', 3e-4))
+        sf(self.e_te_abs,      cfg.get('te_espesor_min_absoluto', 0.0025))
         sf(self.e_te_rel_min,  cfg.get('te_espesor_rel_min', 0.65))
         sf(self.e_te_rel_max,  cfg.get('te_espesor_rel_max', 3.50))
         sf(self.e_te_tol,      cfg.get('te_validacion_tol', 1e-9))
         sf(self.e_le_fac,      cfg.get('le_radio_factor_min', 0.40))
-        sf(self.e_le_abs,      cfg.get('le_radio_min_absoluto', 2e-4))
+        sf(self.e_le_abs,      cfg.get('le_radio_min_absoluto', 0.005))
+        sf(self.e_punta_min,   cfg.get('punta_espesor_min', 0.010))
+        sf(self.e_esp_max_min, cfg.get('espesor_max_min', 0.0))
         self.e_le_pts.setValue(int(cfg.get('le_puntos_preservar', 5)))
         self.e_max_int.setValue(int(cfg.get('max_intentos_geometria', 120)))
         self.cb_diag_geom.setChecked(bool(cfg.get('reportar_diagnostico_geometria', True)))

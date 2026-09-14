@@ -230,3 +230,118 @@ def test_zona_de_refinado_a_mano_y_dy_propio(tmp_path):
     X2, Y2 = ejes(esc)
     assert np.diff(Y2).min() == pytest.approx(0.005, rel=1e-6)
     assert len(X2) == len(X), "cambiar dy no debe tocar el eje x"
+
+
+def test_bocas_abiertas_de_un_contorno_inclinado(tmp_path):
+    """Con un contorno que no es el rectángulo de la caja, buena parte del
+    perímetro es pared y no boca. Un parche que caiga ahí no hace nada, y hay
+    que decirlo en vez de pintarle una tira de color."""
+    d = ezdxf.new("R2010")
+    d.header["$INSUNITS"] = 6
+    d.modelspace().add_lwpolyline(
+        [(0, 0), (125, 0), (275, 50), (275, 150), (160, 200), (0, 200)],
+        close=True)
+    p = tmp_path / "recorte.dxf"
+    d.saveas(p)
+
+    esc = Escena.desde_dxf(str(p), dx_min=0.5)
+    esc.contornos[0].rol = "exterior"
+    esc.autoconfigurar_dominio()
+    esc.parches = [Parche("left", "inflow", (1.0, 0.0)),
+                   Parche("right", "outflow", 0.0),
+                   Parche("top", "noslip"), Parche("bottom", "noslip")]
+    assert (esc.Lx, esc.Ly) == pytest.approx((275.0, 200.0))
+
+    # El lado izquierdo es recto: boca entera. El derecho tiene chaflanes
+    # arriba y abajo, así que solo el centro está abierto.
+    (a, b), = esc.tramos_abiertos("left")
+    assert a < 1.0 and b == pytest.approx(200.0, abs=1.0)
+    (a, b), = esc.tramos_abiertos("right")
+    assert a == pytest.approx(50.0, abs=1.0) and b == pytest.approx(150.0, abs=1.0)
+
+    # Un outflow sobre el chaflán es inerte, y se avisa.
+    esc.parches.append(Parche("right", "outflow", 0.0, 180.0, 200.0))
+    assert esc.recortar_a_bocas(esc.parches[-1]) == []
+    assert any("cae entero sobre pared" in a for a in esc.avisos())
+
+    # Una pared sí actúa sobre la pared: no se recorta.
+    assert esc.recortar_a_bocas(Parche("top", "noslip")) == [(0.0, esc.Lx)]
+
+
+def test_avisa_si_el_dxf_venia_en_milimetros():
+    """Un DXF sin unidades leído como metros pide miles de millones de celdas y
+    nada chilla hasta que revienta la GPU."""
+    esc = Escena(Lx=275.0, Ly=200.0, dx_min=0.004)
+    assert any("unidades del DXF" in a for a in esc.avisos())
+    esc.dx_min = 0.5
+    assert not any("unidades del DXF" in a for a in esc.avisos())
+
+
+def test_aristas_agrupan_los_segmentos_del_dxf():
+    """El DXF llega poligonizado: la unidad clicable es el tramo recto, no el
+    segmento. Y el punto por el que el lazo cierra no parte una arista en dos."""
+    # Cuadrado que empieza y acaba en mitad del lado de abajo.
+    c = Contorno(x=[0.5, 1, 1, 0, 0, 0.5], y=[0, 0, 1, 1, 0, 0])
+    ar = c.aristas()
+    assert len(ar) == 4
+    # La de abajo da la vuelta por el cierre y sale entera y en orden.
+    abajo, = [a for a in ar if np.allclose(a[1], 0.0)]
+    assert list(abajo[0]) == [0.0, 0.5, 1.0]
+
+    # Un circulo poligonizado no son 60 aristas: no hay ninguna esquina.
+    t = np.linspace(0, 2 * np.pi, 61)
+    assert len(Contorno(x=list(np.cos(t)), y=list(np.sin(t))).aristas()) == 1
+
+
+def test_condicion_por_arista_llega_al_solver_segmento_a_segmento():
+    """Marcar UNA arista deslizante no puede volver deslizante el cuerpo: lo
+    que se le pasa al solver es el tipo de cada segmento."""
+    c = Contorno(x=[0, 1, 1, 0, 0], y=[0, 0, 1, 1, 0], rol="exterior")
+    esc = Escena(Lx=1.0, Ly=1.0, contornos=[c])
+    c.poner_arista(1, "slip")
+    assert c.tipo_arista(1) == "slip" and c.tipo_arista(0) == "noslip"
+    assert c.paredes_por_segmento() == ["noslip", "slip", "noslip", "noslip"]
+
+    d = esc.dict_solver()["contornos"][0]
+    assert d["paredes_seg"] == ["noslip", "slip", "noslip", "noslip"]
+    assert len(d["paredes_seg"]) == len(d["x"]) - 1
+
+    # Volver al valor del contorno no deja basura en el JSON.
+    c.poner_arista(1, "noslip")
+    assert c.paredes == {} and "paredes_seg" not in esc.dict_solver()["contornos"][0]
+
+
+def test_arista_sobre_el_borde_es_boca_y_no_pared_inmersa():
+    """La distincion que decide que se le puede pedir a una arista: sobre el
+    borde manda el parche del perimetro, dentro manda el IBM."""
+    c = Contorno(x=[0, 4, 4, 0, 0], y=[0, 0, 1, 1, 0], rol="exterior")
+    esc = Escena(Lx=4.0, Ly=1.0, contornos=[c],
+                 parches=[Parche("left", "inflow", (1.0, 0.0))],
+                 modo_dominio="dxf")
+    ar = c.aristas()
+    lados = [esc.lado_de_arista(xs, ys) for xs, ys in ar]
+    assert [l[0] if l else None for l in lados] == ["bottom", "right", "top", "left"]
+    assert esc.tipo_en("left", 0.5) == "inflow"
+
+    # Marcar esa arista slip no hace nada: ahi no hay pared inmersa. Se avisa.
+    c.poner_arista(3, "slip")
+    assert any("no hay pared inmersa" in a for a in esc.avisos())
+
+    # Y el parche escrito desde la arista se lleva por delante al que tapaba.
+    esc.poner_parche("left", "outflow", 0.0, 0.0, 1.0)
+    assert [(p.lado, p.tipo) for p in esc.parches] == [("left", "outflow")]
+
+
+def test_arista_inclinada_de_una_tobera_puede_deslizar():
+    """El caso de la captura: la pared inclinada del DXF no es ninguno de los
+    cuatro lados de la caja, asi que solo se puede tocar por arista."""
+    c = Contorno(x=[0, 4, 4, 3, 0, 0], y=[0, 0, 1, 1.5, 1.5, 0],
+                 rol="exterior", nombre="tobera")
+    esc = Escena(Lx=4.0, Ly=1.5, contornos=[c], modo_dominio="dxf")
+    ar = c.aristas()
+    inclinada = [k for k, (xs, ys) in enumerate(ar)
+                 if esc.lado_de_arista(xs, ys) is None]
+    assert len(inclinada) == 1
+    c.poner_arista(inclinada[0], "slip")
+    seg = c.paredes_por_segmento()
+    assert seg.count("slip") == 1 and seg.count("noslip") == len(seg) - 1

@@ -18,7 +18,16 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 
 TIPOS_BC = ("inflow", "outflow", "slip", "noslip")
+TIPOS_PARED = ("noslip", "slip")
 LADOS = ("left", "right", "top", "bottom")
+
+# Giro maximo, en grados, para que dos segmentos consecutivos del DXF sigan
+# siendo la misma arista. El DXF llega poligonizado —un arco son doscientos
+# segmentos— asi que la unidad que se pincha y a la que se le pone condicion no
+# puede ser el segmento: tiene que ser el tramo recto que un humano llamaria
+# "la pared inclinada" o "el techo". 8 grados separa esquinas reales sin partir
+# un arco flatteneado con tol_cordal en mil aristas.
+ANG_ARISTA = 8.0
 
 # Quien define las paredes del dominio. Son dos casos de uso distintos y no se
 # pueden mezclar sin que salga geometria colgando dentro de la caja:
@@ -43,6 +52,11 @@ class Contorno:
     pared: str = "noslip"            # "noslip" | "slip"
     nombre: str = ""
     es_perfil: bool = False          # habilita Kutta, Cp y cuerda; ver plan §5
+    # Excepciones a `pared`, por arista: {"3": "slip"}. Las claves son str
+    # porque esto se serializa a JSON y ahi no hay claves enteras. `pared` sigue
+    # siendo el valor por defecto de todo lo que no aparezca aqui, asi que una
+    # escena vieja se lee igual y un contorno homogeneo no engorda el JSON.
+    paredes: dict = field(default_factory=dict)
     # Traslacion respecto de las coordenadas del DXF, en metros. Se guarda
     # aparte y no se suma a x/y para que el original siga siendo el del CAD y
     # mover el cuerpo sea reversible y legible en el JSON.
@@ -52,6 +66,82 @@ class Contorno:
     def arrays(self):
         return (np.asarray(self.x, float) + self.off_x,
                 np.asarray(self.y, float) + self.off_y)
+
+    # --------------------------------------------------------------- aristas
+    def cerrado(self):
+        x, y = self.arrays()
+        return len(x) > 2 and np.hypot(x[0] - x[-1], y[0] - y[-1]) < 1e-12
+
+    def _dueno_de_segmento(self, ang_tol=ANG_ARISTA):
+        """Indice de arista de cada segmento del contorno.
+
+        Un segmento empieza arista nueva cuando gira mas de `ang_tol` respecto
+        del anterior. En un poligono cerrado la lista es ciclica: se rota para
+        que la arista 0 empiece en una esquina de verdad y no en el punto por el
+        que el DXF cerro el lazo, que cae en medio de un tramo recto y lo
+        partiria en dos.
+        """
+        x, y = self.arrays()
+        cerrado = self.cerrado()
+        px, py = (x[:-1], y[:-1]) if cerrado else (x, y)
+        dx = np.diff(px, append=px[0]) if cerrado else np.diff(px)
+        dy = np.diff(py, append=py[0]) if cerrado else np.diff(py)
+        n = len(dx)
+        if n == 0:
+            return np.zeros(0, dtype=int), cerrado
+        ang = np.degrees(np.arctan2(dy, dx))
+        prev = np.roll(ang, 1) if cerrado else np.concatenate(([ang[0]], ang[:-1]))
+        giro = np.abs((ang - prev + 180.0) % 360.0 - 180.0)
+        esq = np.flatnonzero(giro > ang_tol)
+        if not len(esq):
+            return np.zeros(n, dtype=int), cerrado    # circulo: una sola arista
+        if not cerrado:
+            esq = np.unique(np.concatenate(([0], esq)))
+        dueno = np.cumsum(np.isin(np.arange(n), esq)) - 1
+        if cerrado:
+            # cumsum deja los segmentos anteriores a la primera esquina en -1:
+            # son la cola de la ultima arista, que da la vuelta por el cierre.
+            dueno[dueno < 0] = dueno.max()
+        return dueno, cerrado
+
+    def aristas(self, ang_tol=ANG_ARISTA):
+        """[(xs, ys)] de cada arista, en orden. El indice es su identidad."""
+        dueno, cerrado = self._dueno_de_segmento(ang_tol)
+        if not len(dueno):
+            return []
+        x, y = self.arrays()
+        px, py = (x[:-1], y[:-1]) if cerrado else (x, y)
+        n = len(px)
+        out = []
+        for k in range(dueno.max() + 1):
+            seg = np.flatnonzero(dueno == k)
+            # La arista que da la vuelta por el cierre sale partida en dos
+            # trozos (los ultimos segmentos y los primeros). Se rota para
+            # dibujarla como la polilinea continua que es.
+            corte = np.flatnonzero(np.diff(seg) > 1)
+            if cerrado and len(corte):
+                seg = np.roll(seg, -(int(corte[0]) + 1))
+            idx = np.append(seg, (seg[-1] + 1) % n if cerrado else seg[-1] + 1)
+            out.append((px[idx], py[idx]))
+        return out
+
+    def tipo_arista(self, k):
+        return self.paredes.get(str(k), self.pared)
+
+    def poner_arista(self, k, tipo):
+        """Guarda solo lo que difiere de `pared`: el JSON no lista lo obvio."""
+        if tipo == self.pared:
+            self.paredes.pop(str(k), None)
+        else:
+            self.paredes[str(k)] = tipo
+
+    def paredes_por_segmento(self):
+        """Tipo de pared de cada segmento del poligono, en el orden en que el
+        solver recorre los puntos. Es lo que se le pasa a el: agrupar aristas es
+        cosa de la interfaz, el solver solo necesita saber, para cada tramo,
+        si desliza o no."""
+        dueno, _ = self._dueno_de_segmento()
+        return [self.tipo_arista(int(k)) for k in dueno]
 
     def bbox(self):
         x, y = self.arrays()
@@ -206,6 +296,62 @@ class Escena:
             banda = (banda[0], banda[1], 0.0, self.Ly)
         return banda
 
+    # --------------------------------------------------------------- aristas
+    def lado_de_arista(self, xs, ys):
+        """(lado, a, b) si la arista esta pegada a un borde de la caja, o None.
+
+        Es la distincion que decide que se le puede pedir a una arista. Pegada
+        al borde no es pared inmersa: el IBM no la ve y lo que manda ahi es el
+        parche del perimetro, asi que admite entrada y salida. Metida dentro del
+        dominio si es pared inmersa y solo puede deslizar o no.
+        """
+        tol = 1e-4 * max(self.Lx, self.Ly)
+        for lado, fijo, libre, largo in (
+                ("left", xs, ys, 0.0), ("right", xs, ys, self.Lx),
+                ("bottom", ys, xs, 0.0), ("top", ys, xs, self.Ly)):
+            if np.all(np.abs(np.asarray(fijo) - largo) <= tol):
+                a, b = float(np.min(libre)), float(np.max(libre))
+                return lado, a, b
+        return None
+
+    def tipo_en(self, lado, s):
+        """Tipo de frontera del perimetro en la coordenada `s` del lado. Manda
+        el ultimo parche que la cubre, que es el orden en el que el solver los
+        aplica."""
+        tipo = "noslip"
+        largo = self.Ly if lado in ("left", "right") else self.Lx
+        for p in self.parches:
+            if p.lado != lado:
+                continue
+            a = 0.0 if p.desde is None else p.desde
+            b = largo if p.hasta is None else p.hasta
+            if a - 1e-12 <= s <= b + 1e-12:
+                tipo = p.tipo
+        return tipo
+
+    def poner_parche(self, lado, tipo, valor, a, b):
+        """Escribe un parche y se lleva por delante los que quedan dentro del
+        tramo. Sin esto, pinchar dos veces la misma boca deja la lista llena de
+        parches tapados unos por otros y la tabla deja de decir lo que pasa."""
+        tol = 1e-9 * max(self.Lx, self.Ly)
+        largo = self.Ly if lado in ("left", "right") else self.Lx
+        def dentro(p):
+            u = 0.0 if p.desde is None else p.desde
+            v = largo if p.hasta is None else p.hasta
+            return p.lado == lado and u >= a - tol and v <= b + tol
+        self.parches = [p for p in self.parches if not dentro(p)]
+        self.parches.append(Parche(lado, tipo, valor, a, b))
+
+    def arista_cercana(self, x, y, tol):
+        """(i_contorno, k_arista, dist) de la arista mas cercana al punto."""
+        mejor = None
+        for i, c in enumerate(self.contornos):
+            for k, (xs, ys) in enumerate(c.aristas()):
+                d = _dist_a_polilinea(x, y, xs, ys)
+                if d <= tol and (mejor is None or d < mejor[2]):
+                    mejor = (i, k, d)
+        return mejor
+
     def avisos(self):
         """Comprobaciones baratas, antes de gastar GPU. No mira la malla: las
         que necesitan la mascara rasterizada van en la vista de malla."""
@@ -267,6 +413,55 @@ class Escena:
             x, y = c.arrays()
             if np.hypot(x[0] - x[-1], y[0] - y[-1]) > 1e-9:
                 av.append(f"El contorno '{c.nombre or '?'}' no esta cerrado.")
+
+        # Aristas pegadas al borde: ahi no hay pared inmersa que deslice, manda
+        # el parche del perimetro. Marcarlas slip y no tocar el parche es el
+        # error que deja una pared que se cree deslizante y no lo es.
+        for c in self.contornos:
+            aristas = c.aristas()
+            fuera = [k for k in map(int, c.paredes) if k >= len(aristas)]
+            if fuera:
+                av.append(f"El contorno '{c.nombre or '?'}' tiene condiciones "
+                          f"en aristas {fuera} que ya no existen: la geometria "
+                          f"ha cambiado desde que se pusieron.")
+            for k, (xs, ys) in enumerate(aristas):
+                if str(k) not in c.paredes:
+                    continue
+                borde = self.lado_de_arista(xs, ys)
+                if borde is None:
+                    continue
+                lado, a, b = borde
+                tipo = c.tipo_arista(k)
+                if self.tipo_en(lado, 0.5 * (a + b)) != tipo:
+                    av.append(
+                        f"La arista {k} de '{c.nombre or '?'}' esta sobre el "
+                        f"borde «{lado}» y ahi no hay pared inmersa: manda el "
+                        f"parche del perimetro, que es "
+                        f"«{self.tipo_en(lado, 0.5 * (a + b))}» y no "
+                        f"«{tipo}». Pon el parche en [{a:.4g}, {b:.4g}].")
+
+        # Parches que caen sobre pared. El solver los fuerza a WALL, asi que no
+        # hacen nada; en la interfaz se ven como una tira de color y engañan.
+        for p in self.parches:
+            if p.tipo in ("noslip", "slip"):
+                continue
+            if not self.recortar_a_bocas(p):
+                av.append(
+                    f"El parche «{p.tipo}» de «{p.lado}» cae entero sobre "
+                    f"pared: ahí no entra ni sale nada. Las bocas abiertas de "
+                    f"ese lado son "
+                    f"{self.tramos_abiertos(p.lado) or 'ninguna'}.")
+
+        # El coste va con 1/dx^2 y con un DXF en milimetros leido como metros se
+        # piden miles de millones de celdas sin que nada chille hasta la GPU.
+        celdas = (self.Lx / max(self.dx_min, 1e-30)) * (self.Ly / max(self.dy, 1e-30))
+        if celdas > 5e7:
+            av.append(
+                f"El dominio es de {self.Lx:.4g} x {self.Ly:.4g} y dx={self.dx_min:g}: "
+                f"salen del orden de {celdas:.1e} celdas, que no caben en ninguna "
+                f"GPU. ¿Están bien las unidades del DXF? Si venía en milímetros y "
+                f"se ha leído como metros, la geometría es 1000 veces más grande "
+                f"de lo que crees.")
         return av
 
     # ------------------------------------------------------------------
@@ -277,6 +472,66 @@ class Escena:
             for c in self.contornos]
         d["parches"] = [asdict(p) for p in self.parches]
         return d
+
+    def tramos_abiertos(self, lado, n=600):
+        """[(a, b)] del lado que son BOCA, en coordenadas del lado.
+
+        Con un contorno exterior que no es el rectangulo de la caja —una tobera,
+        un difusor, cualquier cosa inclinada— la mayor parte del perimetro no es
+        boca sino pared: entre el contorno y el borde de la caja queda solido, y
+        ahi el parche no hace nada porque `_rebuild_bc_masks` lo fuerza a WALL.
+        Sin esto la interfaz pinta la tira de color a lo largo del lado entero y
+        no se ve que media tira es inerte.
+
+        Se muestrea el lado por dentro (a un pelo del borde) y se mira si el
+        punto cae en el contorno. Muestrear SOBRE el borde no vale: el tramo del
+        contorno suele ser colineal con el y el test punto-en-poligono es
+        ambiguo justo ahi.
+        """
+        largo = self.Ly if lado in ("left", "right") else self.Lx
+        ext = self.exteriores()
+        if not ext:
+            return [(0.0, largo)]          # sin contorno, el lado entero es boca
+        from matplotlib.path import Path
+        d = 1e-3 * min(self.Lx, self.Ly)
+        s = np.linspace(0.0, largo, int(n))
+        if lado == "left":
+            pts = np.column_stack((np.full_like(s, d), s))
+        elif lado == "right":
+            pts = np.column_stack((np.full_like(s, self.Lx - d), s))
+        elif lado == "bottom":
+            pts = np.column_stack((s, np.full_like(s, d)))
+        else:
+            pts = np.column_stack((s, np.full_like(s, self.Ly - d)))
+        dentro = np.zeros(len(s), dtype=bool)
+        for c in ext:
+            x, y = c.arrays()
+            dentro |= Path(np.column_stack((x, y))).contains_points(pts)
+        tramos, i = [], 0
+        while i < len(s):
+            if not dentro[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < len(s) and dentro[j + 1]:
+                j += 1
+            tramos.append((float(s[i]), float(s[j])))
+            i = j + 1
+        return tramos
+
+    def recortar_a_bocas(self, parche):
+        """Trozos de un parche que caen en boca abierta. Vacio = parche inerte."""
+        largo = self.Ly if parche.lado in ("left", "right") else self.Lx
+        a = 0.0 if parche.desde is None else float(parche.desde)
+        b = largo if parche.hasta is None else float(parche.hasta)
+        if parche.tipo in ("noslip", "slip"):
+            return [(a, b)]                # una pared si actua sobre la pared
+        out = []
+        for u, v in self.tramos_abiertos(parche.lado):
+            lo, hi = max(a, u), min(b, v)
+            if hi > lo:
+                out.append((lo, hi))
+        return out
 
     def contornos_para_malla(self):
         """[(contorno, x, y)] con las coordenadas finales que ve el rasterizador.
@@ -311,6 +566,11 @@ class Escena:
         for cd, (c, x, y) in zip(d["contornos"], self.contornos_para_malla()):
             cd["x"], cd["y"] = x.tolist(), y.tolist()
             cd["off_x"] = cd["off_y"] = 0.0
+            # Solo si hay excepciones: sin ellas el solver toma el camino de
+            # siempre (una pared por cuerpo) y no hace ninguna busqueda de
+            # segmento mas proximo.
+            if c.paredes:
+                cd["paredes_seg"] = c.paredes_por_segmento()
         return d
 
     def guardar(self, path):
@@ -348,6 +608,34 @@ class Escena:
         esc.autoconfigurar_dominio()
         esc.parches = parches_por_defecto(esc.modo_dominio)
         return esc
+
+
+def _dist_a_polilinea(x, y, xs, ys):
+    """Distancia de un punto a una polilinea, por segmentos."""
+    ax, ay = np.asarray(xs[:-1], float), np.asarray(ys[:-1], float)
+    bx, by = np.asarray(xs[1:], float), np.asarray(ys[1:], float)
+    if not len(ax):
+        return float(np.hypot(x - xs[0], y - ys[0]))
+    ex, ey = bx - ax, by - ay
+    L2 = np.maximum(ex * ex + ey * ey, 1e-30)
+    t = np.clip(((x - ax) * ex + (y - ay) * ey) / L2, 0.0, 1.0)
+    return float(np.min(np.hypot(x - (ax + t * ex), y - (ay + t * ey))))
+
+
+def descripcion_arista(xs, ys):
+    """Nombre legible de una arista: forma, inclinacion y largo."""
+    largo = float(np.sum(np.hypot(np.diff(xs), np.diff(ys))))
+    cuerda = float(np.hypot(xs[-1] - xs[0], ys[-1] - ys[0]))
+    ang = float(np.degrees(np.arctan2(ys[-1] - ys[0], xs[-1] - xs[0])) % 180.0)
+    if largo > 1.02 * cuerda:
+        forma = "curva"
+    elif ang < 5.0 or ang > 175.0:
+        forma = "horizontal"
+    elif abs(ang - 90.0) < 5.0:
+        forma = "vertical"
+    else:
+        forma = f"inclinada {ang:.0f}°"
+    return f"{forma} · {largo:.4g} m"
 
 
 def parches_por_defecto(modo_dominio="caja"):
