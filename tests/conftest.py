@@ -1,15 +1,12 @@
-"""Hace importables los módulos del repo (raíz) y de scripts/ desde los tests.
+"""Hace importable `curvo` desde los tests.
 
-`test_generacion_geometrica_ga.py` hace `import RunGA`, que vive en scripts/.
+pytest mete en `sys.path` el directorio del test, no la raiz del repo, y el
+paquete vive un nivel mas arriba. Los tests del solver cartesiano tienen su
+propio conftest en `Sim_Cartesiano/tests/`.
 """
 import os
 import sys
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (_ROOT, os.path.join(_ROOT, "scripts")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-# Los tests de la GUI construyen widgets: sin esto Qt busca un servidor grafico
-# y falla en CI o por SSH.
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+_RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _RAIZ not in sys.path:
+    sys.path.insert(0, _RAIZ)
