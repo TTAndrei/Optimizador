@@ -14,7 +14,7 @@ if [ "${1:-}" = "--fondo" ]; then
     echo "lanzado en segundo plano (pid $!)"
     exit 0
 fi
-PY=.venv/bin/python
+PY="$(cd .. && pwd)/.venv/bin/python"   # el entorno vive en la raiz del repo
 for CASO in T7 T8 T10 T9; do
     echo "=== $CASO $(date +%H:%M:%S) ==="
     $PY -u scripts/agent_tests/tubo_canal.py --caso "$CASO"

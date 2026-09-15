@@ -3,7 +3,7 @@
 # Todo secuencial: comparten GPU y solaparlos falsea el cronometraje.
 set -u
 cd "$(dirname "$0")"
-PY=.venv/bin/python
+PY="$(cd .. && pwd)/.venv/bin/python"   # el entorno vive en la raiz del repo
 REF="${1:-$(pwd)/.ref_head/Simulador2D.py}"
 LOG=results/coste_salida/fase0.log
 mkdir -p results/coste_salida

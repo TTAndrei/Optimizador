@@ -1,7 +1,27 @@
 # RESUMEN — Optimizador CFD 2D
 
+## ESTRUCTURA DEL REPO (reorganizado 2026-09-15)
+
+El repo tiene ahora **dos solvers** y está partido en consecuencia. Mapa completo en `README.md`.
+
+```
+profiles/          perfiles .dat, COMPARTIDO por los dos
+docs/              memoria y documentación del proyecto
+curvo/  tests/     solver curvilíneo (malla C adaptada al cuerpo), F0–F3 cerradas
+Sim_Cartesiano/    el solver congelado y TODO lo suyo: Simulador2D.py, scripts/,
+                   gui/, tests/, configs/, data/, results/, resultados_finales/,
+                   plots/, figuras_memoria/, media/, lanzar_*.sh
+```
+
+- El cartesiano **se ejecuta desde `Sim_Cartesiano/`** (`cd Sim_Cartesiano && ../.venv/bin/python ...`):
+  sus scripts escriben con rutas relativas a esa carpeta. Sus tests también pasan
+  desde la raíz con `pytest Sim_Cartesiano/tests/`.
+- `Sim_Cartesiano/profiles` es un enlace simbólico a `../profiles`, para que las
+  rutas `ROOT/profiles/...` de su código sigan resolviendo **sin tocar ni una línea**.
+- Los `lanzar_*.sh` son lo único suyo que cambió: `.venv/bin/python` → `../.venv/bin/python`.
+
 ## Qué es
-Simulador CFD 2D incompresible (Navier-Stokes) en GPU (CuPy, RTX 3070 Ti) para perfiles alares, base de un futuro optimizador aerodinámico. Todo el solver vive en `Simulador2D.py` (~8000 líneas, clase `Mesh` + `main()`).
+Simulador CFD 2D incompresible (Navier-Stokes) en GPU (CuPy, RTX 3070 Ti) para perfiles alares, base de un futuro optimizador aerodinámico. El solver cartesiano vive en `Sim_Cartesiano/Simulador2D.py` (~8000 líneas, clase `Mesh` + `main()`); el curvilíneo, en `curvo/`.
 
 - Malla cartesiana estirada (zona fina alrededor del perfil), advección semi-Lagrangiana, difusión (+WALE LES opcional), proyección de presión multigrid/CG.
 - Sólidos por IBM (Immersed Boundary): máscara rasterizada + ghost-cell no-slip (`ibm_wall_mode="ghost_noslip"`).

@@ -1,3 +1,8 @@
+# Reorganizacion (2026-09-15): el solver cartesiano y todas sus salidas viven
+# bajo Sim_Cartesiano/. Las reglas con barra intermedia estan ancladas a la raiz
+# del repo, asi que llevan ese prefijo; las que no la tienen (sim_last.npz,
+# *.png, **/campos/) aplican a cualquier nivel y se dejan como estaban.
+
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -26,28 +31,28 @@ sim_last.npz
 _temp_gen*_ind*.dat
 
 # Copias de seguridad locales de la campaña (redundantes con el histórico de git).
-results/convergence_study/backups/
-results/convergence_study/*.pid
+Sim_Cartesiano/results/convergence_study/backups/
+Sim_Cartesiano/results/convergence_study/*.pid
 
 # temporales del refinado del top-k
-results/convergence_study/islands_tfg2/refine_tmp/
+Sim_Cartesiano/results/convergence_study/islands_tfg2/refine_tmp/
 docs/tfg/.~lock.*#
 
 # Campos finales del Richardson de la polar: 355 MB de u/v/p/máscara (5 ficheros
 # de 45 MB en la malla fina). Se conservan en local para instrumentar el TE; al
 # repo van los escalares, las series, las figuras y el log.
-results/richardson_polar_domC/campos/*.npz
+Sim_Cartesiano/results/richardson_polar_domC/campos/*.npz
 
 # Resultados finales: los .npz de campos son ~2 GB (el de dx=0.001 son 60 MB por
 # punto). Las metricas, las figuras y el analisis si se versionan.
-resultados_finales/*/campos/*.npz
-resultados_finales/ejecucion.log
+Sim_Cartesiano/resultados_finales/*/campos/*.npz
+Sim_Cartesiano/resultados_finales/ejecucion.log
 
 # Trazas de Nsight Systems del perfilado del paso: 118-503 MB por fichero, muy
 # por encima del limite de 100 MB de GitHub. Se regeneran con
 # scripts/agent_tests/perfilar_paso.sh; al repo van los resumenes.
-results/bench_opt/perfil/*.sqlite
-results/bench_opt/perfil/*.nsys-rep
+Sim_Cartesiano/results/bench_opt/perfil/*.sqlite
+Sim_Cartesiano/results/bench_opt/perfil/*.nsys-rep
 
 # Volcados de campos por instante y frames PNG para el video: ~3.5 GB entre
 # results/formas y results/tubo. Los regenera el runner de cada campana; al
@@ -58,18 +63,18 @@ results/bench_opt/perfil/*.nsys-rep
 # Campanas archivadas de resultados_finales (descartadas o superadas por la
 # definitiva): 500 MB de campos y figuras. Las metricas y las series si se
 # versionan, que son las que se citan en la memoria.
-resultados_finales/_archivo_*/*/campos/
-resultados_finales/_archivo_*/*/figuras/
+Sim_Cartesiano/resultados_finales/_archivo_*/*/campos/
+Sim_Cartesiano/resultados_finales/_archivo_*/*/figuras/
 
 # Campos finales (u/v/p/mascara) de cualquier campana: 12-70 MB por punto de la
 # polar y regenerables desde la geometria y el json de configuracion. Las
 # *_series.npz (14 KB) si se versionan, que son las que alimentan las figuras.
 **/*campo.npz
-.ref_head/
-results/coste_salida/_sandbox/
+Sim_Cartesiano/.ref_head/
+Sim_Cartesiano/results/coste_salida/_sandbox/
 PARAR_GUI.trigger
-results/gui_demo/corrida_*/
-results/gui_demo/capturas/
+Sim_Cartesiano/results/gui_demo/corrida_*/
+Sim_Cartesiano/results/gui_demo/capturas/
 
 # Figuras y videos: 499 MB de PNG/MP4 regenerables desde los .npz de series y los
 # scripts de figuras. Inflaban cada commit y el clon del repo. Se conservan en
@@ -90,9 +95,9 @@ results/gui_demo/capturas/
 # metricas SI se versionan: son los que alimentan las figuras y las tablas.
 **/campos/
 **/campo_final.npz
-results/1eraGranOptimizacion/agent_tests/*.npz
-results/1eraGranOptimizacion/cfl_sweep/*.npz
+Sim_Cartesiano/results/1eraGranOptimizacion/agent_tests/*.npz
+Sim_Cartesiano/results/1eraGranOptimizacion/cfl_sweep/*.npz
 
 # Frames submuestreados de los videos largos: 2.6 GB de png+npz por instante.
 # Los regenera scripts/agent_tests/render_videos_largos.py.
-results/videos_largos/
+Sim_Cartesiano/results/videos_largos/

@@ -19,7 +19,7 @@ if [ "${1:-}" = "--fondo" ]; then
     exit 0
 fi
 
-PY=.venv/bin/python
+PY="$(cd .. && pwd)/.venv/bin/python"   # el entorno vive en la raiz del repo
 echo "=== FASE A: formas dx=0.004 $(date +%H:%M:%S) ==="
 $PY -u scripts/agent_tests/formas_clcd.py --fase A --horas 1.0
 echo "=== FASE B: tubo $(date +%H:%M:%S) ==="
