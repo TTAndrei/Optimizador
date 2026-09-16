@@ -1,0 +1,17 @@
+{
+ "perfil": "NACA_0012_sharp",
+ "alfa": 5.0,
+ "re": 100000.0,
+ "u_inf": 1.0,
+ "distancia_lejos": null,
+ "x_salida": null,
+ "dt": 0.0025,
+ "t_final": 20.0,
+ "cada_historia": 20,
+ "cada_campo": 40,
+ "dominio": [
+  25.328980132390395,
+  16.31066686258244
+ ],
+ "celdas": 37534
+}

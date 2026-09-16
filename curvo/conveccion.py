@@ -38,6 +38,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import operadores as op
+from .metrica import xp_de
 from .multigrid import Sistema, jerarquia, resolver
 
 __all__ = [
@@ -98,12 +99,33 @@ def flujos_de_corriente(psi):
     return psi[1:, :] - psi[:-1, :], -(psi[:, 1:] - psi[:, :-1])
 
 
-def corte_de_estela(info, nx):
+def _lleva(v, xp):
+    """Lleva un valor de frontera al dispositivo, sin tocar escalares ni tuplas.
+
+    `flujos_de_velocidad` pasa la frontera como la **pareja** `(u, v)`, asi que
+    hay que entrar en la tupla en vez de intentar convertirla entera: `asarray`
+    de una tupla de arrays de cupy no es un array, es un error.
+    """
+    if v is None or np.isscalar(v):
+        return v
+    if isinstance(v, tuple):
+        return tuple(_lleva(c, xp) for c in v)
+    return xp.asarray(v)
+
+
+def _bc_en(bc, xp):
+    """Normaliza el diccionario de fronteras y lleva los valores al dispositivo."""
+    d = {k: (None if bc is None else bc.get(k)) for k in
+         ("oeste", "este", "sur", "norte")}
+    return {k: _lleva(v, xp) for k, v in d.items()}
+
+
+def corte_de_estela(info, nx, xp=np):
     """Mascara (nx,) de las celdas de `j=0` que son corte y no pared."""
     i0, i1 = info["perfil"]
     m = np.ones(nx, dtype=bool)
     m[i0:i1 - 1] = False
-    return m
+    return xp.asarray(m)
 
 
 # ---------------------------------------------------------------------------
@@ -116,21 +138,29 @@ def _difusiones(met, nu, bc, corte):
     centro de celda a la cara es media celda; es el mismo factor que mete
     `dif_xi_caras`. Las de gradiente nulo no difunden.
     """
+    xp = met.xp
     nu_xi, nu_eta = op._nu_en_caras(met, nu)
-    d_xi = nu_xi * met.a_xi
-    d_eta = nu_eta * met.a_eta
+    d_xi = nu_xi * met.a_xi + xp.zeros_like(met.a_xi)
+    d_eta = nu_eta * met.a_eta + xp.zeros_like(met.a_eta)
     d_xi[:, 0] = 2.0 * d_xi[:, 0] if bc["oeste"] is not None else 0.0
     d_xi[:, -1] = 2.0 * d_xi[:, -1] if bc["este"] is not None else 0.0
     d_n = 2.0 * d_eta[-1] if bc["norte"] is not None else 0.0 * d_eta[-1]
     d_s = 2.0 * d_eta[0] if bc["sur"] is not None else 0.0 * d_eta[0]
     if corte is not None:                       # el corte es cara interior
-        d_s = np.where(corte, d_eta[0], d_s)
+        d_s = xp.where(corte, d_eta[0], d_s)
     d_eta[0], d_eta[-1] = d_s, d_n
     return d_xi, d_eta
 
 
-def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False):
+def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False,
+            sumidero=None):
     """Matriz de 5 puntos del operador implicito. Devuelve (Sistema, b_frontera).
+
+    `sumidero` es un coeficiente positivo `c` que anade `c*J` a la diagonal, es
+    decir, un termino `-c*phi` en la ecuacion tratado de forma **implicita por
+    puntos**: se divide en vez de restar, asi que no puede volver negativo un
+    campo positivo por grande que sea `dt`. Es lo que la destruccion de
+    Spalart-Allmaras necesita para que `nu_tilde` no cambie de signo.
 
     `b_frontera` es la parte del termino independiente que sale de los valores
     de Dirichlet; el resto (phi viejo, fuentes, correccion diferida) lo pone
@@ -139,30 +169,31 @@ def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False):
     nivel anterior. Si se reutiliza el sistema entre pasos hay que construirlo
     con el mismo `bdf2` con el que se va a llamar a `avanzar`.
     """
-    bc = {k: (None if bc is None else bc.get(k)) for k in
-          ("oeste", "este", "sur", "norte")}
+    xp = met.xp
+    bc = _bc_en(bc, xp)
     ny, nx = met.J.shape
+    tipo = met.J.dtype
     d_xi, d_eta = _difusiones(met, nu, bc, corte)
 
-    aP = np.zeros((ny, nx))
-    aW = np.zeros((ny, nx))
-    aE = np.zeros((ny, nx))
-    aS = np.zeros((ny, nx))
-    aN = np.zeros((ny, nx))
-    b = np.zeros((ny, nx))
+    aP = xp.zeros((ny, nx), dtype=tipo)
+    aW = xp.zeros((ny, nx), dtype=tipo)
+    aE = xp.zeros((ny, nx), dtype=tipo)
+    aS = xp.zeros((ny, nx), dtype=tipo)
+    aN = xp.zeros((ny, nx), dtype=tipo)
+    b = xp.zeros((ny, nx), dtype=tipo)
 
     # --- caras interiores -------------------------------------------------
     m, d = m_xi[:, 1:-1], d_xi[:, 1:-1]
-    aE[:, :-1] = np.maximum(-m, 0.0) + d
-    aW[:, 1:] = np.maximum(m, 0.0) + d
-    aP[:, :-1] += np.maximum(m, 0.0) + d
-    aP[:, 1:] += np.maximum(-m, 0.0) + d
+    aE[:, :-1] = xp.maximum(-m, 0.0) + d
+    aW[:, 1:] = xp.maximum(m, 0.0) + d
+    aP[:, :-1] += xp.maximum(m, 0.0) + d
+    aP[:, 1:] += xp.maximum(-m, 0.0) + d
 
     m, d = m_eta[1:-1, :], d_eta[1:-1, :]
-    aN[:-1, :] = np.maximum(-m, 0.0) + d
-    aS[1:, :] = np.maximum(m, 0.0) + d
-    aP[:-1, :] += np.maximum(m, 0.0) + d
-    aP[1:, :] += np.maximum(-m, 0.0) + d
+    aN[:-1, :] = xp.maximum(-m, 0.0) + d
+    aS[1:, :] = xp.maximum(m, 0.0) + d
+    aP[:-1, :] += xp.maximum(m, 0.0) + d
+    aP[1:, :] += xp.maximum(-m, 0.0) + d
 
     # --- fronteras --------------------------------------------------------
     # Signo: el flujo de la cara oeste/sur es positivo hacia DENTRO de la celda;
@@ -172,41 +203,44 @@ def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False):
     if bc["oeste"] is None:
         aP[:, 0] += -m
     else:
-        aP[:, 0] += np.maximum(-m, 0.0) + d
-        b[:, 0] += (np.maximum(m, 0.0) + d) * bc["oeste"]
+        aP[:, 0] += xp.maximum(-m, 0.0) + d
+        b[:, 0] += (xp.maximum(m, 0.0) + d) * bc["oeste"]
 
     m, d = m_xi[:, -1], d_xi[:, -1]
     if bc["este"] is None:
         aP[:, -1] += m
     else:
-        aP[:, -1] += np.maximum(m, 0.0) + d
-        b[:, -1] += (np.maximum(-m, 0.0) + d) * bc["este"]
+        aP[:, -1] += xp.maximum(m, 0.0) + d
+        b[:, -1] += (xp.maximum(-m, 0.0) + d) * bc["este"]
 
     m, d = m_eta[-1], d_eta[-1]
     if bc["norte"] is None:
         aP[-1] += m
     else:
-        aP[-1] += np.maximum(m, 0.0) + d
-        b[-1] += (np.maximum(-m, 0.0) + d) * bc["norte"]
+        aP[-1] += xp.maximum(m, 0.0) + d
+        b[-1] += (xp.maximum(-m, 0.0) + d) * bc["norte"]
 
     # Sur: pared (o salida) donde no hay corte, cara interior donde si.
     m, d = m_eta[0], d_eta[0]
     if bc["sur"] is None:
-        ap_s, b_s = -m, np.zeros(nx)
+        ap_s, b_s = -m, xp.zeros(nx, dtype=tipo)
     else:
-        ap_s = np.maximum(-m, 0.0) + d
-        b_s = (np.maximum(m, 0.0) + d) * bc["sur"] * np.ones(nx)
+        ap_s = xp.maximum(-m, 0.0) + d
+        b_s = (xp.maximum(m, 0.0) + d) * xp.asarray(bc["sur"]) * xp.ones(nx, dtype=tipo)
     aC = None
     if corte is not None:
-        aC = np.where(corte, np.maximum(m, 0.0) + d, 0.0)
-        ap_s = np.where(corte, np.maximum(-m, 0.0) + d, ap_s)
-        b_s = np.where(corte, 0.0, b_s)
+        aC = xp.where(corte, xp.maximum(m, 0.0) + d, 0.0)
+        ap_s = xp.where(corte, xp.maximum(-m, 0.0) + d, ap_s)
+        b_s = xp.where(corte, 0.0, b_s)
     aP[0] += ap_s
     b[0] += b_s
 
+    if sumidero is not None:
+        aP += sumidero * met.J
     if dt is not None:
         aP += (1.5 if bdf2 else 1.0) * met.J / dt
-    return Sistema(aP, aW, aE, aS, aN, np.zeros((ny, nx)), aC), b
+    return Sistema(aP, aW, aE, aS, aN, xp.zeros((ny, nx), dtype=tipo), aC,
+                   activo=corte), b
 
 
 # ---------------------------------------------------------------------------
@@ -227,14 +261,15 @@ def _limitada(phi, m, a_izq=None, a_der=None):
     en vez de 1.95. Con el valor de frontera (que esta a media celda, de ahi el
     factor 2 que pone quien llama) o con la celda espejo del corte, se recupera.
     """
+    xp = xp_de(phi)
     P, E = phi[:, :-1], phi[:, 1:]
     salto = E - P
-    a_pos = np.zeros_like(salto)
+    a_pos = xp.zeros_like(salto)
     a_pos[:, 1:] = P[:, 1:] - P[:, :-1]            # phi_U - phi_UU con m > 0
-    a_neg = np.zeros_like(salto)
+    a_neg = xp.zeros_like(salto)
     a_neg[:, :-1] = E[:, :-1] - E[:, 1:]           # phi_U - phi_UU con m < 0
 
-    hay_uu = np.ones(salto.shape, dtype=bool)
+    hay_uu = xp.ones(salto.shape, dtype=bool)
     pos = m > 0.0
     if a_izq is None:
         hay_uu[:, 0] &= ~pos[:, 0]
@@ -245,11 +280,11 @@ def _limitada(phi, m, a_izq=None, a_der=None):
     else:
         a_neg[:, -1] = a_der
 
-    a = np.where(pos, a_pos, a_neg)
-    sa = np.where(pos, salto, -salto)
-    suma = np.where(a * sa > 0.0, a + sa, 1.0)
-    lim = np.where(a * sa > 0.0, 2.0 * a * sa / suma, 0.0)
-    return m * 0.5 * np.where(hay_uu, lim, 0.0)
+    a = xp.where(pos, a_pos, a_neg)
+    sa = xp.where(pos, salto, -salto)
+    suma = xp.where(a * sa > 0.0, a + sa, 1.0)
+    lim = xp.where(a * sa > 0.0, 2.0 * a * sa / suma, 0.0)
+    return m * 0.5 * xp.where(hay_uu, lim, 0.0)
 
 
 def _pendiente_borde(phi_borde, valor, n):
@@ -260,7 +295,8 @@ def _pendiente_borde(phi_borde, valor, n):
     """
     if valor is None:
         return None
-    return 2.0 * (phi_borde - np.asarray(valor) * np.ones(n))
+    xp = xp_de(phi_borde)
+    return 2.0 * (phi_borde - xp.asarray(valor) * xp.ones(n, dtype=phi_borde.dtype))
 
 
 def fuente_diferida(met, phi, m_xi, m_eta, nu=0.0, bc=None, corte=None):
@@ -268,20 +304,21 @@ def fuente_diferida(met, phi, m_xi, m_eta, nu=0.0, bc=None, corte=None):
 
         -div(F_conv_2 - F_conv_upwind) + div(F_dif_cruzada)
     """
-    bc = {k: (None if bc is None else bc.get(k)) for k in
-          ("oeste", "este", "sur", "norte")}
+    xp = met.xp
+    bc = _bc_en(bc, xp)
     ny, nx = met.J.shape
+    tipo = phi.dtype
 
     a_s = _pendiente_borde(phi[0], bc["sur"], nx)
     if corte is not None:                       # el corte tiene celda espejo
         espejo = phi[0] - phi[0, ::-1]
-        a_s = espejo if a_s is None else np.where(corte, espejo, a_s)
+        a_s = espejo if a_s is None else xp.where(corte, espejo, a_s)
 
-    c_xi = np.zeros((ny, nx + 1))
+    c_xi = xp.zeros((ny, nx + 1), dtype=tipo)
     c_xi[:, 1:-1] = _limitada(phi, m_xi[:, 1:-1],
                               _pendiente_borde(phi[:, 0], bc["oeste"], ny),
                               _pendiente_borde(phi[:, -1], bc["este"], ny))
-    c_eta = np.zeros((ny + 1, nx))
+    c_eta = xp.zeros((ny + 1, nx), dtype=tipo)
     c_eta[1:-1, :] = _limitada(phi.T, m_eta[1:-1, :].T, a_s,
                                _pendiente_borde(phi[-1], bc["norte"], nx)).T
 
@@ -290,13 +327,13 @@ def fuente_diferida(met, phi, m_xi, m_eta, nu=0.0, bc=None, corte=None):
     # Sin esto el error es de 1.er orden en una franja de una celda de ancho y el
     # orden global se queda en 1.50 (medido); con ello sube a 1.95.
     m = m_xi[:, 0]
-    c_xi[:, 0] = np.where(m < 0.0, m * 0.5 * (phi[:, 0] - phi[:, 1]), 0.0)
+    c_xi[:, 0] = xp.where(m < 0.0, m * 0.5 * (phi[:, 0] - phi[:, 1]), 0.0)
     m = m_xi[:, -1]
-    c_xi[:, -1] = np.where(m > 0.0, m * 0.5 * (phi[:, -1] - phi[:, -2]), 0.0)
+    c_xi[:, -1] = xp.where(m > 0.0, m * 0.5 * (phi[:, -1] - phi[:, -2]), 0.0)
     m = m_eta[-1]
-    c_eta[-1] = np.where(m > 0.0, m * 0.5 * (phi[-1] - phi[-2]), 0.0)
+    c_eta[-1] = xp.where(m > 0.0, m * 0.5 * (phi[-1] - phi[-2]), 0.0)
     m = m_eta[0]
-    c_eta[0] = np.where(m < 0.0, m * 0.5 * (phi[0] - phi[1]), 0.0)
+    c_eta[0] = xp.where(m < 0.0, m * 0.5 * (phi[0] - phi[1]), 0.0)
 
     if corte is not None:
         # El corte es cara interior: la celda dos veces aguas arriba es la de
@@ -304,16 +341,16 @@ def fuente_diferida(met, phi, m_xi, m_eta, nu=0.0, bc=None, corte=None):
         # iguales y opuestas, asi que el flujo sigue cerrando.
         mir = slice(None, None, -1)
         entra = m > 0.0
-        a = np.where(entra, phi[0, mir] - phi[1, mir], phi[0] - phi[1])
-        sa = np.where(entra, phi[0] - phi[0, mir], phi[0, mir] - phi[0])
-        suma = np.where(a * sa > 0.0, a + sa, 1.0)
-        lim = np.where(a * sa > 0.0, 2.0 * a * sa / suma, 0.0)
-        c_eta[0] = np.where(corte, m * 0.5 * lim, c_eta[0])
+        a = xp.where(entra, phi[0, mir] - phi[1, mir], phi[0] - phi[1])
+        sa = xp.where(entra, phi[0] - phi[0, mir], phi[0, mir] - phi[0])
+        suma = xp.where(a * sa > 0.0, a + sa, 1.0)
+        lim = xp.where(a * sa > 0.0, 2.0 * a * sa / suma, 0.0)
+        c_eta[0] = xp.where(corte, m * 0.5 * lim, c_eta[0])
 
     d_xi = op.dif_xi_caras(phi, bc["oeste"], bc["este"])
     d_eta = op.dif_eta_caras(phi, bc["sur"], bc["norte"])
     if corte is not None:
-        d_eta[0] = np.where(corte, phi[0] - phi[0, ::-1], d_eta[0])
+        d_eta[0] = xp.where(corte, phi[0] - phi[0, ::-1], d_eta[0])
 
     nu_xi, nu_eta = op._nu_en_caras(met, nu)
     x_xi = nu_xi * met.b_xi * op.a_caras_xi(d_eta)
@@ -331,8 +368,8 @@ def masa(met, phi):
 
 
 def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
-            fuente=None, correcciones=2, tol=1e-13, ciclos=60, sis=None,
-            phi_ant=None):
+            fuente=None, correcciones=2, tol=None, ciclos=60, sis=None,
+            phi_ant=None, sumidero=None):
     """Un paso implicito, o el estacionario si `dt is None`.
 
     Con `phi_ant` (el nivel n-1) el paso es **BDF2**, de 2.º orden en el tiempo;
@@ -357,7 +394,7 @@ def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
     """
     bdf2 = phi_ant is not None
     A, b_bc = (sis if sis is not None else
-               sistema(met, m_xi, m_eta, nu, dt, bc, corte, bdf2))
+               sistema(met, m_xi, m_eta, nu, dt, bc, corte, bdf2, sumidero))
     niveles = jerarquia(A)
 
     b0 = b_bc.copy()

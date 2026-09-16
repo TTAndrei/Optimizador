@@ -97,11 +97,20 @@ def divergencia(F_xi, F_eta):
     return (F_xi[:, 1:] - F_xi[:, :-1]) + (F_eta[1:, :] - F_eta[:-1, :])
 
 
-def gradiente(met, phi, oeste=None, este=None, sur=None, norte=None):
+def gradiente(met, phi, oeste=None, este=None, sur=None, norte=None,
+              corte=None):
     """Gradiente por celda (Green-Gauss). Devuelve (gx, gy), ambos (ny,nx).
 
     Exacto para campos lineales: la suma de `phi_cara * S_cara` sobre un
     poligono cerrado reproduce el gradiente constante sin error.
+
+    `corte` es la mascara de las columnas de `j=0` que son corte de estela. Ahi
+    la cara **no es frontera**: su vecina es la celda espejo `(0, nx-1-i)` y el
+    valor de cara es la media de las dos. Sin la mascara la cara se lleva el
+    `sur` de pared a lo largo de toda la estela, y para la velocidad eso es un
+    salto de 1 a 0 en media celda: medido sobre la malla C, `|omega| = 495` a
+    1.35 cuerdas del perfil con `u = 0.9923` a los dos lados. Spalart-Allmaras
+    se lo cree y fabrica turbulencia en la estela hasta reventar.
     """
     xp = xp_de(phi)
     ny, nx = phi.shape
@@ -115,6 +124,8 @@ def gradiente(met, phi, oeste=None, este=None, sur=None, norte=None):
     f_eta[1:-1, :] = 0.5 * (phi[:-1, :] + phi[1:, :])
     f_eta[0, :] = phi[0, :] if sur is None else sur
     f_eta[-1, :] = phi[-1, :] if norte is None else norte
+    if corte is not None:
+        f_eta[0] = xp.where(corte, 0.5 * (phi[0] + phi[0, ::-1]), f_eta[0])
 
     gx = divergencia(f_xi * met.Sx_xi, f_eta * met.Sx_eta) / met.J
     gy = divergencia(f_xi * met.Sy_xi, f_eta * met.Sy_eta) / met.J

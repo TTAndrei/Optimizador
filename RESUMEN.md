@@ -7,7 +7,7 @@ El repo tiene ahora **dos solvers** y está partido en consecuencia. Mapa comple
 ```
 profiles/          perfiles .dat, COMPARTIDO por los dos
 docs/              memoria y documentación del proyecto
-curvo/  tests/     solver curvilíneo (malla C adaptada al cuerpo), F0–F3 cerradas
+curvo/  tests/     solver curvilíneo (malla C adaptada al cuerpo), F0–F4 cerradas
 Sim_Cartesiano/    el solver congelado y TODO lo suyo: Simulador2D.py, scripts/,
                    gui/, tests/, configs/, data/, results/, resultados_finales/,
                    plots/, figuras_memoria/, media/, lanzar_*.sh
@@ -19,6 +19,183 @@ Sim_Cartesiano/    el solver congelado y TODO lo suyo: Simulador2D.py, scripts/,
 - `Sim_Cartesiano/profiles` es un enlace simbólico a `../profiles`, para que las
   rutas `ROOT/profiles/...` de su código sigan resolviendo **sin tocar ni una línea**.
 - Los `lanzar_*.sh` son lo único suyo que cambió: `.venv/bin/python` → `../.venv/bin/python`.
+
+## SOLVER CURVILÍNEO `curvo/` — F0–F4 cerradas (2026-09-15, sin commitear)
+
+Migración a malla body-fitted, módulo aparte; `Simulador2D.py` queda congelado.
+Plan completo en `~/.claude/plans/swift-soaring-seahorse.md`.
+
+| fase | qué | estado |
+|---|---|---|
+| F0 | `malla.py` — generador C por marcha hiperbólica de Steger-Chaussee | ✅ 0.02 s/malla |
+| F1 | `metrica.py` — métricas por vértices, numpy y cupy | ✅ `div(u∞)` < 1e-15 |
+| F2 | `operadores.py` — divergencia, Green-Gauss, laplaciano de métrica completa | ✅ orden 1.99 |
+| F3 | `conveccion.py`, `multigrid.py` — convección-difusión implícita conservativa + ACM | ✅ orden 2.02, conservación 1.3e-15 |
+| F4 | `proyeccion.py` — proyección de presión, Poisson compacto + PCG | ✅ ver abajo |
+| GPU | kernels CUDA + CuPy en todo el solver | ✅ **×15.9**, ver abajo |
+| F5 | `solver.py`, `fuerzas.py`, `turbulencia.py` — NS completo, fuerzas y SA a Re=1e5 | ⏳ parcial |
+| F6 | etapa y⁺≈1, validación externa (cilindro, XFOIL) | y⁺<1 cerrado (v3); cilindro pendiente |
+
+**F4 en una línea**: el operador del multigrid **es** `D·G` (2e-16, no 1e-6),
+la divergencia residual en modo par-impar baja del 46.2 % del cartesiano a 1e-9,
+y el factor de convergencia queda en 0.03–0.07 con PCG precondicionado por el
+ciclo V. Sobre la malla C a α = 0 la presión sale simétrica a 3e-14 → **Cl = 0
+exacto**, lo que el escalonado del IBM nunca dio.
+
+Tres hallazgos que costaron: el PCG solo funciona si el ciclo V es simétrico
+(`w = 2` fijo y post-suavizado invertido; con el peso de Rayleigh el
+precondicionador no es lineal y el PCG empeora a 0.97); la línea η del suavizador
+tiene que **cruzar el corte de estela** (si no, factor 0.64 en vez de 0.10); y el
+término cruzado del corte hay que antisimetrizarlo o no cierra el balance (0.4 %).
+
+**GPU**: los módulos trabajan con el `xp` del array que reciben, así que la misma
+función corre en numpy y en cupy. **1.87 → 0.119 s por paso de tiempo** sobre la
+malla de 21 065 celdas. Dos cosas que costaron encontrar:
+
+- CuPy elemento a elemento salió **más lento que la CPU** (0.63 vs 0.43 s): con
+  21 000 celdas un ciclo V lanza ~1700 kernels diminutos y está limitado por
+  lanzamiento. Lo que gana es **fundir** cada barrido, la aglomeración y las
+  transferencias entre niveles en un kernel cada uno (~112 lanzamientos por ciclo).
+- **float32 es obligatorio**: la 3070 Ti hace fp64 a 1/64 de fp32. En float64 la
+  GPU solo gana ×4.
+
+```bash
+.venv/bin/python -m pytest tests/ -q          # 129 tests, ~4 min (15 piden GPU)
+```
+
+**F5, lo medido**. NACA 0012 a α = 5°, en los dos regímenes: laminar a Re = 1000
+(donde el flujo 2D laminar *es* la física y el criterio mide la discretización) y
+**Re = 1e5 con Spalart-Allmaras**, que es el punto de trabajo.
+
+| criterio del plan | pedido | Re = 1000 | **Re = 1e5 + SA** |
+|---|---|---|---|
+| Cl superficie vs ΔCp | < 1 % (hoy 7 %) | 0.05–0.95 % | **0.45 %** |
+| Cl superficie vs circulación | < 1 % | 1.0–5.0 % | **1.8 %** |
+| Γ estable con el lazo | < 5 % (hoy 0.65→0.29) | 9–12 % | **6.1 %** |
+| ΔCp_TE sin parche de Kutta | bajo tolerancia | −0.008 a −0.046 | **−0.025** (cartesiano −0.092 **con** parche) |
+| Cl = 0 a α = 0 | máquina | **< 1e-9** en float64 | — |
+
+A Re = 1e5 con SA el caso se asienta (Cl 0.4859, Cd 0.02125, `nu_t/nu` = 40,
+divergencia 5.8e-8) en vez de oscilar 0.302 → 0.187 → 0.200 como hacía laminar.
+
+## Defectos de malla: etapa 2 (y⁺ < 1 en TODA la pared)
+
+Desde la validación 3, `curvo.malla` viene configurado para la **etapa 2**:
+
+```python
+DN_PARED = 8.0e-5        # era 1.9e-4; y antes 2.0e-3 (etapa 1, y+ ~ 10)
+N_CAPAS_PARED = 15       # era 0
+CRECIMIENTO_PARED = 1.0  # espaciado constante en esas 15 capas
+```
+
+`generar_c(px, py)` a secas da ya la malla de producción: 99×384 = **37 534
+celdas**, `y⁺` del primer centro con **mediana 0.33, p95 0.69 y máximo 0.80**
+sobre NACA 0012 a Re = 1e5. La etapa 1 se pide a mano con `dn_pared=2e-3,
+n_capas_pared=0`.
+
+Por qué 8.0e-5 y no 1.9e-4: `y⁺` no es uniforme, `u_tau` se dispara en el pico de
+succión. Con 1.9e-4 la mediana era 0.49 pero el **máximo 1.88**, con `y⁺ > 1` en
+el 2 % del arco alrededor del morro. Cuesta +7.7 % de celdas y **+2.2 % de tiempo
+por paso**, y el refinado se concentra solo en morro y borde de salida porque
+`ASPECTO_MAX` ya fija el suelo `ds/100 ≈ 1.2e-4` en el centro de la cuerda.
+Las fuerzas no se mueven (Cl +0.01 %, Cd +0.02 %): ver `validacion/v3_ymas1_dn8e5/`.
+
+**Cada corrida escribe su `figuras/malla.png`** con todos los parámetros de malla
+y caso al pie (`M.dibujar(..., parametros=...)`), sin pedirlo.
+
+## Dónde se va el tiempo
+
+`Solver(..., cronometro=True)` reparte el paso entre sus tres etapas y
+`s.reparto()` lo devuelve en % y ms. Sincroniza la GPU antes de cada lectura del
+reloj, así que mide trabajo y no encolado — la suma da el 100 % del reloj de
+pared. Medido sobre 8 000 pasos, float32, RTX 3070 Ti:
+
+| etapa | v3 (37 534 celdas) | v2 (33 704 celdas) |
+|---|---|---|
+| **momento** (2 ecuaciones) | **49.9 % — 83.30 ms** | 50.5 % — 81.64 ms |
+| presión (Poisson + PCG) | 31.2 % — 52.16 ms | 30.3 % — 49.01 ms |
+| turbulencia (SA) | 18.9 % — 31.58 ms | 19.2 % — 30.97 ms |
+| total | 167.0 ms — 5.98 it/s | 161.6 ms — 6.18 it/s |
+
++11 % de celdas cuesta **+3.3 % de tiempo por paso**: a estos tamaños la GPU no
+se satura y lo que se paga es latencia de lanzamiento, no trabajo.
+
+El cuello **no es el Poisson**. Son **11 resoluciones de multigrid por paso**
+(momento 2 × 3, presión 3, SA 2) a ~15 ms cada una: la palanca es el número de
+correcciones externas, no una etapa suelta. Con oblicuidad p99 = 0.033 sobre
+perfiles reales, bajar `correcciones` de 2 a 1 quitaría 2 resoluciones (−18 %);
+hay que medir antes que no degrade el orden.
+
+## Validación 1: NACA 0012, α=5°, Re=1e5, contra XFOIL
+
+`validacion/v1_naca0012_re1e5_a5/` — malla y⁺≈1 (34 853 celdas, 15 capas de pared
+de espaciado constante), SA, hasta t\*=20, float32, **6.12 it/s**. `y⁺` del primer
+centro: mediana 0.49, p95 1.62, **máximo 1.88** — de ahí la validación 3, que baja
+el paso de pared a 8.0e-5 y deja el máximo en 0.80 sin mover las fuerzas.
+
+| | nuestro | XFOIL Ncrit=5 | XFOIL Ncrit=9 |
+|---|---|---|---|
+| Cl | 0.4984 | 0.6026 (**−17.3 %**) | 0.6141 (−18.8 %) |
+| Cd | 0.01931 | 0.01680 (**+15.0 %**) | 0.01674 (+15.4 %) |
+| **Cd presión** | 0.00757 | 0.00766 (**−1.1 %**) | 0.00843 (−10.2 %) |
+| Cd viscoso | 0.01174 | 0.00914 (+28 %) | 0.00831 (+41 %) |
+| Cm (c/4) | −0.00794 | −0.0064 | −0.0077 |
+
+**El Cd de presión cuadra al 1.1 %**: el campo de presión está bien y el error es
+de estado de la capa límite. XFOIL transiciona en x/c=0.27–0.37; nuestro SA es
+turbulento desde el borde de ataque, y eso predice exactamente los dos signos
+(menos Cl por descambado, más fricción). **Lo siguiente es el modelo de
+transición (SA-BC), no tocar el esquema.** El cartesiano iba **+124 % de Cd**.
+
+Comprobaciones sin ningún ajuste: `Cp` de remanso **1.005** (exacto 1) en
+x/c=0.0052 del intradós, pico de succión −1.65, `ΔCp_TE = −0.0278` **sin parche de
+Kutta** (cartesiano −0.092 **con** parche), `u⁺=y⁺` hasta `y⁺≈10`, `Cf<0` solo en
+x/c>0.966 (burbuja de borde de salida), Cd viscoso entre la placa plana laminar
+(0.0084) y la turbulenta (0.0148).
+
+**Defecto abierto**: tablero par-impar en el `Cp` de pared, amplitud 0.11 cerca
+del TE y creciendo. No es precisión (f64 = f32) ni los cruzados diferidos
+(`correcciones_p` 2 = 8). Nace en `div(m*)`, que al ser el campo ya solenoidal a
+1e-9 es ruido par-impar casi puro, y se acumula en `p += phi`. No toca a `u`, `v`
+ni a las fuerzas integradas.
+
+Dos comprobaciones independientes que salen bien y no llevan ningún ajuste:
+
+- **Placa plana contra Blasius**: `Cf/Cf_Blasius` = 1.017 / 1.015 / 1.014 / 0.995.
+  Cierra el riesgo 3 del plan — el limitador TVD no degrada la capa límite.
+- **Cd viscoso a α = 0**: 0.0871 medido frente a 2·1.328/√1000 = **0.084** de la
+  placa plana laminar de dos caras.
+- **Cd viscoso a Re = 1e5 con SA**: 0.0132 frente a 2·0.074/Re^0.2 = **0.0148**
+  de la placa plana turbulenta.
+
+**Dos bugs que tapaban a SA** (los dos arreglados, ver `curvo/operadores.py` y
+`curvo/turbulencia.py`):
+
+1. `op.gradiente` aplicaba la condición de **pared sobre el corte de estela**. La
+   cara `j=0` en la estela es cara interior, no frontera, y con `sur = 0` de no
+   deslizamiento es un salto de `u=1` a `0` en media celda a lo largo de las 18
+   cuerdas de estela: **|ω| = 495 a 1.35 cuerdas del perfil con u = 0.9923 a los
+   dos lados**. SA se lo creía y fabricaba turbulencia en la estela desde cero.
+   Con la media espejo, ω en el corte cae de 578 a 139 y a más de 0.5 cuerdas
+   del perfil pasa a ser 0.
+2. La **producción iba explícita y sin cota**: `c_b1 S~ dt = 0.45`, o sea +57 %
+   por paso. Producción y destrucción se integran ahora juntas con la solución
+   exacta de la logística `d(nt)/dt = a nt − b nt²`, positiva, monótona y acotada
+   por el equilibrio local `a/b` con cualquier `dt`. Con eso `nu_t/nu` va de 0.6
+   a 15.6 en 200 pasos en vez de llegar a 4685 en 20 y a NaN en 25.
+
+```python
+from curvo import malla as M, fuerzas as fz
+from curvo.solver import Solver
+import cupy as cp, numpy as np
+
+px, py = M.leer_dat("profiles/NACA_0012_sharp")
+X, Y, info = M.generar_c(px, py)
+s = Solver(X, Y, info, nu=1e-3, alfa=5.0, dt=5e-3, xp=cp, dtype=np.float32)
+s.correr(2000)
+print(fz.estimadores_de_cl(s.met, s.u, s.v, s.p, info, s.nu, 1.0, 5.0,
+                           bc=dict(oeste=None, este=None), corte=s.corte))
+```
 
 ## Qué es
 Simulador CFD 2D incompresible (Navier-Stokes) en GPU (CuPy, RTX 3070 Ti) para perfiles alares, base de un futuro optimizador aerodinámico. El solver cartesiano vive en `Sim_Cartesiano/Simulador2D.py` (~8000 líneas, clase `Mesh` + `main()`); el curvilíneo, en `curvo/`.

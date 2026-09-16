@@ -1,0 +1,15 @@
+malla (99, 384)  37534 celdas  dominio 25.33 x 16.31  ortogonalidad pared 85.9  oblicuidad p99 0.0333
+  t= 1.90  Cl 0.3892  Cd 0.02539  nut/nu  25.1  130s
+  t= 3.90  Cl 0.4382  Cd 0.02302  nut/nu  33.3  269s
+  t= 5.90  Cl 0.4660  Cd 0.02145  nut/nu  35.7  405s
+  t= 7.90  Cl 0.4827  Cd 0.02038  nut/nu  36.8  540s
+  t= 9.90  Cl 0.4906  Cd 0.01985  nut/nu  37.4  674s
+  t=11.90  Cl 0.4945  Cd 0.01959  nut/nu  37.7  807s
+  t=13.90  Cl 0.4965  Cd 0.01945  nut/nu  37.9  941s
+  t=15.90  Cl 0.4975  Cd 0.01938  nut/nu  38.0  1073s
+  t=17.90  Cl 0.4981  Cd 0.01934  nut/nu  38.0  1205s
+  t=19.90  Cl 0.4985  Cd 0.01932  nut/nu  38.0  1335s
+  momento       49.9 %   83.30 ms/paso
+  presion       31.2 %   52.16 ms/paso
+  turbulencia   18.9 %   31.58 ms/paso
+201 marcos, 401 filas de historia, 1342 s  |  5.96 it/s (mediana 5.98, min 5.50, max 6.29)

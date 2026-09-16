@@ -1,0 +1,18 @@
+{
+ "perfil": "NACA_0012_sharp",
+ "alfa": 5.0,
+ "re": 100000.0,
+ "u_inf": 1.0,
+ "dn_pared": 0.00019,
+ "n_capas_pared": 15,
+ "crecimiento_pared": 1.0,
+ "dt": 0.0025,
+ "t_final": 20.0,
+ "cada_historia": 20,
+ "cada_campo": 40,
+ "dominio": [
+  25.873610346051535,
+  17.525822684532557
+ ],
+ "celdas": 34853
+}

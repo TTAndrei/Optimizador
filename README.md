@@ -9,6 +9,14 @@
 ├── graphify-out/         grafo del repo (generado)
 │
 ├── curvo/                solver curvilineo sobre malla C adaptada al cuerpo
+│   ├── malla.py          generador de malla C (marcha hiperbolica)
+│   ├── metrica.py        areas de cara, volumenes, coeficientes (numpy o cupy)
+│   ├── operadores.py     divergencia, gradiente, laplaciano de metrica completa
+│   ├── multigrid.py      ACM + kernels CUDA del suavizador y la aglomeracion
+│   ├── conveccion.py     conveccion-difusion implicita conservativa (TVD)
+│   ├── proyeccion.py     proyeccion de presion, Poisson compacto + PCG
+│   ├── solver.py         Navier-Stokes por paso fraccionado
+│   └── fuerzas.py        Cl, Cd, Cm y Cp integrados sobre la pared
 ├── tests/                sus tests
 │
 └── Sim_Cartesiano/       solver cartesiano + IBM, CONGELADO, y todo lo suyo
@@ -30,7 +38,9 @@
 | malla | cartesiana + frontera inmersa | C monobloque adaptada al cuerpo |
 | superficie | rasterizada (escalonada) | **es** la linea `j=0` de la malla |
 | adveccion | semi-Lagrangiano + MacCormack | volumenes finitos conservativos, TVD, implicito |
-| estado | **congelado**, bit a bit reproducible | en construccion (F0–F3 cerradas) |
+| GPU | CuPy + kernels CUDA | CuPy + kernels CUDA, o numpy sin GPU |
+| celdas tipicas | 3.9 M | 21 k (misma resolucion de pared) |
+| estado | **congelado**, bit a bit reproducible | en construccion (F0-F4 cerradas) |
 
 `Simulador2D.py` no se toca: los resultados del TFG salieron de el y tienen que
 poder reproducirse. El trabajo nuevo va en `curvo/`, que es un modulo aparte.
@@ -42,7 +52,7 @@ del sistema no tiene CuPy.
 
 ```bash
 # --- solver curvilineo (desde la raiz) ---
-.venv/bin/python -m pytest tests/ -q
+.venv/bin/python -m pytest tests/ -q          # 13 de los tests piden GPU
 .venv/bin/python -m curvo.malla --perfil profiles/NACA_0012_sharp --figura
 
 # --- solver cartesiano (desde su carpeta) ---

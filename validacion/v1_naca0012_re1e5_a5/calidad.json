@@ -1,0 +1,28 @@
+{
+ "n_celdas": 34853.0,
+ "j_min": 2.0260648104701888e-07,
+ "j_negativos": 0.0,
+ "ortogonalidad_pared_min": 85.85025833564423,
+ "ortogonalidad_p5": 88.5900629538149,
+ "ortogonalidad_p50": 89.85679126272865,
+ "crecimiento_max": 1.1253822921435392,
+ "aspecto_p90": 94.71708364909983,
+ "aspecto_max": 506.64847554518457,
+ "oblicuidad_p99": 0.032944679909617504,
+ "oblicuidad_max": 0.07236335129953761,
+ "dn_pared_min": 0.00018756216195598856,
+ "dn_pared_max": 0.015842175416211184,
+ "dn_max": 0.9175148987664712,
+ "ds_max": 1.840786483850896,
+ "radio_le": 0.013911584924891618,
+ "dn_sobre_radio_le": 1.1387757399133736,
+ "div_uinf": 1.7607443281164592e-16,
+ "div_uinf_rel": 6.920606994878213e-16,
+ "fallos": [],
+ "avisos": [
+  "aspecto 507",
+  "paso de pared 1.14x el radio del morro"
+ ],
+ "valida": 1.0,
+ "buena": 0.0
+}

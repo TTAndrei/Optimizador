@@ -264,7 +264,7 @@ def test_el_engrosado_conserva_la_suma_de_las_filas(malla_c):
         suma_c = c.aP - c.aW - c.aE - c.aS - c.aN
         suma_c[0] -= c.aC if c.aC is not None else 0.0
         idx = kj[:, None] * c.nx + ki[None, :]
-        esperada = mg._sumar(idx, suma_f, (c.ny, c.nx))
+        esperada = mg._sumar(np, idx, suma_f, (c.ny, c.nx))
         np.testing.assert_allclose(suma_c, esperada, rtol=1e-10, atol=1e-12)
 
 

@@ -54,7 +54,7 @@ __all__ = [
 
 # --- Resolucion normal a la pared --------------------------------------------
 
-DN_PARED = 2.0e-3
+DN_PARED = 8.0e-5
 """TAMANO MINIMO DE CELDA alrededor del perfil, en cuerdas.
 
 `dn` = delta ene, espaciado en direccion **normal** a la pared. En este modulo
@@ -65,7 +65,25 @@ Es el espesor de la primera capa pegada a la pared, y el parametro que manda:
 fija la resolucion de la capa limite y, con el, casi todo lo demas.
 
     2.0e-3  ->  y+ ~ 10 a Re=1e5   (etapa 1: misma resolucion que el cartesiano)
-    1.9e-4  ->  y+ ~ 1  a Re=1e5   (etapa 2: capa limite resuelta)
+    1.9e-4  ->  y+ ~ 1  de mediana, pero **1.88 en el morro**
+    8.0e-5  ->  y+ < 1 en TODA la pared a Re=1e5                  <- DEFECTO
+
+Por que 8.0e-5 y no 1.9e-4: `y+` no es uniforme a lo largo del perfil, porque
+`u_tau` se dispara en el pico de succion. Medido en la validacion 1 (NACA 0012,
+alfa=5, Re=1e5) con 1.9e-4: mediana 0.49 pero **maximo 1.88**, con `y+ > 1` en el
+2 % de arco alrededor del borde de ataque (|s - s_le| < 0.016). El maximo escala
+con `dn`, asi que el paso que deja el morro por debajo de 1 es 1.9e-4 / 1.88, y
+8.0e-5 lo cumple con margen: **maximo 0.80, mediana 0.33, p95 0.67**.
+
+El recorte se paga poco -- 34 853 a 37 534 celdas, **+7.7 %** -- y la razon es
+ASPECTO_MAX: en el centro de la cuerda `ds/aspecto_max` ya vale ~1.2e-4, asi que
+esas columnas se quedan donde estaban y **el refinado se concentra solo donde
+`ds` es pequeno, es decir en el morro y el borde de salida**, que es exactamente
+donde hacia falta. Lo unico global son las 7 capas extra (92 -> 99) que necesita
+el plan de referencia por arrancar mas fino.
+
+De propina, resolucion de capa limite a media cuerda: celdas por debajo de
+`y+ = 15` de 16 a 23, y en el morro de 4 a 10.
 
 Bajarlo mete mas capas (el numero sale de DISTANCIA_LEJOS y CRECIMIENTO) y sube
 la relacion de aspecto junto a la pared, que es normal y deseable. **Tiene que
@@ -121,11 +139,23 @@ frente a 15.9 % con paso fijo), porque bajar el paso sin bajar CRECIMIENTO mete
 mas capas y mas ocasiones de que la malla se pliegue.
 """
 
-N_CAPAS_PARED = 0
+N_CAPAS_PARED = 15
 """Capas pegadas a la pared que crecen a CRECIMIENTO_PARED en vez de CRECIMIENTO.
 
 Un bloque de capa limite: espaciado normal casi constante cerca de la pared y
-crecimiento normal a partir de ahi. 0 = desactivado (defecto).
+crecimiento normal a partir de ahi. 0 = desactivado.
+
+**15 con CRECIMIENTO_PARED = 1 es el defecto**, junto con DN_PARED = 8.0e-5:
+medido sobre NACA 0012 a Re = 1e5, eso da `y+` del primer centro de **0.33 de
+mediana, 0.67 de p95 y 0.80 de maximo**, con 8 celdas dentro de la subcapa
+viscosa (`y+ < 5`) y 23 por debajo de `y+ = 15` a media cuerda. Cuesta 37 534
+celdas frente a 21 065 de la etapa 1.
+
+Subirlo por encima de 15 **no toca la pared**: con DN_PARED = 8.0e-5 el suelo de
+ASPECTO_MAX ya manda sobre las primeras capas de casi todas las columnas, asi que
+25 capas de bloque dan exactamente el mismo `y+` y el mismo reparto por debajo de
+`y+ = 15` -- medido, 109 capas contra 99 y ni una celda mas util cerca del
+cuerpo. Las 10 capas extra se van al campo intermedio.
 
 Por que hace falta: con los valores por defecto caben 14 capas dentro de una capa
 limite de 0.07c, pero `dn` ya ha crecido x5.4 al llegar a la capa 15 (de 1.97e-3
@@ -922,8 +952,12 @@ def calidad(X, Y, limites=None, perfil=None):
 # ----------------------------------------------------------------------------
 # CLI: barrido de validacion sobre el historial del GA
 # ----------------------------------------------------------------------------
-def dibujar(X, Y, ruta, rangos=None, titulo="", paso_i=1, paso_j=1):
+def dibujar(X, Y, ruta, rangos=None, titulo="", paso_i=1, paso_j=1, parametros=None):
     """Guarda una figura de la malla: dominio, perfil, LE, TE y corte de estela.
+
+    `parametros` es un dict que se escribe al pie de la figura, para que la
+    imagen sea autosuficiente: quien la mira sabe con que malla se corrio sin
+    abrir ningun json.
 
     Las celdas con jacobiano <= 0 se marcan en rojo, que es lo que hay que ver
     cuando el validador rechaza una geometria. matplotlib se importa aqui dentro
@@ -978,7 +1012,24 @@ def dibujar(X, Y, ruta, rangos=None, titulo="", paso_i=1, paso_j=1):
 
     aviso = f"  --  {len(malas)} celdas con jacobiano <= 0 (en rojo)" if len(malas) else ""
     fig.suptitle(f"{titulo}{aviso}", fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+    pie = dict(parametros or {})
+    pie.setdefault("malla", f"{M_}x{N_} = {(M_ - 1) * (N_ - 1)} celdas")
+    pie.setdefault("dominio", f"Lx={X.max() - X.min():.2f}c  Ly={Y.max() - Y.min():.2f}c  "
+                              f"x in [{X.min():.2f}, {X.max():.2f}]  |y| <= {Y.max():.2f}c")
+    # Ancho en caracteres de monospace de 9 pt sobre el ancho real de la figura.
+    ancho = int(fig.get_size_inches()[0] * 72 / (9 * 0.60))
+    filas, fila = [], ""
+    for k, v in pie.items():
+        t = f"{k} = {v}"
+        if fila and len(fila) + len(t) + 6 > ancho:
+            filas.append(fila); fila = ""
+        fila = f"{fila}      {t}" if fila else t
+    filas.append(fila)
+    alto = 0.023 * len(filas)
+    fig.text(0.5, 0.006, "\n".join(filas),
+             ha="center", va="bottom", fontsize=9, family="monospace")
+    fig.tight_layout(rect=[0, alto + 0.01, 1, 0.96])
     fig.savefig(ruta, dpi=135)
     plt.close(fig)
     return ruta
@@ -1055,9 +1106,21 @@ def _main(argv=None):
             base = nombre.rsplit(".", 1)[0]
             destino = os.path.join(a.figura, f"malla_{base}.png")
             estado = "BUENA" if q["buena"] else ("valida" if q["valida"] else "NO VALIDA")
-            dibujar(X, Y, destino, rangos=info,
-                    titulo=(f"{nombre} -- {estado} -- {q['n_celdas']} celdas, "
-                            f"dn_pared={info['dn_pared']:.1e}, ort_pared={q['ortogonalidad_pared_min']:.1f} deg"))
+            dibujar(X, Y, destino, rangos=info, titulo=f"{nombre} -- {estado}",
+                    parametros={
+                        "dn_pared": "%.2e c  (%d capas sin crecimiento, razon %.2f)"
+                                    % (info["dn_pared"], info["n_capas_pared"],
+                                       info["crecimiento_pared"]),
+                        "crecimiento": "%.3f normal  |  dn_max %s  |  aspecto_max %g"
+                                       % (info["crecimiento"], info["dn_max"],
+                                          info["aspecto_max"]),
+                        "superficie": "%d puntos de perfil + %d por lado de estela  |  "
+                                      "x_salida %.2f c" % (a.n_sup, a.n_estela, info["x_out"]),
+                        "calidad": "ort_pared %.1f deg  |  oblic_p99 %.4f  |  "
+                                   "aspecto_real %.0f  |  crec_max %.3f  |  J<=0: %d"
+                                   % (q["ortogonalidad_pared_min"], q["oblicuidad_p99"],
+                                      q["aspecto_max"], q["crecimiento_max"],
+                                      int(q["j_negativos"]))})
             print(f"    figura: {destino}")
 
     if a.validar_historial:

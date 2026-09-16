@@ -1,0 +1,12 @@
+malla (92, 384)  34853 celdas  ortogonalidad pared 85.9  oblicuidad p99 0.0329
+  t= 1.90  Cl 0.3887  Cd 0.02542  nut/nu  25.1  124s
+  t= 3.90  Cl 0.4372  Cd 0.02308  nut/nu  33.2  258s
+  t= 5.90  Cl 0.4641  Cd 0.02157  nut/nu  35.6  391s
+  t= 7.90  Cl 0.4811  Cd 0.02048  nut/nu  36.5  522s
+  t= 9.90  Cl 0.4897  Cd 0.01991  nut/nu  37.0  653s
+  t=11.90  Cl 0.4940  Cd 0.01962  nut/nu  37.2  785s
+  t=13.90  Cl 0.4962  Cd 0.01946  nut/nu  37.3  914s
+  t=15.90  Cl 0.4973  Cd 0.01939  nut/nu  37.3  1043s
+  t=17.90  Cl 0.4980  Cd 0.01934  nut/nu  37.3  1172s
+  t=19.90  Cl 0.4984  Cd 0.01931  nut/nu  37.3  1300s
+201 marcos, 401 filas de historia, 1307 s  |  6.12 it/s (mediana 6.12, min 5.61, max 6.45)
