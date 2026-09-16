@@ -160,14 +160,19 @@ class Solver:
 
         bdf2 = self.bdf2 and self.u_ant is not None
         nu_ef = self.nu if self.nu_t is None else self.nu + self.nu_t
+        # `u` y `v` comparten matriz y jerarquia: los coeficientes salen de los
+        # flujos, de `nu_ef` y de que caras son Dirichlet, no de su valor. Van en
+        # serie, no entrelazadas: `avanzar` reasigna `A.b` en cada correccion.
+        A, (b_u, b_v) = cv.sistema(met, self.m_xi, self.m_eta, nu_ef, self.dt,
+                                   [self.bc_u, self.bc_v], self.corte, bdf2)
         comun = dict(dt=self.dt, nu=nu_ef, corte=self.corte,
                      correcciones=self.correcciones)
         ue, _ = cv.avanzar(met, self.u, self.m_xi, self.m_eta, bc=self.bc_u,
                            fuente=-gx, phi_ant=self.u_ant if bdf2 else None,
-                           **comun)
+                           sis=(A, b_u), **comun)
         ve, _ = cv.avanzar(met, self.v, self.m_xi, self.m_eta, bc=self.bc_v,
                            fuente=-gy, phi_ant=self.v_ant if bdf2 else None,
-                           **comun)
+                           sis=(A, b_v), **comun)
         if reloj is not None:
             reloj = self._marca("momento", reloj)
 

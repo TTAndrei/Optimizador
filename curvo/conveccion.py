@@ -168,19 +168,29 @@ def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False,
     termino independiente que le corresponde lo pone `avanzar` al recibir el
     nivel anterior. Si se reutiliza el sistema entre pasos hay que construirlo
     con el mismo `bdf2` con el que se va a llamar a `avanzar`.
+
+    `bc` puede ser una **lista** de fronteras, y entonces `b_frontera` sale como
+    la lista de los suyos. Los coeficientes solo dependen de QUE caras son
+    Dirichlet, no de su valor, asi que varios campos con la misma estructura de
+    frontera -- `u` y `v` del momento -- comparten una matriz y una jerarquia en
+    vez de construir dos identicas.
     """
     xp = met.xp
-    bc = _bc_en(bc, xp)
+    varios = isinstance(bc, list)
+    bcs = [_bc_en(c, xp) for c in bc] if varios else [_bc_en(bc, xp)]
+    # Si la estructura no coincide, la matriz no sirve para ninguno de los dos y
+    # el termino de frontera saldria mal en silencio.
+    assert all((c[k] is None) == (bcs[0][k] is None) for c in bcs for k in c)
     ny, nx = met.J.shape
     tipo = met.J.dtype
-    d_xi, d_eta = _difusiones(met, nu, bc, corte)
+    d_xi, d_eta = _difusiones(met, nu, bcs[0], corte)
 
     aP = xp.zeros((ny, nx), dtype=tipo)
     aW = xp.zeros((ny, nx), dtype=tipo)
     aE = xp.zeros((ny, nx), dtype=tipo)
     aS = xp.zeros((ny, nx), dtype=tipo)
     aN = xp.zeros((ny, nx), dtype=tipo)
-    b = xp.zeros((ny, nx), dtype=tipo)
+    bs = [xp.zeros((ny, nx), dtype=tipo) for _ in bcs]
 
     # --- caras interiores -------------------------------------------------
     m, d = m_xi[:, 1:-1], d_xi[:, 1:-1]
@@ -200,47 +210,56 @@ def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False,
     # el de la este/norte, hacia fuera. Con gradiente nulo el valor de cara es el
     # de la celda y no difunde: queda el flujo convectivo neto en la diagonal.
     m, d = m_xi[:, 0], d_xi[:, 0]
-    if bc["oeste"] is None:
+    if bcs[0]["oeste"] is None:
         aP[:, 0] += -m
     else:
         aP[:, 0] += xp.maximum(-m, 0.0) + d
-        b[:, 0] += (xp.maximum(m, 0.0) + d) * bc["oeste"]
+        w = xp.maximum(m, 0.0) + d
+        for b, c in zip(bs, bcs):
+            b[:, 0] += w * c["oeste"]
 
     m, d = m_xi[:, -1], d_xi[:, -1]
-    if bc["este"] is None:
+    if bcs[0]["este"] is None:
         aP[:, -1] += m
     else:
         aP[:, -1] += xp.maximum(m, 0.0) + d
-        b[:, -1] += (xp.maximum(-m, 0.0) + d) * bc["este"]
+        w = xp.maximum(-m, 0.0) + d
+        for b, c in zip(bs, bcs):
+            b[:, -1] += w * c["este"]
 
     m, d = m_eta[-1], d_eta[-1]
-    if bc["norte"] is None:
+    if bcs[0]["norte"] is None:
         aP[-1] += m
     else:
         aP[-1] += xp.maximum(m, 0.0) + d
-        b[-1] += (xp.maximum(-m, 0.0) + d) * bc["norte"]
+        w = xp.maximum(-m, 0.0) + d
+        for b, c in zip(bs, bcs):
+            b[-1] += w * c["norte"]
 
     # Sur: pared (o salida) donde no hay corte, cara interior donde si.
     m, d = m_eta[0], d_eta[0]
-    if bc["sur"] is None:
-        ap_s, b_s = -m, xp.zeros(nx, dtype=tipo)
+    if bcs[0]["sur"] is None:
+        ap_s = -m
+        b_s = [xp.zeros(nx, dtype=tipo) for _ in bcs]
     else:
         ap_s = xp.maximum(-m, 0.0) + d
-        b_s = (xp.maximum(m, 0.0) + d) * xp.asarray(bc["sur"]) * xp.ones(nx, dtype=tipo)
+        w = xp.maximum(m, 0.0) + d
+        b_s = [w * xp.asarray(c["sur"]) * xp.ones(nx, dtype=tipo) for c in bcs]
     aC = None
     if corte is not None:
         aC = xp.where(corte, xp.maximum(m, 0.0) + d, 0.0)
         ap_s = xp.where(corte, xp.maximum(-m, 0.0) + d, ap_s)
-        b_s = xp.where(corte, 0.0, b_s)
+        b_s = [xp.where(corte, 0.0, x) for x in b_s]
     aP[0] += ap_s
-    b[0] += b_s
+    for b, x in zip(bs, b_s):
+        b[0] += x
 
     if sumidero is not None:
         aP += sumidero * met.J
     if dt is not None:
         aP += (1.5 if bdf2 else 1.0) * met.J / dt
     return Sistema(aP, aW, aE, aS, aN, xp.zeros((ny, nx), dtype=tipo), aC,
-                   activo=corte), b
+                   activo=corte), (bs if varios else bs[0])
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +414,9 @@ def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
     bdf2 = phi_ant is not None
     A, b_bc = (sis if sis is not None else
                sistema(met, m_xi, m_eta, nu, dt, bc, corte, bdf2, sumidero))
-    niveles = jerarquia(A)
+    if not hasattr(A, "_niveles"):          # se reutiliza si se reutiliza `sis`
+        A._niveles = jerarquia(A)
+    niveles = A._niveles
 
     b0 = b_bc.copy()
     if dt is not None:
