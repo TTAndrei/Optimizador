@@ -169,11 +169,12 @@ def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False,
     nivel anterior. Si se reutiliza el sistema entre pasos hay que construirlo
     con el mismo `bdf2` con el que se va a llamar a `avanzar`.
 
-    `bc` puede ser una **lista** de fronteras, y entonces `b_frontera` sale como
-    la lista de los suyos. Los coeficientes solo dependen de QUE caras son
-    Dirichlet, no de su valor, asi que varios campos con la misma estructura de
-    frontera -- `u` y `v` del momento -- comparten una matriz y una jerarquia en
-    vez de construir dos identicas.
+    `bc` puede ser una **lista** de fronteras, y entonces `b_frontera` sale
+    apilado en un array `(k, ny, nx)`. Los coeficientes solo dependen de QUE
+    caras son Dirichlet, no de su valor, asi que varios campos con la misma
+    estructura de frontera -- `u` y `v` del momento -- comparten una matriz y una
+    jerarquia en vez de construir dos identicas. Apilado y no en lista porque es
+    la forma que el multigrid necesita para resolverlos en un solo lanzamiento.
     """
     xp = met.xp
     varios = isinstance(bc, list)
@@ -190,7 +191,7 @@ def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False,
     aE = xp.zeros((ny, nx), dtype=tipo)
     aS = xp.zeros((ny, nx), dtype=tipo)
     aN = xp.zeros((ny, nx), dtype=tipo)
-    bs = [xp.zeros((ny, nx), dtype=tipo) for _ in bcs]
+    bs = xp.zeros((len(bcs), ny, nx), dtype=tipo)
 
     # --- caras interiores -------------------------------------------------
     m, d = m_xi[:, 1:-1], d_xi[:, 1:-1]
@@ -410,6 +411,13 @@ def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
     diferida: con 0 sale el upwind de 1.er orden puro. Tambien decide la
     acotacion: el sobreimpulso de un escalon advectado baja de -4.9e-4 con una
     iteracion a -1.5e-7 con cuatro.
+
+    Con `bc` como **lista**, `phi`, `fuente` y `phi_ant` son `(k, ny, nx)` y los
+    campos se avanzan a la vez: comparten matriz, jerarquia y **lanzamiento de
+    kernel**, y solo la correccion diferida se evalua por campo, que es la unica
+    parte que depende de los valores de frontera. No se acoplan entre si -- la
+    aritmetica de cada uno es la misma que en serie, solo intercalada -- pero
+    paran juntos, cuando todos cumplen su propio criterio de residuo.
     """
     bdf2 = phi_ant is not None
     A, b_bc = (sis if sis is not None else
@@ -427,6 +435,11 @@ def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
     x = phi.copy()
     info = {}
     for _ in range(correcciones + 1):
-        A.b = b0 + fuente_diferida(met, x, m_xi, m_eta, nu, bc, corte)
+        if isinstance(bc, list):
+            dif = met.xp.stack([fuente_diferida(met, y, m_xi, m_eta, nu, c, corte)
+                                for y, c in zip(x, bc)])
+        else:
+            dif = fuente_diferida(met, x, m_xi, m_eta, nu, bc, corte)
+        A.b = b0 + dif
         x, info = resolver(A, x, tol=tol, ciclos=ciclos, niveles=niveles)
     return x, info

@@ -257,6 +257,196 @@ void zebra_xi({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
 }
 
 
+// -- gemelos de dos campos --------------------------------------------------
+// `phi` y `b` son (2, ny, nx) contiguos; los coeficientes se comparten y se leen
+// una sola vez. Los coeficientes de la recursion (`cp`) no dependen del termino
+// independiente, asi que tambien se calculan una vez: solo `dp` va por campo.
+//
+// Los dos campos van en escalares `d0`, `d1`, no en un `d[nc]` recorrido por un
+// bucle: con el limite en tiempo de ejecucion el array no cabe en registros, se
+// va a memoria local y el kernel sale **mas lento que las dos llamadas en serie**
+// (medido: 0.73x). Con escalares, 36 registros por hilo, cero memoria local, y
+// 1.76x. Por eso son kernels gemelos y no una generalizacion a `nc` campos.
+
+extern "C" __global__
+void zebra_eta2({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+                const {T}* aS, const {T}* aN, const {T}* b,
+                const int* cols, {T}* cp, {T}* dp,
+                const int L, const int ny, const int nx)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= L) return;
+    int i = cols[t];
+    int N = ny * nx;
+
+    {T} c = 0, d0 = 0, d1 = 0;
+    for (int k = 0; k < ny; ++k) {
+        int o = k * nx + i;
+        {T} aSo = aS[o], aWo = aW[o], aEo = aE[o];
+        {T} inv = ({T})1 / (aP[o] + aSo * c);
+        {T} r0 = b[o], r1 = b[N + o];
+        if (i > 0)      { r0 += aWo * phi[o - 1];  r1 += aWo * phi[N + o - 1]; }
+        if (i < nx - 1) { r0 += aEo * phi[o + 1];  r1 += aEo * phi[N + o + 1]; }
+        d0 = (r0 + aSo * d0) * inv;
+        d1 = (r1 + aSo * d1) * inv;
+        c = -aN[o] * inv;
+        int q = (k * L + t) * 2;
+        cp[k * L + t] = c;
+        dp[q] = d0; dp[q + 1] = d1;
+    }
+    phi[(ny - 1) * nx + i] = d0;
+    phi[N + (ny - 1) * nx + i] = d1;
+    for (int k = ny - 2; k >= 0; --k) {
+        {T} cc = cp[k * L + t];
+        int q = (k * L + t) * 2;
+        d0 = dp[q] - cc * d0;
+        d1 = dp[q + 1] - cc * d1;
+        phi[k * nx + i] = d0;
+        phi[N + k * nx + i] = d1;
+    }
+}
+
+extern "C" __global__
+void zebra_eta_par2({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+                    const {T}* aS, const {T}* aN, const {T}* aC, const {T}* b,
+                    const int* cols, {T}* cp, {T}* dp,
+                    const int L, const int ny, const int nx)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= L) return;
+    int ia = cols[t];
+    int ib = nx - 1 - ia;
+    int n = 2 * ny;
+    int N = ny * nx;
+
+    {T} c = 0, d0 = 0, d1 = 0;
+    for (int k = 0; k < n; ++k) {
+        int fila = (k < ny) ? (ny - 1 - k) : (k - ny);
+        int i    = (k < ny) ? ia : ib;
+        int o    = fila * nx + i;
+        {T} sub, sup;
+        if (k < ny) {                       // baja por la columna ia
+            sub = -aN[o];
+            sup = (k == ny - 1) ? -aC[ia] : -aS[o];
+        } else {                            // sube por la columna espejo
+            sub = (fila == 0) ? -aC[ib] : -aS[o];
+            sup = -aN[o];
+        }
+        {T} aWo = aW[o], aEo = aE[o];
+        {T} inv = ({T})1 / (aP[o] - sub * c);
+        {T} r0 = b[o], r1 = b[N + o];
+        if (i > 0)      { r0 += aWo * phi[o - 1];  r1 += aWo * phi[N + o - 1]; }
+        if (i < nx - 1) { r0 += aEo * phi[o + 1];  r1 += aEo * phi[N + o + 1]; }
+        d0 = (r0 - sub * d0) * inv;
+        d1 = (r1 - sub * d1) * inv;
+        c = sup * inv;
+        int q = (k * L + t) * 2;
+        cp[k * L + t] = c;
+        dp[q] = d0; dp[q + 1] = d1;
+    }
+    phi[(n - 1 - ny) * nx + ib] = d0;       // ultima incognita: fila ny-1, col ib
+    phi[N + (n - 1 - ny) * nx + ib] = d1;
+    for (int k = n - 2; k >= 0; --k) {
+        {T} cc = cp[k * L + t];
+        int q = (k * L + t) * 2;
+        d0 = dp[q] - cc * d0;
+        d1 = dp[q + 1] - cc * d1;
+        int fila = (k < ny) ? (ny - 1 - k) : (k - ny);
+        int i    = (k < ny) ? ia : ib;
+        phi[fila * nx + i] = d0;
+        phi[N + fila * nx + i] = d1;
+    }
+}
+
+extern "C" __global__
+void zebra_xi2({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+               const {T}* aS, const {T}* aN, const {T}* aC, const {T}* b,
+               const int* filas, {T}* cp, {T}* dp,
+               const int L, const int ny, const int nx, const int hay_corte)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= L) return;
+    int f = filas[t];
+    int N = ny * nx;
+
+    {T} c = 0, d0 = 0, d1 = 0;
+    for (int k = 0; k < nx; ++k) {
+        int o = f * nx + k;
+        {T} aWo = aW[o], aSo = aS[o], aNo = aN[o];
+        {T} inv = ({T})1 / (aP[o] + aWo * c);
+        {T} r0 = b[o], r1 = b[N + o];
+        if (f > 0)      { r0 += aSo * phi[o - nx];  r1 += aSo * phi[N + o - nx]; }
+        if (f < ny - 1) { r0 += aNo * phi[o + nx];  r1 += aNo * phi[N + o + nx]; }
+        if (hay_corte && f == 0) {
+            {T} aCk = aC[k];
+            r0 += aCk * phi[nx - 1 - k];
+            r1 += aCk * phi[N + nx - 1 - k];
+        }
+        d0 = (r0 + aWo * d0) * inv;
+        d1 = (r1 + aWo * d1) * inv;
+        c = -aE[o] * inv;
+        int q = (k * L + t) * 2;
+        cp[k * L + t] = c;
+        dp[q] = d0; dp[q + 1] = d1;
+    }
+    phi[f * nx + nx - 1] = d0;
+    phi[N + f * nx + nx - 1] = d1;
+    for (int k = nx - 2; k >= 0; --k) {
+        {T} cc = cp[k * L + t];
+        int q = (k * L + t) * 2;
+        d0 = dp[q] - cc * d0;
+        d1 = dp[q + 1] - cc * d1;
+        phi[f * nx + k] = d0;
+        phi[N + f * nx + k] = d1;
+    }
+}
+
+extern "C" __global__
+void aplicar2({T}* r, const {T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+              const {T}* aS, const {T}* aN, const {T}* aC, const {T}* b,
+              const int ny, const int nx, const int hay_corte, const int residuo)
+{
+    int o = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = ny * nx;
+    if (o >= N) return;
+    int i = o % nx;
+    int j = o / nx;
+    {T} aPo = aP[o];
+    {T} v0 = aPo * phi[o], v1 = aPo * phi[N + o];
+    if (i > 0)      { {T} a = aW[o]; v0 -= a * phi[o - 1];  v1 -= a * phi[N + o - 1]; }
+    if (i < nx - 1) { {T} a = aE[o]; v0 -= a * phi[o + 1];  v1 -= a * phi[N + o + 1]; }
+    if (j > 0)      { {T} a = aS[o]; v0 -= a * phi[o - nx]; v1 -= a * phi[N + o - nx]; }
+    if (j < ny - 1) { {T} a = aN[o]; v0 -= a * phi[o + nx]; v1 -= a * phi[N + o + nx]; }
+    if (hay_corte && j == 0) {
+        {T} a = aC[i];
+        v0 -= a * phi[nx - 1 - i];
+        v1 -= a * phi[N + nx - 1 - i];
+    }
+    r[o]     = residuo ? (b[o] - v0)     : v0;
+    r[N + o] = residuo ? (b[N + o] - v1) : v1;
+}
+
+extern "C" __global__
+void restringir2({T}* rc, const {T}* r,
+                 const int* jini, const int* jfin, const int* iini, const int* ifin,
+                 const int ncy, const int ncx, const int ny, const int nx)
+{
+    int o = blockIdx.x * blockDim.x + threadIdx.x;
+    int Nc = ncy * ncx;
+    if (o >= Nc) return;
+    int I = o % ncx;
+    int J = o / ncx;
+    int N = ny * nx;
+    {T} s0 = 0, s1 = 0;
+    for (int j = jini[J]; j <= jfin[J]; ++j)
+        for (int i = iini[I]; i <= ifin[I]; ++i) {
+            s0 += r[j * nx + i];
+            s1 += r[N + j * nx + i];
+        }
+    rc[o] = s0;
+    rc[Nc + o] = s1;
+}
+
 extern "C" __global__
 void engrosar({T}* aPc, {T}* aWc, {T}* aEc, {T}* aSc, {T}* aNc, {T}* aCc,
               const {T}* aP, const {T}* aW, const {T}* aE, const {T}* aS,
@@ -381,6 +571,10 @@ class Sistema:
             self._k_par = mod.get_function("zebra_eta_par")
             self._k_xi = mod.get_function("zebra_xi")
             self._k_apl = mod.get_function("aplicar")
+            self._k_eta2 = mod.get_function("zebra_eta2")
+            self._k_par2 = mod.get_function("zebra_eta_par2")
+            self._k_xi2 = mod.get_function("zebra_xi2")
+            self._k_apl2 = mod.get_function("aplicar2")
             self._cero = self.xp.zeros(self.nx, dtype=aP.dtype)
             self._rasca = {}
 
@@ -418,23 +612,34 @@ class Sistema:
         self._par_espejo = [self.nx - 1 - c for c in self._par]
         self._fil = [xp.asarray(np.arange(k, self.ny, 2), dtype=tipo) for k in (0, 1)]
 
-    def _scratch(self, n, L):
-        clave = (n, int(L))
+    def _scratch(self, n, L, nc=1):
+        """`(cp, dp)` de la recursion. `cp` es comun a los campos, `dp` no.
+
+        Los coeficientes `c` de Thomas salen solo de la matriz, asi que con dos
+        campos se calculan una vez. `dp` va intercalado por campo (`n, L, nc`):
+        las dos escrituras de una celda caen juntas.
+        """
+        clave = (n, int(L), nc)
         if clave not in self._rasca:
-            self._rasca[clave] = self.xp.empty((2, n, int(L)), dtype=self.aP.dtype)
+            tipo = self.aP.dtype
+            self._rasca[clave] = (self.xp.empty((n, int(L)), dtype=tipo),
+                                  self.xp.empty((n, int(L), nc), dtype=tipo))
         return self._rasca[clave]
 
     def aplicar(self, phi, b=None, residuo=False):
         if self.gpu:
             r = self.xp.empty_like(phi)
             n = self.ny * self.nx
-            self._k_apl(*_rejilla(n), (
+            kern = self._k_apl2 if phi.ndim == 3 else self._k_apl
+            kern(*_rejilla(n), (
                 r, phi, self.aP, self.aW, self.aE, self.aS, self.aN,
                 self._cero if self.aC is None else self.aC,
                 self._cero if b is None else b,
                 np.int32(self.ny), np.int32(self.nx),
                 np.int32(self.aC is not None), np.int32(residuo)))
             return r
+        if phi.ndim == 3:                   # en CPU los campos van en bucle
+            return self.xp.stack([self.aplicar(x) for x in phi])
         r = self.aP * phi
         r[:, 1:] -= self.aW[:, 1:] * phi[:, :-1]
         r[:, :-1] -= self.aE[:, :-1] * phi[:, 1:]
@@ -484,20 +689,29 @@ class Sistema:
         """
         xp = self.xp
         if self.gpu:
+            nc = phi.shape[0] if phi.ndim == 3 else 1
             c = self._col[paridad]
             if c.size:
-                ra = self._scratch(self.ny, c.size)
-                self._k_eta(*_rejilla(c.size), (
+                cp_, dp = self._scratch(self.ny, c.size, nc)
+                (self._k_eta2 if nc == 2 else self._k_eta)(*_rejilla(c.size), (
                     phi, self.aP, self.aW, self.aE, self.aS, self.aN, self.b,
-                    c, ra[0], ra[1], np.int32(c.size), np.int32(self.ny),
+                    c, cp_, dp, np.int32(c.size), np.int32(self.ny),
                     np.int32(self.nx)))
             a = self._par[paridad]
             if a.size:
-                ra = self._scratch(2 * self.ny, a.size)
-                self._k_par(*_rejilla(a.size), (
+                cp_, dp = self._scratch(2 * self.ny, a.size, nc)
+                (self._k_par2 if nc == 2 else self._k_par)(*_rejilla(a.size), (
                     phi, self.aP, self.aW, self.aE, self.aS, self.aN,
-                    self.aC, self.b, a, ra[0], ra[1], np.int32(a.size),
+                    self.aC, self.b, a, cp_, dp, np.int32(a.size),
                     np.int32(self.ny), np.int32(self.nx)))
+            return
+
+        if phi.ndim == 3:                   # en CPU los campos van en bucle
+            b_todo = self.b
+            for q, x in enumerate(phi):
+                self.b = b_todo[q]
+                self._lineas_eta(x, paridad)
+            self.b = b_todo
             return
 
         c = self._col[paridad]
@@ -532,12 +746,20 @@ class Sistema:
         if f.size == 0:
             return
         if self.gpu:
-            ra = self._scratch(self.nx, f.size)
-            self._k_xi(*_rejilla(f.size), (
+            nc = phi.shape[0] if phi.ndim == 3 else 1
+            cp_, dp = self._scratch(self.nx, f.size, nc)
+            (self._k_xi2 if nc == 2 else self._k_xi)(*_rejilla(f.size), (
                 phi, self.aP, self.aW, self.aE, self.aS, self.aN,
                 self._cero if self.aC is None else self.aC, self.b,
-                f, ra[0], ra[1], np.int32(f.size), np.int32(self.ny),
+                f, cp_, dp, np.int32(f.size), np.int32(self.ny),
                 np.int32(self.nx), np.int32(self.aC is not None)))
+            return
+        if phi.ndim == 3:
+            b_todo = self.b
+            for q, x in enumerate(phi):
+                self.b = b_todo[q]
+                self._lineas_xi(x, paridad)
+            self.b = b_todo
             return
         d = (self.b + self._retrasado_eta(phi))[f, :].T
         phi[f, :] = _thomas(-self.aW[f, :].T, self.aP[f, :].T,
@@ -733,14 +955,24 @@ def ciclo_v(niveles, phi, nivel=0, pre=2, post=2, grueso=4, w=None):
     sis.suavizar(phi, pre)
     sc, kj, ki = niveles[nivel + 1]
     r = sis.residuo(phi)
-    if sis.gpu:
+    nc = phi.shape[0] if phi.ndim == 3 else 1
+    if sis.gpu and nc == 2:
+        bloq, _ = sc._bloq
+        sc.b = xp.empty((2, sc.ny, sc.nx), dtype=phi.dtype)
+        _modulo(phi.dtype).get_function("restringir2")(*_rejilla(sc.ny * sc.nx), (
+            sc.b, r, *bloq, np.int32(sc.ny), np.int32(sc.nx), np.int32(sis.ny),
+            np.int32(sis.nx)))
+    elif sis.gpu:
         bloq, _ = sc._bloq
         sc.b = xp.empty((sc.ny, sc.nx), dtype=phi.dtype)
         _modulo(phi.dtype).get_function("restringir")(*_rejilla(sc.ny * sc.nx), (
             sc.b, r, *bloq, np.int32(sc.ny), np.int32(sc.nx), np.int32(sis.nx)))
+    elif nc == 2:
+        idx = kj[:, None] * sc.nx + ki[None, :]
+        sc.b = xp.stack([_sumar(xp, idx, x, (sc.ny, sc.nx)) for x in r])
     else:
         sc.b = _sumar(xp, kj[:, None] * sc.nx + ki[None, :], r, (sc.ny, sc.nx))
-    e = xp.zeros((sc.ny, sc.nx), dtype=phi.dtype)
+    e = xp.zeros(phi.shape[:-2] + (sc.ny, sc.nx), dtype=phi.dtype)
     ciclo_v(niveles, e, nivel + 1, pre, post, grueso, w)
 
     if sis.gpu and w is not None:
@@ -751,14 +983,19 @@ def ciclo_v(niveles, phi, nivel=0, pre=2, post=2, grueso=4, w=None):
         sis.suavizar(phi, post, invertido=True)
         return phi
 
-    ef = e[kj[:, None], ki[None, :]]
+    ef = e[..., kj[:, None], ki[None, :]]
     if w is None:
         # El peso se deja como escalar **en el dispositivo**: sacarlo a la CPU
         # con float() obliga a sincronizar dos veces por nivel y por ciclo, que
-        # sobre una malla de 21 000 celdas cuesta mas que el propio ciclo.
-        den = (ef * sis.aplicar(ef)).sum()
-        num = (r * ef).sum()
+        # sobre una malla de 21 000 celdas cuesta mas que el propio ciclo. Con
+        # dos campos es un peso por campo: el cociente de Rayleigh minimiza el
+        # error de **cada** correccion, y compartirlo los estropearia a los dos.
+        ejes = (-2, -1)
+        den = (ef * sis.aplicar(ef)).sum(axis=ejes)
+        num = (r * ef).sum(axis=ejes)
         peso = xp.clip(num / xp.where(xp.abs(den) > 1e-30, den, 1e-30), 0.5, 4.0)
+        if nc > 1:
+            peso = peso[:, None, None]
     else:
         peso = w
     phi += peso * ef
@@ -773,13 +1010,20 @@ def resolver(sis, phi=None, tol=None, ciclos=60, pre=2, post=2, niveles=None):
         phi = xp.zeros_like(sis.aP)
     niveles = niveles if niveles is not None else jerarquia(sis)
     tol = tolerancia(sis.aP.dtype, tol)
-    escala = max(float(xp.abs(sis.b).max()), 1e-300)
-    hist = [float(xp.abs(sis.residuo(phi)).max()) / escala]
+    # Con varios campos cada uno se normaliza por **su** termino independiente y
+    # se para cuando todos cumplen su propio criterio. Normalizar los dos por el
+    # maximo comun relajaria al pequeño: a alfa = 5 grados el termino de `v` es
+    # un orden menor que el de `u` y se daria por convergido antes de tiempo.
+    ejes = (-2, -1)
+    escala = xp.maximum(xp.abs(sis.b).max(axis=ejes), 1e-30)
+    def resid():
+        return float((xp.abs(sis.residuo(phi)).max(axis=ejes) / escala).max())
+    hist = [resid()]
     cada = 1 if xp is np else 2
     for k in range(ciclos):
         ciclo_v(niveles, phi, pre=pre, post=post)
         if k % cada == cada - 1 or k == ciclos - 1:
-            hist.append(float(xp.abs(sis.residuo(phi)).max()) / escala)
+            hist.append(resid())
             if hist[-1] <= tol:
                 break
     utiles = [b / a for a, b in zip(hist[:-1], hist[1:]) if a > 0.0]

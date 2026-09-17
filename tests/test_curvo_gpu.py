@@ -125,6 +125,55 @@ def test_el_suavizador_coincide(par, tipo):
         assert maxabs(pg - cp.asarray(pc)) / maxabs(pc) < 1e-12
 
 
+@pytest.mark.parametrize("tipo", ["presion", "conveccion"])
+def test_el_suavizador_de_dos_campos_coincide(par, tipo):
+    """Los kernels fundidos contra la rama CPU, que recorre los campos en bucle.
+
+    Es el oraculo de los gemelos de dos campos: en GPU un hilo arrastra las dos
+    recursiones de Thomas a la vez, en CPU son dos barridos independientes.
+    """
+    a, b = sistemas(par, tipo)
+    rng = np.random.default_rng(2)
+    rhs = rng.standard_normal((2,) + a.aP.shape)
+    a.b, b.b = rhs.copy(), cp.asarray(rhs)
+    pc = np.zeros_like(rhs)
+    pg = cp.zeros_like(b.b)
+    for _ in range(3):
+        a.suavizar(pc, 1)
+        b.suavizar(pg, 1)
+        assert maxabs(pg - cp.asarray(pc)) / maxabs(pc) < 1e-12
+    # `aplicar` sobre un campo dado, no sobre el suavizado: el residuo de un
+    # Poisson es una resta con cancelacion y amplificaria el error del campo.
+    x = rng.standard_normal(rhs.shape)
+    assert maxabs(b.aplicar(cp.asarray(x)) - cp.asarray(a.aplicar(x))) \
+        / maxabs(a.aplicar(x)) < 1e-12
+
+
+def test_dos_campos_dan_lo_mismo_que_dos_llamadas(par):
+    """Fundir no acopla: la aritmetica de cada campo es la de resolverlo solo.
+
+    La unica desviacion admisible sale del peso de Rayleigh, que con dos campos
+    se reduce por ejes en vez de entero y cupy no garantiza el mismo orden de
+    suma; queda por debajo del epsilon de la precision.
+    """
+    _, b = sistemas(par, "conveccion")
+    rng = np.random.default_rng(3)
+    rhs = cp.asarray(rng.standard_normal((2,) + b.aP.shape))
+    niveles = jerarquia(b)
+
+    solos = []
+    for q in range(2):
+        b.b = rhs[q].copy()
+        x = cp.zeros_like(b.aP)
+        ciclo_v(niveles, x)
+        solos.append(x)
+    b.b = rhs.copy()
+    juntos = cp.zeros_like(rhs)
+    ciclo_v(niveles, juntos)
+    for q in range(2):
+        assert maxabs(juntos[q] - solos[q]) / maxabs(solos[q]) < 1e-14
+
+
 def test_el_ciclo_v_coincide(par):
     a, b = sistemas(par, "presion")
     rng = np.random.default_rng(1)
