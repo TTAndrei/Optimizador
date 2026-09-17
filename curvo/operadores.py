@@ -37,32 +37,36 @@ __all__ = [
 # Derivadas en caras
 # ---------------------------------------------------------------------------
 def dif_xi_caras(phi, oeste=None, este=None):
-    """d(phi)/d(xi) en las caras xi. phi (ny,nx) -> (ny, nx+1).
+    """d(phi)/d(xi) en las caras xi. phi (...,ny,nx) -> (..., ny, nx+1).
 
     En las caras de borde la distancia al centro de celda es media celda, de ahi
     el factor 2. Sin valor de Dirichlet se toma gradiente nulo.
+
+    Los dos ultimos ejes son la malla; delante puede ir un eje de campos, y
+    entonces los valores de Dirichlet vienen con su propio eje. Es lo que permite
+    evaluar la correccion diferida de `u` y `v` de una vez.
     """
     xp = xp_de(phi)
-    ny, nx = phi.shape
-    d = xp.zeros((ny, nx + 1), dtype=phi.dtype)
-    d[:, 1:-1] = phi[:, 1:] - phi[:, :-1]
+    ny, nx = phi.shape[-2:]
+    d = xp.zeros(phi.shape[:-2] + (ny, nx + 1), dtype=phi.dtype)
+    d[..., 1:-1] = phi[..., 1:] - phi[..., :-1]
     if oeste is not None:
-        d[:, 0] = 2.0 * (phi[:, 0] - oeste)
+        d[..., 0] = 2.0 * (phi[..., 0] - oeste)
     if este is not None:
-        d[:, -1] = 2.0 * (este - phi[:, -1])
+        d[..., -1] = 2.0 * (este - phi[..., -1])
     return d
 
 
 def dif_eta_caras(phi, sur=None, norte=None):
-    """d(phi)/d(eta) en las caras eta. phi (ny,nx) -> (ny+1, nx)."""
+    """d(phi)/d(eta) en las caras eta. phi (...,ny,nx) -> (..., ny+1, nx)."""
     xp = xp_de(phi)
-    ny, nx = phi.shape
-    d = xp.zeros((ny + 1, nx), dtype=phi.dtype)
-    d[1:-1, :] = phi[1:, :] - phi[:-1, :]
+    ny, nx = phi.shape[-2:]
+    d = xp.zeros(phi.shape[:-2] + (ny + 1, nx), dtype=phi.dtype)
+    d[..., 1:-1, :] = phi[..., 1:, :] - phi[..., :-1, :]
     if sur is not None:
-        d[0, :] = 2.0 * (phi[0, :] - sur)
+        d[..., 0, :] = 2.0 * (phi[..., 0, :] - sur)
     if norte is not None:
-        d[-1, :] = 2.0 * (norte - phi[-1, :])
+        d[..., -1, :] = 2.0 * (norte - phi[..., -1, :])
     return d
 
 
@@ -74,15 +78,17 @@ def a_caras_xi(g_eta):
     coeficiente y derivada se evaluan en el mismo sitio.
     """
     xp = xp_de(g_eta)
-    p = xp.concatenate([g_eta[:, :1], g_eta, g_eta[:, -1:]], axis=1)
-    return 0.25 * (p[:-1, :-1] + p[:-1, 1:] + p[1:, :-1] + p[1:, 1:])
+    p = xp.concatenate([g_eta[..., :1], g_eta, g_eta[..., -1:]], axis=-1)
+    return 0.25 * (p[..., :-1, :-1] + p[..., :-1, 1:]
+                   + p[..., 1:, :-1] + p[..., 1:, 1:])
 
 
 def a_caras_eta(g_xi):
     """Lleva una magnitud de caras xi (ny,nx+1) a caras eta (ny+1,nx)."""
     xp = xp_de(g_xi)
-    p = xp.concatenate([g_xi[:1, :], g_xi, g_xi[-1:, :]], axis=0)
-    return 0.25 * (p[:-1, :-1] + p[:-1, 1:] + p[1:, :-1] + p[1:, 1:])
+    p = xp.concatenate([g_xi[..., :1, :], g_xi, g_xi[..., -1:, :]], axis=-2)
+    return 0.25 * (p[..., :-1, :-1] + p[..., :-1, 1:]
+                   + p[..., 1:, :-1] + p[..., 1:, 1:])
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +100,8 @@ def divergencia(F_xi, F_eta):
     Integrada sobre el volumen: no se divide por J. Un campo de flujos de una
     corriente uniforme da cero en maquina por telescopado de las areas de cara.
     """
-    return (F_xi[:, 1:] - F_xi[:, :-1]) + (F_eta[1:, :] - F_eta[:-1, :])
+    return ((F_xi[..., 1:] - F_xi[..., :-1])
+            + (F_eta[..., 1:, :] - F_eta[..., :-1, :]))
 
 
 def gradiente(met, phi, oeste=None, este=None, sur=None, norte=None,

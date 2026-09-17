@@ -269,7 +269,9 @@ def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False,
 def _limitada(phi, m, a_izq=None, a_der=None):
     """Incremento de flujo (2.º orden TVD - upwind) en las caras internas del eje 1.
 
-    `phi` (n, K) por celdas, `m` (n, K-1) flujo en las K-1 caras internas.
+    `phi` (..., n, K) por celdas, `m` (n, K-1) flujo en las K-1 caras internas.
+    Delante de la malla puede ir un eje de campos; `m` no lo lleva, porque el
+    flujo de masa es el mismo para todos, y se difunde.
     Limitador de Van Leer escrito como pendiente, `2ab/(a+b)` si `ab > 0` y 0 si
     no: asi no hay que dividir por el salto aguas abajo y no hay denominador que
     proteger.
@@ -282,23 +284,23 @@ def _limitada(phi, m, a_izq=None, a_der=None):
     factor 2 que pone quien llama) o con la celda espejo del corte, se recupera.
     """
     xp = xp_de(phi)
-    P, E = phi[:, :-1], phi[:, 1:]
+    P, E = phi[..., :-1], phi[..., 1:]
     salto = E - P
     a_pos = xp.zeros_like(salto)
-    a_pos[:, 1:] = P[:, 1:] - P[:, :-1]            # phi_U - phi_UU con m > 0
+    a_pos[..., 1:] = P[..., 1:] - P[..., :-1]      # phi_U - phi_UU con m > 0
     a_neg = xp.zeros_like(salto)
-    a_neg[:, :-1] = E[:, :-1] - E[:, 1:]           # phi_U - phi_UU con m < 0
+    a_neg[..., :-1] = E[..., :-1] - E[..., 1:]     # phi_U - phi_UU con m < 0
 
     hay_uu = xp.ones(salto.shape, dtype=bool)
     pos = m > 0.0
     if a_izq is None:
-        hay_uu[:, 0] &= ~pos[:, 0]
+        hay_uu[..., 0] &= ~pos[..., 0]
     else:
-        a_pos[:, 0] = a_izq
+        a_pos[..., 0] = a_izq
     if a_der is None:
-        hay_uu[:, -1] &= pos[:, -1]
+        hay_uu[..., -1] &= pos[..., -1]
     else:
-        a_neg[:, -1] = a_der
+        a_neg[..., -1] = a_der
 
     a = xp.where(pos, a_pos, a_neg)
     sa = xp.where(pos, salto, -salto)
@@ -325,52 +327,75 @@ def fuente_diferida(met, phi, m_xi, m_eta, nu=0.0, bc=None, corte=None):
         -div(F_conv_2 - F_conv_upwind) + div(F_dif_cruzada)
     """
     xp = met.xp
-    bc = _bc_en(bc, xp)
     ny, nx = met.J.shape
     tipo = phi.dtype
+    if isinstance(bc, list):
+        # Un valor de Dirichlet por campo, apilado en el eje de campos: los
+        # escalares salen (k,1) y los perfiles (k,n), y los dos se difunden
+        # contra la cara. Es lo unico de la correccion diferida que depende del
+        # campo; el resto son los mismos flujos y la misma metrica.
+        #
+        # Sin forzar el tipo: un valor suelto llega como float de Python, y al
+        # multiplicarlo por la cara promociona a doble precision. Redondearlo
+        # antes a la precision del campo cambia el termino de la capa de pared.
+        bcs = [_bc_en(c, xp) for c in bc]
+        bc = {k: (None if bcs[0][k] is None else xp.stack(xp.broadcast_arrays(
+                  *[xp.reshape(xp.asarray(c[k]), -1) for c in bcs])))
+              for k in bcs[0]}
+    else:
+        bc = _bc_en(bc, xp)
+    cabeza = phi.shape[:-2]
 
-    a_s = _pendiente_borde(phi[0], bc["sur"], nx)
+    a_s = _pendiente_borde(phi[..., 0, :], bc["sur"], nx)
     if corte is not None:                       # el corte tiene celda espejo
-        espejo = phi[0] - phi[0, ::-1]
+        espejo = phi[..., 0, :] - phi[..., 0, ::-1]
         a_s = espejo if a_s is None else xp.where(corte, espejo, a_s)
 
-    c_xi = xp.zeros((ny, nx + 1), dtype=tipo)
-    c_xi[:, 1:-1] = _limitada(phi, m_xi[:, 1:-1],
-                              _pendiente_borde(phi[:, 0], bc["oeste"], ny),
-                              _pendiente_borde(phi[:, -1], bc["este"], ny))
-    c_eta = xp.zeros((ny + 1, nx), dtype=tipo)
-    c_eta[1:-1, :] = _limitada(phi.T, m_eta[1:-1, :].T, a_s,
-                               _pendiente_borde(phi[-1], bc["norte"], nx)).T
+    c_xi = xp.zeros(cabeza + (ny, nx + 1), dtype=tipo)
+    c_xi[..., 1:-1] = _limitada(phi, m_xi[:, 1:-1],
+                                _pendiente_borde(phi[..., :, 0], bc["oeste"], ny),
+                                _pendiente_borde(phi[..., :, -1], bc["este"], ny))
+    c_eta = xp.zeros(cabeza + (ny + 1, nx), dtype=tipo)
+    tr = lambda a: a.swapaxes(-1, -2)                               # noqa: E731
+    c_eta[..., 1:-1, :] = tr(_limitada(
+        tr(phi), m_eta[1:-1, :].T, a_s,
+        _pendiente_borde(phi[..., -1, :], bc["norte"], nx)))
 
     # Caras de frontera por las que SALE flujo: el upwind es la celda interior,
     # asi que el valor de cara se extrapola linealmente con la celda siguiente.
     # Sin esto el error es de 1.er orden en una franja de una celda de ancho y el
     # orden global se queda en 1.50 (medido); con ello sube a 1.95.
     m = m_xi[:, 0]
-    c_xi[:, 0] = xp.where(m < 0.0, m * 0.5 * (phi[:, 0] - phi[:, 1]), 0.0)
+    c_xi[..., 0] = xp.where(m < 0.0,
+                            m * 0.5 * (phi[..., :, 0] - phi[..., :, 1]), 0.0)
     m = m_xi[:, -1]
-    c_xi[:, -1] = xp.where(m > 0.0, m * 0.5 * (phi[:, -1] - phi[:, -2]), 0.0)
+    c_xi[..., -1] = xp.where(m > 0.0,
+                             m * 0.5 * (phi[..., :, -1] - phi[..., :, -2]), 0.0)
     m = m_eta[-1]
-    c_eta[-1] = xp.where(m > 0.0, m * 0.5 * (phi[-1] - phi[-2]), 0.0)
+    c_eta[..., -1, :] = xp.where(
+        m > 0.0, m * 0.5 * (phi[..., -1, :] - phi[..., -2, :]), 0.0)
     m = m_eta[0]
-    c_eta[0] = xp.where(m < 0.0, m * 0.5 * (phi[0] - phi[1]), 0.0)
+    c_eta[..., 0, :] = xp.where(
+        m < 0.0, m * 0.5 * (phi[..., 0, :] - phi[..., 1, :]), 0.0)
 
     if corte is not None:
         # El corte es cara interior: la celda dos veces aguas arriba es la de
         # encima de la espejo. Las dos mitades del corte dan correcciones
         # iguales y opuestas, asi que el flujo sigue cerrando.
-        mir = slice(None, None, -1)
         entra = m > 0.0
-        a = xp.where(entra, phi[0, mir] - phi[1, mir], phi[0] - phi[1])
-        sa = xp.where(entra, phi[0] - phi[0, mir], phi[0, mir] - phi[0])
+        b0, b1 = phi[..., 0, :], phi[..., 1, :]
+        e0, e1 = b0[..., ::-1], b1[..., ::-1]
+        a = xp.where(entra, e0 - e1, b0 - b1)
+        sa = xp.where(entra, b0 - e0, e0 - b0)
         suma = xp.where(a * sa > 0.0, a + sa, 1.0)
         lim = xp.where(a * sa > 0.0, 2.0 * a * sa / suma, 0.0)
-        c_eta[0] = xp.where(corte, m * 0.5 * lim, c_eta[0])
+        c_eta[..., 0, :] = xp.where(corte, m * 0.5 * lim, c_eta[..., 0, :])
 
     d_xi = op.dif_xi_caras(phi, bc["oeste"], bc["este"])
     d_eta = op.dif_eta_caras(phi, bc["sur"], bc["norte"])
     if corte is not None:
-        d_eta[0] = xp.where(corte, phi[0] - phi[0, ::-1], d_eta[0])
+        d_eta[..., 0, :] = xp.where(corte, phi[..., 0, :] - phi[..., 0, ::-1],
+                                    d_eta[..., 0, :])
 
     nu_xi, nu_eta = op._nu_en_caras(met, nu)
     x_xi = nu_xi * met.b_xi * op.a_caras_xi(d_eta)
@@ -435,11 +460,6 @@ def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
     x = phi.copy()
     info = {}
     for _ in range(correcciones + 1):
-        if isinstance(bc, list):
-            dif = met.xp.stack([fuente_diferida(met, y, m_xi, m_eta, nu, c, corte)
-                                for y, c in zip(x, bc)])
-        else:
-            dif = fuente_diferida(met, x, m_xi, m_eta, nu, bc, corte)
-        A.b = b0 + dif
+        A.b = b0 + fuente_diferida(met, x, m_xi, m_eta, nu, bc, corte)
         x, info = resolver(A, x, tol=tol, ciclos=ciclos, niveles=niveles)
     return x, info
