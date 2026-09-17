@@ -66,10 +66,18 @@ class Solver:
     ``turbulento``  acopla Spalart-Allmaras
     ``cronometro``  reparte el tiempo del paso entre sus etapas (ver `tiempos`)
     ==============  ===========================================================
+
+    `correcciones` basta que sea 1. Lo que fija es la **velocidad** con que la
+    correccion diferida llega a su punto fijo, no donde esta ese punto: cada paso
+    reanuda la del anterior sobre un campo que apenas se mueve, asi que marchando
+    en el tiempo se acumulan miles de iteraciones. Medido sobre la solucion
+    manufacturada reanudando como reanuda el solver, 1 y 2 dan el mismo error a
+    seis decimales, con orden 2.00 difusivo y 2.02 convectivo. Con una sola
+    llamada desde frio no es asi, y por eso el test de orden usa 8.
     """
 
     def __init__(self, X, Y, info, nu=None, u_inf=1.0, alfa=0.0, dt=2e-3,
-                 xp=np, dtype=np.float64, bdf2=False, correcciones=2,
+                 xp=np, dtype=np.float64, bdf2=False, correcciones=1,
                  correcciones_p=2, turbulento=False, nu_tilde_inf=3.0,
                  cronometro=False):
         self.xp = xp
