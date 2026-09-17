@@ -74,11 +74,20 @@ class Solver:
     manufacturada reanudando como reanuda el solver, 1 y 2 dan el mismo error a
     seis decimales, con orden 2.00 difusivo y 2.02 convectivo. Con una sola
     llamada desde frio no es asi, y por eso el test de orden usa 8.
+
+    `correcciones_p` va por lo mismo y ademas sobre un termino mas pequeno: las
+    correcciones cruzadas de la presion las fija la oblicuidad, que sobre perfiles
+    reales es p99 = 0.0065 (el caso de test que pide 4 tiene 0.10), y lo que se
+    resuelve cada paso es el **incremento** `phi`, casi nulo en regimen asentado.
+    Con 1 el residuo de divergencia se asienta algo mas alto dentro de la
+    tolerancia del PCG, pero el modo par-impar no crece: medido sobre el campo
+    final, la fraccion de tablero en `p` y la oscilacion del Cp de pared en el
+    borde de salida salen iguales a tres cifras con 1 y con 2.
     """
 
     def __init__(self, X, Y, info, nu=None, u_inf=1.0, alfa=0.0, dt=2e-3,
                  xp=np, dtype=np.float64, bdf2=False, correcciones=1,
-                 correcciones_p=2, turbulento=False, nu_tilde_inf=3.0,
+                 correcciones_p=1, turbulento=False, nu_tilde_inf=3.0,
                  cronometro=False):
         self.xp = xp
         self.dtype = np.dtype(dtype)
