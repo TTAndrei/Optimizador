@@ -8,6 +8,12 @@ El repo tiene ahora **dos solvers** y está partido en consecuencia. Mapa comple
 profiles/          perfiles .dat, COMPARTIDO por los dos
 docs/              memoria y documentación del proyecto
 curvo/  tests/     solver curvilíneo (malla C adaptada al cuerpo), F0–F4 cerradas
+gui/               interfaz PyQt6 del curvo: caso, preview de malla, runner, visor
+docs/figuras/      figuras de documentación y el script que las genera
+validacion/        campañas de validación del curvo, una carpeta por caso
+                   (v1_naca0012_re1e5_a5, v2_dominio_24x12, v3_ymas1_dn8e5):
+                   cada una con correr.py, analizar.py, caso.json, malla.npz,
+                   historia.npz, resultados.json, reparto.json y su README.md
 Sim_Cartesiano/    el solver congelado y TODO lo suyo: Simulador2D.py, scripts/,
                    gui/, tests/, configs/, data/, results/, resultados_finales/,
                    plots/, figuras_memoria/, media/, lanzar_*.sh
@@ -19,8 +25,11 @@ Sim_Cartesiano/    el solver congelado y TODO lo suyo: Simulador2D.py, scripts/,
 - `Sim_Cartesiano/profiles` es un enlace simbólico a `../profiles`, para que las
   rutas `ROOT/profiles/...` de su código sigan resolviendo **sin tocar ni una línea**.
 - Los `lanzar_*.sh` son lo único suyo que cambió: `.venv/bin/python` → `../.venv/bin/python`.
+- El curvo se ejecuta **desde la raíz y con `PYTHONPATH=.`**:
+  `PYTHONPATH=. .venv/bin/python validacion/v1_naca0012_re1e5_a5/correr.py <carpeta_destino>`.
+  Sin el `PYTHONPATH` el lanzamiento en segundo plano falla por no encontrar `curvo`.
 
-## SOLVER CURVILÍNEO `curvo/` — F0–F4 cerradas (2026-09-15, sin commitear)
+## SOLVER CURVILÍNEO `curvo/` — F0–F5 cerradas, optimización cerrada ×1.99 (2026-09-18)
 
 Migración a malla body-fitted, módulo aparte; `Simulador2D.py` queda congelado.
 Plan completo en `~/.claude/plans/swift-soaring-seahorse.md`.
@@ -33,8 +42,10 @@ Plan completo en `~/.claude/plans/swift-soaring-seahorse.md`.
 | F3 | `conveccion.py`, `multigrid.py` — convección-difusión implícita conservativa + ACM | ✅ orden 2.02, conservación 1.3e-15 |
 | F4 | `proyeccion.py` — proyección de presión, Poisson compacto + PCG | ✅ ver abajo |
 | GPU | kernels CUDA + CuPy en todo el solver | ✅ **×15.9**, ver abajo |
-| F5 | `solver.py`, `fuerzas.py`, `turbulencia.py` — NS completo, fuerzas y SA a Re=1e5 | ⏳ parcial |
-| F6 | etapa y⁺≈1, validación externa (cilindro, XFOIL) | y⁺<1 cerrado (v3); cilindro pendiente |
+| F5 | `solver.py`, `fuerzas.py`, `turbulencia.py` — NS completo, fuerzas y SA a Re=1e5 | ✅ los 5 criterios pasan (ver tabla) |
+| F6 | etapa y⁺≈1, validación externa | y⁺<1 (v3) y dominio (v2) cerrados; **cilindro y transición pendientes** |
+| opt 1 | reducir las 11 resoluciones de multigrid por paso | ⏳ pasos 1–4 de 5 hechos (`8e0e112`, `6a0f886`, `b2c9fe0`, `1918c80`), **167 → ~116 ms (−30 %)**; queda el paso 5, que es solo confirmación |
+| opt 2 | latencia de lanzamiento: nivel grueso + fusión de kernels `u`/`v` | ⏳ paso 1 hecho (`ecb8dc0`), **115.64 → 103.81 ms (×1.11)**; quedan los kernels gemelos |
 
 **F4 en una línea**: el operador del multigrid **es** `D·G` (2e-16, no 1e-6),
 la divergencia residual en modo par-impar baja del 46.2 % del cartesiano a 1e-9,
@@ -60,8 +71,16 @@ malla de 21 065 celdas. Dos cosas que costaron encontrar:
   GPU solo gana ×4.
 
 ```bash
-.venv/bin/python -m pytest tests/ -q          # 129 tests, ~4 min (15 piden GPU)
+.venv/bin/python -m pytest tests/ -q          # 129 tests, 4–6 min (15 piden GPU)
 ```
+
+**128/129 pasan.** El que falla es `test_curvo_gpu.py::test_float32_da_la_misma_respuesta`,
+`assert 3.3180796687645364e-09 < 1e-09` (`tests/test_curvo_gpu.py:251`): la
+divergencia del camino float64 se queda 3.3× por encima de una tolerancia que es
+estricta de más. **Verificado que es pre-existente en HEAD** (se comprobó guardando
+el diff en la rama `paso1-wip` y relanzando el test sobre el árbol limpio), no
+regresión de nada reciente, y **sigue igual tras `ecb8dc0`**. Aislado tarda 1.57 s
+frente a los 250–376 s de la suite entera.
 
 **F5, lo medido**. NACA 0012 a α = 5°, en los dos regímenes: laminar a Re = 1000
 (donde el flujo 2D laminar *es* la física y el criterio mide la discretización) y
@@ -100,15 +119,166 @@ por paso**, y el refinado se concentra solo en morro y borde de salida porque
 `ASPECTO_MAX` ya fija el suelo `ds/100 ≈ 1.2e-4` en el centro de la cuerda.
 Las fuerzas no se mueven (Cl +0.01 %, Cd +0.02 %): ver `validacion/v3_ymas1_dn8e5/`.
 
+En malla estructurada el número de capas lo fija la columna más fina, así que
+**refinar solo el borde de ataque cuesta exactamente las mismas celdas** que
+refinarlo todo: no hay ahorro que perseguir ahí.
+
 **Cada corrida escribe su `figuras/malla.png`** con todos los parámetros de malla
-y caso al pie (`M.dibujar(..., parametros=...)`), sin pedirlo.
+y caso al pie (`M.dibujar(..., parametros=...)`), sin pedirlo. `malla_dominio()`
+dibuja además la extensión real del dominio; los límites de vista de `analizar.py`
+salen ahora de `caso.json` y no están cableados (era lo que hacía que v2 y v1
+pareciesen la misma malla en las figuras).
+
+**Aviso de tests**: dos tests de `test_curvo_malla.py` esperaban espaciado de
+pared constante columna a columna. No lo es por diseño: `ASPECTO_MAX` varía `dn`
+por columna. Los tests se reescribieron para generar la malla explícitamente y
+comprobar lo que la malla promete, no lo que se suponía.
+
+## Borde de salida romo: la cola de cierre (2026-09-21)
+
+**Un perfil con base finita no se mallaba.** AG24 (gap 9.7e-4 c) y **el
+NACA_0012 real (gap 2.4e-3 c), que tampoco mallaba y no lo sabíamos**, daban
+jacobiano negativo y ortogonalidad de pared por debajo de 30°. El diagnóstico que
+había escrito en el test canario culpaba al **morro** de AG24; está mal: las
+celdas plegadas salen en `i = 64, 65, 329, 330`, **x ≈ 1.0002** — la unión
+base-estela. El 87 % de los J≤0 del historial del GA están ahí; el 13 % restante,
+en el morro (cúspides, problema aparte).
+
+### El mecanismo
+
+Colgar el corte de estela del punto medio de una base plana deja un nodo con
+**ángulo interior de 90°**. La marcha le pide a la vez ser normal a la base (+x)
+y normal al corte (+y), y un nodo no abre un abanico de 90°. No es negociable:
+la base es perpendicular al flujo, la estela va con el flujo, y el corte es una
+rendija de espesor cero cuyos dos lados son los **mismos puntos** (`[0, ::-1]`),
+así que no puede salir a ±45° repartiendo el giro.
+
+Medido, el mínimo de ortogonalidad está en **un solo nodo**: `i = 64`, 26.0°,
+con 88-90° en sus vecinos y mediana 89.9° sobre el perfil.
+
+### Lo que NO lo arregla — todo medido sobre 400 perfiles del historial del GA
+
+| intento | GA válidas | AG24 |
+|---|---|---|
+| defectos (base plana) | **0.0 %** | NO, J≤0 6, ort 26.0° |
+| rampa de espaciado en la estela | 0.5 % | — |
+| base redondeada | 0.0 % | — |
+| `MEZCLA_VOLUMEN` 0.3 → 0.9 | 0.0 % | — |
+| más nodos en la base | 0.0 % | **empeora**: ver abajo |
+| destrabado elíptico local | — | J≤0 0 pero **ort 1.4°** |
+| afilar al punto medio | 19.0 % | BUENA, pero **NACA_0012 sigue NO (J≤0 10)** |
+| **cola L = 4·gap** | **24.5 %** | **BUENA, J≤0 0, ort 83.1°** |
+
+**Refinar la base no ayuda, y está medido.** Forzando el número de nodos de base
+por encima del techo de `dn_pared`, la ortogonalidad **satura en ~28°** y el
+plegado **empeora**: n_base 2 → J≤0 24 / 21.1°; 6 → 6 / 26.0°; 64 → **46** /
+28.3°. Rayos paralelos saliendo de una base plana no pueden llenar la cuña de 90°
+que se abre aguas abajo, y cuantas más columnas pongas, más se cruzan.
+
+También se probó relajación elíptica global (Winslow con el paso normal
+reimpuesto en cada barrido): preserva `dn` exacto pero J≤0 pasa de 6 a **1467**.
+Winslow sin funciones de control iguala espaciados, y con aspecto 770 junto a la
+pared eso es catastrófico.
+
+### La solución: `COLA_TE = 4.0`
+
+La base se cierra con una **cuña recta** desde las dos esquinas reales hasta una
+punta a `COLA_TE · gap` aguas abajo. La punta es un borde de salida afilado
+normal, con el corte de estela saliendo **colineal** (ángulo incluido 14.3°).
+**No mueve ni un punto del perfil: solo añade** — afilar, que es la alternativa,
+desplaza las dos esquinas reales gap/2 aguas arriba.
+
+- La ventana útil tiene los dos lados: 1.5 deja la punta demasiado roma (J≤0 104)
+  y 10 demasiado afilada en bases gruesas (J≤0 44). **De 2.5 a 6 todos los
+  perfiles del repo salen BUENA; 4 es el centro.**
+- Cola tangente (Hermite desde la esquina) va **peor**, 0 % — la recta al punto es
+  lo que mantiene la colinealidad con la estela.
+- Perfiles del repo: **9/10 BUENA** (antes 6/10). Los 6 de `gap = 0` salen
+  **bit a bit idénticos** (la rama no se toca; hay test con `np.array_equal`).
+- Simetría intacta: `|Y + Y[:, ::-1]| = 3.9e-13` en NACA_0012 romo, igual que el
+  sharp → el Cl = 0 exacto a α = 0 sigue en pie. `div_uinf_rel` 1e-15.
+- Historial del GA, 1200 perfiles: **0.0 % → 24.2 % válidas**, 10.4 % buenas.
+
+### El precio, explícito
+
+La cola es **cuerpo inventado**: AG24 0.39 % de cuerda, NACA_0012 0.96 %.
+`info["cola_rel"]` la lleva y `calidad()` avisa por encima del 1 %
+(`AVISOS["cola_rel_max"]`). `ganador_ag.dat` (gap 1.1e-2) dispara *"cola de
+cierre del TE 4.3 % de cuerda"*, que es lo que se quiere ver **antes** de citar
+unas fuerzas. Se pierde resistencia de base y desprendimiento desde la base.
+
+**NO se ha medido el efecto en Cl/Cd.** Requiere correr el solver; pendiente.
+
+### Por qué no se arregla la base plana de verdad
+
+Se puede, pero no en esta topología, y son dos proyectos:
+
+1. **Multibloque** — lo que hacen los códigos de producción. No quitan el codo:
+   ponen ahí una **frontera de bloque** (bloque H detrás de la base), donde las
+   líneas pueden no ser suaves sin contaminar nada. En monobloque el codo queda
+   *dentro* de la malla. Coste: el corte deja de ser un espejo de índices y pasa a
+   ser interfaz entre bloques → `operadores.py`, `proyeccion.py`, `multigrid.py`
+   y `solver.py`.
+2. **Generación elíptica con control de pared** (Sorenson/TTM). La marcha es un
+   problema de valor inicial; una elíptica es de contorno y reparte la distorsión
+   sobre muchas celdas. Monobloque, no toca el solver, pero reescribe el generador
+   y obliga a revalidar el y⁺.
+
+**Decisión: ninguna de las dos.** El gap de AG24 es 0.097 % de cuerda y su
+resistencia de base a Re=1e5 es despreciable. El multibloque se justifica solo si
+hace falta **física de base** (perfiles truncados, desprendimiento del borde romo).
+
+`ganador_ag.dat` sigue NO VÁLIDA por **1 celda en `j=0, i=i_le−1`** — el morro,
+no el TE. Es el problema conocido de cúspides del GA. Un barrido de 108 mallas
+(1.3 s) encontró que `razon_le` 0.08 → 0.04 lo arregla: J≤0 1 → 0, válida.
+
+## GUI curvilínea: parámetros por pestañas (2026-09-21)
+
+`gui/params_spec.py` pasa de lista plana a **tres niveles**: pestañas → bloques
+plegables → parámetros, cada uno con su frase de ayuda.
+
+```
+Malla      →  Pared · Superficie · Borde de salida · Estela y dominio · Marcha (avanzado)
+Fisica     →  Corriente libre · Turbulencia · Integracion temporal
+Ejecucion  →  Duracion y muestreo · Backend
+```
+
+Perfil y presets arriba, fijos. **Calidad de malla y Simulación fuera de las
+pestañas, siempre visibles** y a dos columnas: son el resultado de tocar los
+parámetros. El primer bloque de cada pestaña abre por defecto; los cerrados se
+encogen al título.
+
+**Tooltip en los 34 parámetros y en las 10 métricas de calidad.** Los textos
+están **resumidos de los docstrings de `curvo/malla.py`**, o sea de lo medido, no
+inventados. Si cambia un defecto o una medida, hay que tocar los dos sitios.
+
+Dos cosas que faltaban: **`cola_te` no estaba en la GUI** y **`cola_rel` no se
+mostraba**. Ahora `Borde de salida` lo edita y el panel de calidad lo muestra.
+
+`tests/test_gui_params_spec.py` fija el contrato: ningún parámetro del caso sin
+control, ningún control huérfano, ninguno sin ayuda, ningún desplegable sin
+opciones.
+
+### Auto-ajuste de malla — viable, no implementado
+
+`generar_c` cuesta 32 ms y `calidad()` 9 ms: **81 mallas/s con 12 procesos**, sin
+tocar el solver. Un barrido de 108 configuraciones sobre `ganador_ag.dat` dio
+36 válidas en 1.3 s y encontró la que los defectos a mano no daban.
+
+Si se implementa, dos reglas que no son opcionales: **`dn_pared`, `x_out` y
+`distancia_lejos` no son palancas** (los fija el y⁺ objetivo y el estudio de
+dominio — ajustarlos sube la puntuación cambiando la física a tus espaldas), y el
+ajustador tiene que **declarar cuánta geometría inventada ha metido**.
+`calidad()` es un veredicto **geométrico**: optimizar contra él compra validez con
+física, que es exactamente lo que hace `cola_te`.
 
 ## Dónde se va el tiempo
 
 `Solver(..., cronometro=True)` reparte el paso entre sus tres etapas y
 `s.reparto()` lo devuelve en % y ms. Sincroniza la GPU antes de cada lectura del
 reloj, así que mide trabajo y no encolado — la suma da el 100 % del reloj de
-pared. Medido sobre 8 000 pasos, float32, RTX 3070 Ti:
+pared. Medido sobre 8 000 pasos, float32, RTX 3070 Ti, **línea base antes de la
+optimización**:
 
 | etapa | v3 (37 534 celdas) | v2 (33 704 celdas) |
 |---|---|---|
@@ -120,11 +290,290 @@ pared. Medido sobre 8 000 pasos, float32, RTX 3070 Ti:
 +11 % de celdas cuesta **+3.3 % de tiempo por paso**: a estos tamaños la GPU no
 se satura y lo que se paga es latencia de lanzamiento, no trabajo.
 
-El cuello **no es el Poisson**. Son **11 resoluciones de multigrid por paso**
-(momento 2 × 3, presión 3, SA 2) a ~15 ms cada una: la palanca es el número de
-correcciones externas, no una etapa suelta. Con oblicuidad p99 = 0.033 sobre
-perfiles reales, bajar `correcciones` de 2 a 1 quitaría 2 resoluciones (−18 %);
-hay que medir antes que no degrade el orden.
+El cuello **era** el número de resoluciones de multigrid por paso, no una etapa
+suelta: **11** (momento 2 × 3, presión 3, SA 2) a ~15 ms cada una. Con los cuatro
+pasos hechos son **7** (momento 2 × 2, presión 2, SA 1), y el reparto queda:
+
+| etapa | línea base | tras pasos 1–3 | tras el paso 4 | **tras la fase 2** |
+|---|---|---|---|---|
+| momento | 83.30 ms (49.9 %) | 53.21 ms (41.7 %) | 53.22 ms (45.7 %) | **30.87 ms (36.8 %)** |
+| presión | 52.16 ms (31.2 %) | 42.86 ms (33.6 %) | 42.99 ms (36.9 %) | **34.58 ms (41.2 %)** |
+| turbulencia (SA) | 31.58 ms (18.9 %) | 31.69 ms (24.8 %) | 20.29 ms (17.4 %) | **18.49 ms (22.0 %)** |
+| total | 167.0 ms — 5.98 it/s | 127.8 ms — 7.83 it/s | 116.5 ms — 8.58 it/s | **83.94 ms — 11.91 it/s** |
+
+Las dos fases juntas son **×1.99** sobre la línea base, medido de corrida de 8 000
+pasos a corrida de 8 000 pasos (`validacion/v3_ymas1_dn8e5` frente a
+`validacion/v4_fundido`, mismo caso, misma malla, mismo `dt`). **Ese ×1.99 cruza
+sesiones** y por tanto arrastra el ±4 % de ruido del aviso de abajo; el número
+apretado es el de la cadena de A/B medidos seguidos dentro de la misma sesión:
+**115.64 → 85.79 ms, ×1.35 solo para la fase 2**, con ±0.05 % de ruido.
+
+**La presión pasa a ser la etapa más cara** (41.2 %). El momento ya no lo es: era
+el 49.9 % de la línea base y ahora es el 36.8 %. Lo que queda en el momento ya no
+es multigrid, es la construcción de la matriz y la jerarquía.
+
+**Aviso al comparar totales entre sesiones**: el mismo código ha medido entre
+107.7 y 116.5 ms/paso según la corrida y la longitud de la ventana. Dentro de un
+A/B el ruido es ±0.05 %, pero **no se pueden cruzar totales de sesiones
+distintas**: solo valen los pares base/optimizado medidos seguidos.
+
+### Plan de optimización del curvo, fase 1 — 5 pasos, los 4 primeros hechos
+
+Objetivo 167 → ~110 ms/paso **sin mover la física**. Criterio de aceptación
+común: ΔCl y ΔCd < 0.5 % acumulados en un A/B de 800 pasos contra la línea base
+de v3, `div` del mismo orden (5.68e-6), y cada paso en su propio commit para que
+`git revert` baste.
+
+**Paso 0 — determinismo, comprobado.** Dos corridas base idénticas dan resultados
+**bit a bit iguales** en todas las columnas de física (máx. diferencia 0.0). Y el
+ruido de medida es minúsculo: 164.49–164.57 ms de total entre corridas base
+(±0.05 %), ±0.19 ms en momento. Sin esto no se puede llamar señal a nada.
+
+**Paso 1 — `u` y `v` comparten matriz y jerarquía** (`8e0e112`, hecho). Los
+coeficientes de la matriz de momento salen de los flujos, de `nu_ef` y de **qué**
+caras son Dirichlet, no de su **valor**: construirla dos veces por paso no
+compraba nada. `cv.sistema` acepta ahora una **lista** de fronteras y devuelve un
+término independiente por cada una (con un `assert` de que la estructura de
+frontera coincide, porque si no el término saldría mal en silencio), y `avanzar`
+cachea la jerarquía en la propia matriz (`A._niveles`) como ya hacía `proyectar`.
+Van en serie, no entrelazadas: `avanzar` reasigna `A.b` en cada corrección.
+
+- **Bit a bit idéntico** sobre 800 pasos del caso v3 (`historia.npz`, máx. dif. 0.0).
+- Momento **81.97 → 76.87 ms (−6.2 %)**, total **164.57 → 160.82 ms (−2.3 %)**,
+  6.18 → 6.22 it/s. La mejora de momento es **27× el ruido** de la línea base.
+- Presión +0.40 ms y SA +0.94 ms: dentro o al borde del ruido, despreciables.
+- Micro-benchmark que lo motivó (`bench_0b.py`): `cv.sistema` cuesta 1.237 ms/paso
+  y `jerarquia` 5.346 ms/paso; quitar una construcción entera de momento eran
+  6.584 ms/paso = 3.8 % del total. Se ha capturado la mayor parte.
+
+**Paso 2 — `correcciones` de momento 2 → 1** (`6a0f886`, hecho). Es el paso que
+más ha dado, y el argumento es el que importa: **`correcciones` no fija dónde está
+el punto fijo de la corrección diferida, solo la velocidad con que se llega.**
+Cada paso de tiempo reanuda la corrección del anterior sobre un campo que apenas
+se mueve, así que marchando en el tiempo se acumulan miles de iteraciones. El
+default de `Solver` pasa a 1.
+
+- **La primera medida decía lo contrario y estaba mal planteada.** Un barrido de
+  0/1/2/3/8 correcciones sobre la solución manufacturada **desde frío** (cada
+  malla arrancando de unos, con solo `correcciones` iteraciones) daba orden < 1.68
+  por debajo de 8 y orden ~2.0 con 8. Eso mide la convergencia **hacia** el punto
+  fijo, no la exactitud **del** punto fijo.
+- **Encadenando 12 llamadas a `avanzar` reanudando desde el `phi` anterior** —que
+  es como reanuda el solver— `correcciones=1` y `correcciones=2` dan el **mismo
+  error a seis decimales**: razón de errores **1.000000** en las tres mallas
+  (24, 48, 96) y en los dos regímenes, con **orden 2.00 difusivo y 2.02
+  convectivo**. Por eso el test de orden de `tests/test_curvo_conveccion.py` sigue
+  usando 8: mide desde frío a propósito.
+- A/B de 800 pasos del caso v3: **Cl 0.392465 → 0.392468 (+0.001 %)**, **Cd
+  0.0252215 → 0.0252215 (−0.000 %)**, Cm −0.00689269 → −0.00689294 (−0.004 %).
+  Dentro del 0.5 % con margen de tres órdenes.
+- Momento **77.49 → 53.99 ms (−30.3 %)**, total **162.5 → 138.8 ms (−14.6 %)**,
+  **6.14 → 7.19 it/s (+17 %)**. Presión y SA sin cambio (−0.17 % y −0.06 %).
+- **La divergencia no se degrada.** El máximo de la ventana sube de 2.68e-6 a
+  8.00e-6 (+199 %) y eso asustó, pero mirando la serie completa oscila en los dos
+  sentidos (a t=0.5 el paso 2 da 7.1e-6 frente a 1.6e-5 de la base; a t=1.0,
+  1.3e-5 frente a 2.9e-6) y la **mediana es 6.90e-6**, comparable a la de v3
+  (8.44e-6 sobre una ventana diez veces más larga). El máximo cayó en el último
+  instante por azar. El transitorio inicial es idéntico (1.313e-02), así que la
+  inicialización no se ha tocado. **No citar el +199 % como degradación.**
+
+**Paso 3 — `correcciones_p` de presión 2 → 1** (`b2c9fe0`, hecho). El default de
+`Solver` pasa a `correcciones_p=1`. Dos argumentos, y el segundo es el que no
+estaba escrito antes: las correcciones cruzadas de la presión las fija la
+**oblicuidad de la malla**, que sobre perfiles reales tiene p99 = **0.0065**
+frente al 0.10 del cuadrado distorsionado del test —que sí necesita 4
+(`curvo/proyeccion.py:130-133`)—, y lo que se resuelve cada paso no es la presión
+sino su **incremento** `phi`, casi nulo en régimen asentado.
+
+- A/B de 800 pasos del caso v3: **Cl +0.000 %**, **Cd −0.003 %**. Dos órdenes
+  dentro de la puerta del 0.5 %.
+- Presión **52.67 → 42.86 ms (−18.6 %)**; acumulado con el paso 2, total
+  **162.5 → 127.8 ms (−21.4 %)**, **6.15 → 7.83 it/s**.
+- **Lo que sí se paga: la divergencia residual se asienta más alta.** Mediana
+  6.25e-6 → **1.34e-5 (+114 %)**, p95 1.92e-5 → 1.02e-4, máximo 4.58e-5 →
+  1.86e-4. Sigue dentro de la tolerancia relativa del PCG en float32, y la
+  mediana de v3 completo (8.41e-6, t=0..20) cae entre las dos. Los 23 tests de
+  `test_curvo_proyeccion.py` pasan.
+- **Y lo que se comprobó antes de aceptarlo: el modo par-impar NO crece.** Medido
+  sobre el campo final, la fracción de tablero en `p` vale 7.818e-5 (base) /
+  7.857e-5 (paso 2) / 7.849e-5 (paso 3), la de velocidad 1.033e-6 / 1.034e-6 /
+  1.035e-6, y la oscilación del `Cp` de pared en el borde de salida sale
+  **8.837e-2 idéntica en las tres**. La divergencia más alta no es inestabilidad
+  espacial ni amplificación del Poisson.
+- **Pendiente de este paso**: confirmarlo sobre una corrida completa a t\*=20, no
+  solo sobre los 800 pasos del A/B. Va junto con la confirmación del paso 4.
+
+**Paso 4 — SA: `correcciones` de 1 → 0** (`1918c80`, hecho). El default de
+`avanzar_sa` en `curvo/turbulencia.py` pasa a 0, y el solver lo llama sin pasar
+el argumento. **Lo que hay que entender antes de tocar nada: `correcciones = 0`
+NO deja el transporte de `nu_tilde` en upwind de 1.er orden.** El bucle de
+`avanzar` sigue evaluando la corrección diferida **una vez, sobre el campo del
+paso anterior**: es Picard retrasado un paso, no Picard suprimido. Marchando en
+el tiempo llega al mismo punto fijo, que es el mismo argumento del paso 2 llevado
+a su conclusión.
+
+- **Medido encadenando, no desde frío** (`punto_fijo.py`, scratchpad): con
+  `corr ∈ {0, 1, 2}` los errores salen **idénticos a seis decimales** en las tres
+  mallas y en los dos regímenes — difusivo 6.545e-04 / 1.639e-04 / 4.098e-05,
+  convectivo 1.209e-03 / 2.961e-04 / 7.314e-05, con **orden 2.00 difusivo y
+  2.02–2.03 convectivo** y razón `e(corr=1)/e(corr=2) = 1.000000`. El hallazgo
+  no es solo del modelo de turbulencia: **vale para el solver de transporte
+  entero**.
+- A/B de 800 pasos del caso v3: **Cl +0.001 %**, **Cd −0.002 %**,
+  **`nu_t/nu` +0.008 %** — la guardia que se puso al paso (vigilar `nu_t/nu`)
+  no se mueve.
+- Turbulencia **32.34 → 20.29 ms (−37 %)**; acumulado, total **162.5 → 116.5 ms
+  (−28.3 %)**, **6.14 → 8.58 it/s**.
+- Divergencia residual: +50.7 % relativo sobre el A/B, con el valor absoluto
+  todavía pequeño. Es el mismo tipo de subida que el paso 3 y **entra en la misma
+  confirmación pendiente a t\*=20**, no en una lectura aparte.
+
+**Paso 5, pendiente — solo confirmación, no toca código**: rehacer el reparto
+sobre los 8 000 pasos del caso v3 completo, y con él la comprobación a t\*=20 de
+que la divergencia residual acumulada de los pasos 3 y 4 no deriva en una corrida
+larga. Medir la **mediana**, no el máximo, y si sube de verdad medir el modo
+par-impar antes de llamarlo degradación. **Ahora conviene hacerlo ya con
+`ecb8dc0` dentro**, para no pagar dos corridas largas.
+
+### Fase 2 de optimización — latencia de lanzamiento: nivel grueso y kernels gemelos `u`/`v`
+
+La fase 1 dejó el solver sin resoluciones de multigrid sobrantes. Lo que queda
+por debajo es **latencia de lanzamiento de kernels**, no trabajo aritmético: con
+37 534 celdas el suavizador usa ~128 hilos de los 6 144 núcleos de la 3070 Ti.
+
+**Paso 1 — el nivel grueso, de 30 barridos a 4** (`ecb8dc0`, hecho). El nivel
+final de la jerarquía es una malla de **tres celdas** y se relajaba 30 veces: 120
+lanzamientos de kernel para tres incógnitas, **0.80 ms de los 4.15 que cuesta un
+ciclo V (el 19 %)**, y lo pagaban momento, presión y turbulencia por igual. El
+default de `ciclo_v` en `curvo/multigrid.py:696` pasa a `grueso=4`.
+
+- **Medido sobre los sistemas reales del solver con término independiente
+  aleatorio**, no sobre un problema de juguete: en convección el historial de
+  residuos es **idéntico** con 1, 2, 4, 8 y 30 barridos (15 ciclos, factor 1.0,
+  residuos 1.0e+00 → 1.2e-04 → 3.4e-07 en las cinco) — el operador es tan
+  dominante en diagonal que la corrección gruesa no llega a intervenir. Y en el
+  Poisson de presión el factor del PCG **no empeora al bajar, mejora**: 0.067 con
+  30, **0.021 con 4**.
+- A/B de 800 pasos del caso v3: **115.64 → 103.81 ms/paso (×1.11), 8.65 → 9.63
+  it/s**. Por etapas: momento ×1.076, **presión ×1.202** (la que más gana),
+  turbulencia ×1.048.
+- **Las fuerzas se mueven menos del 0.005 %** (Cl, Cd, Cm). No es bit a bit
+  idéntico —el cambio de barridos propaga diferencias de redondeo—, pero está
+  tres órdenes dentro de la puerta del 0.5 %.
+- **El modo par-impar se queda donde estaba**: fracción de tablero en `p`
+  7.848e-5 → **7.843e-5**. Ese es el diagnóstico con sentido físico. La mediana
+  de la divergencia sube **8.6 %** (1.54e-5 → 1.67e-5), dentro del mismo orden;
+  el **máximo instantáneo marca +379 % (4.03e-06 → 1.93e-05) y es ruido de
+  instante**, exactamente el mismo falso positivo que el +199 % del paso 2. **No
+  citarlo como regresión de exactitud.**
+- **El barrido de `minimo` (profundidad de la jerarquía) no dio nada**: 8 → 7 → 6
+  → 5 niveles (`minimo` de 9 a 576) no marca tendencia clara de tiempo. El coste
+  es de lanzamiento por nivel, no del número de niveles. **Descartado por ahora**,
+  no merece la complejidad.
+
+**Paso 2 — kernels gemelos de dos campos, hecho** (`6e3aa65`). `u` y `v` ya
+compartían matriz y jerarquía desde la fase 1, pero **se resolvían en serie**: 4
+ciclos V completos por paso y dos lecturas de los mismos coeficientes. Ahora el
+hilo que resuelve una línea los lee una vez y arrastra las dos recursiones de
+Thomas. Kernels nuevos en `curvo/multigrid.py`: `zebra_eta2`, `zebra_eta_par2`,
+`zebra_xi2`, `aplicar2`, `restringir2`, **al lado** de los de un campo, que no se
+tocan — presión y SA siguen por el camino de siempre y no pueden regresar.
+
+- **El prototipo ingenuo (`float d[nc]` indexado por la variable del bucle) sale
+  ×0.73, o sea 37 % MÁS LENTO** que las dos llamadas en serie: CUDA no puede
+  probar las cotas en compilación y derrama el array a memoria local. Con
+  escalares `d0`, `d1`: 36 registros por hilo (frente a 40 del kernel de un
+  campo), cero memoria local, **×1.63 sobre `resolver` entero**. Esa es la razón
+  de escribir gemelos y **no** generalizar a `nc` campos arbitrarios.
+- **El margen viene de que el suavizador va famélico de paralelismo, no de ancho
+  de banda**: el barrido de líneas η del nivel fino lanza **128 hilos sobre 6 144
+  núcleos**, cada uno con una recursión secuencial de 98 pasos. El segundo campo
+  añade instrucciones *independientes* que rellenan las burbujas de la cadena
+  dependiente, así que casi no cuesta.
+- Los coeficientes `c` de Thomas **no dependen del término independiente**, así
+  que con dos campos se calculan una vez; solo `dp` va por campo, intercalado
+  `(n, L, 2)`. Queda una división por celda en vez de dos por celda y campo.
+- **Verificación kernel a kernel sobre la matriz de producción: identidad EXACTA
+  (`err = 0.0e+00`)** en líneas η, líneas η emparejadas del corte, líneas ξ,
+  suavizado directo e invertido y producto matriz-vector. `ciclo_v` se desvía
+  **5.4e-9** — el peso de Rayleigh se reduce por ejes en vez de entero y cupy no
+  garantiza el mismo orden de suma; son **22 veces menos que el ε de float32**.
+- **Paran juntos pero cada campo se normaliza por SU término independiente.**
+  Normalizar los dos por el máximo común relajaría al pequeño: a α=5° el término
+  de `v` es un orden menor que el de `u` y se daría por convergido antes de
+  tiempo. (La hipótesis previa se validó: en 800 pasos, `u` y `v` **nunca**
+  convergen en número de ciclos distinto — 0 casos de 800.)
+- A/B de 800 pasos: momento **49.11 → 34.67 ms (×1.42)**, total 103.81 → 88.48.
+  Las 21 columnas de la historia coinciden con la corrida anterior en todas las
+  cifras impresas.
+
+**Paso 3 — corrección diferida por lotes, hecho** (`63e1d13`). Era lo único que
+quedaba en serie del momento: 4 llamadas de 2 ms por paso, todo cupy elemento a
+elemento, ~50 lanzamientos diminutos cada una. El coste no es aritmético, es de
+lanzamiento, así que con los dos campos en un eje delante se divide por dos.
+
+- Los operadores de cara (`dif_xi_caras`, `dif_eta_caras`, `a_caras_xi`,
+  `a_caras_eta`, `divergencia`) y el limitador pasan a **indexar por el final**:
+  los dos últimos ejes son la malla y delante puede ir un eje de campos. El flujo
+  de masa y la métrica no lo llevan —son los mismos para todos— y se difunden.
+- **La trampa que costó encontrar**: al apilar los valores de Dirichlet por campo
+  hay que **no forzarles el tipo**. Un valor suelto llega como `float` de Python
+  y al multiplicarlo por la cara promociona a doble precisión; redondearlo antes
+  a float32 movía el término de las **dos filas pegadas a la frontera norte** en
+  1.3e-4 relativo. Sin el cast, el resultado coincide con el de resolverlas
+  sueltas en **1.3e-10**.
+- Medido: **×1.80** sobre las dos llamadas por separado. A/B de 800 pasos:
+  momento 35.14 → 31.34 ms (×1.12), total 89.77 → 85.79. **Las 21 columnas a
+  0.0000 %**, la divergencia incluida.
+
+**Confirmación larga de las dos fases** (`validacion/v4_fundido`, 8 000 pasos,
+t\*=20, NACA 0012, Re=1e5, α=5°, float32, SA, 677 s). Contra
+`validacion/v3_ymas1_dn8e5`:
+
+| magnitud | v3 | v4 | Δ % |
+|---|---|---|---|
+| Cl_sup | 0.498465897 | 0.498477164 | +0.0023 |
+| Cl_dcp | 0.495323287 | 0.495334385 | +0.0022 |
+| Cl_circ | 0.487578861 | 0.487641881 | +0.0129 |
+| Cd | 0.019315507 | 0.019314973 | −0.0028 |
+| Cd_p | 0.007568798 | 0.007568033 | −0.0101 |
+| Cd_v | 0.011746709 | 0.011746940 | +0.0020 |
+| Cm | −0.007917233 | −0.007917298 | +0.0008 |
+| dCp_TE | −0.027860325 | −0.027859703 | −0.0022 |
+| nut_nu | 38.0383484 | 38.0397512 | +0.0037 |
+| div (mediana) | 8.4393e-06 | **7.4526e-06** | **−11.7** |
+
+**Peor desviación de una fuerza: 0.013 %**, dos órdenes dentro de la puerta del
+0.5 %. La **divergencia residual baja**, no sube. El modo par-impar se queda
+donde estaba: fracción de tablero en `p` 1.3379e-4 → **1.3347e-4**, oscilación
+del Cp en el borde de salida 9.627e-3 → 9.614e-3.
+
+**Aviso sobre `disp_gamma`**, que marca −0.469 % y es lo único cerca de la puerta:
+**no es una fuerza**, es `ptp/media` de la circulación medida en cinco lazos de
+radio distinto, o sea una medida de **dispersión**. Pasa de 6.554 % a 6.523 % de
+dispersión — 0.03 puntos porcentuales. Las cinco circulaciones individuales se
+mueven **≤0.032 %** (`gamma_0.15` +0.0009 %, `gamma_1.50` +0.0322 %). No citarlo
+como desviación de exactitud.
+
+- **El barrido de `minimo` (profundidad de la jerarquía) no dio nada**: 8 → 7 → 6
+  → 5 niveles (`minimo` de 9 a 576) no marca tendencia clara de tiempo, y con
+  `minimo=576` el PCG de presión empeora (43.3 ms frente a 29.4). El coste es de
+  lanzamiento por nivel, no del número de niveles. **Descartado.**
+- **Sigue fallando `test_curvo_gpu.py::test_float32_da_la_misma_respuesta`**
+  (`div64 = 3.32e-09` contra una tolerancia de 1e-9). **Ya fallaba en la línea
+  base `6ea1e7b`**, comprobado con `git stash`; no es de este trabajo. El resto de
+  la suite: **131 pasan** (3 tests nuevos de dos campos).
+
+### Lo que queda por probar en el curvo
+
+- **Momento con `correcciones` 1 → 0.** El `punto_fijo.py` de la fase 1 demostró
+  que el punto fijo de la corrección diferida **no depende** del número de
+  iteraciones (orden 2.00 difusivo / 2.02 convectivo con 0, 1 y 2). Bajar a 0
+  quitaría **la mitad** de las resoluciones de momento sin escribir una línea de
+  CUDA. No se hizo porque cambia la física discreta y merece su propia
+  validación.
+- **La presión es ahora la etapa más cara** (34.58 ms, 41.2 %). Un solo campo, no
+  hay nada que fundir; el margen está en el número de iteraciones del PCG.
 
 ## Validación 1: NACA 0012, α=5°, Re=1e5, contra XFOIL
 
@@ -155,7 +604,9 @@ x/c>0.966 (burbuja de borde de salida), Cd viscoso entre la placa plana laminar
 
 **Defecto abierto**: tablero par-impar en el `Cp` de pared, amplitud 0.11 cerca
 del TE y creciendo. No es precisión (f64 = f32) ni los cruzados diferidos
-(`correcciones_p` 2 = 8). Nace en `div(m*)`, que al ser el campo ya solenoidal a
+(`correcciones_p` 1 = 2 = 8; ver paso 3, la fracción de tablero no se mueve al
+bajar de 2 a 1), y tampoco el nivel grueso (con 4 barridos sale igual que con 30).
+Nace en `div(m*)`, que al ser el campo ya solenoidal a
 1e-9 es ruido par-impar casi puro, y se acumula en `p += phi`. No toca a `u`, `v`
 ni a las fuerzas integradas.
 
@@ -197,6 +648,45 @@ print(fz.estimadores_de_cl(s.met, s.u, s.v, s.p, info, s.nu, 1.0, 5.0,
                            bc=dict(oeste=None, este=None), corte=s.corte))
 ```
 
+## Validación 2: independencia de dominio — 24 × 12 contra 26 × 17.5
+
+`validacion/v2_dominio_24x12/` — mismo caso que v1 cambiando **solo el tamaño del
+dominio**: 25.9×17.5 (borde lejano a 8.76 c) → **24.00×12.48** (6.24 c), de
+34 853 a 33 704 celdas, un 27 % menos de área.
+
+```bash
+PYTHONPATH=. .venv/bin/python validacion/v1_naca0012_re1e5_a5/correr.py \
+    validacion/v2_dominio_24x12 distancia_lejos=6.0 x_salida=18.39
+```
+
+El 12.00 exacto no es alcanzable: el número de capas sale del crecimiento
+geométrico y está cuantizado (`distancia_lejos` de 5.8 a 6.2 da la misma malla).
+
+| | v1 (grande) | v2 (24×12) | cambio |
+|---|---|---|---|
+| **Cl superficie** | 0.49840 | 0.49844 | **+0.01 %** |
+| Cl por ∮ΔCp | 0.49527 | 0.49533 | +0.01 % |
+| Cl por circulación | 0.48872 | 0.47871 | −2.05 % |
+| **Cd** | 0.01931 | 0.01946 | **+0.77 %** |
+| Cd presión | 0.00757 | 0.00770 | +1.71 % |
+| Cm (c/4) | −0.00794 | −0.00783 | −1.33 % |
+| ΔCp_TE | −0.02775 | −0.02778 | +0.11 % |
+| dispersión de Γ | 6.34 % | **11.93 %** | +88 % |
+
+**Las fuerzas no dependen del dominio.** El Cl se mueve **0.01 %** recortando un
+27 % del área; el Cd, 0.77 %, y todo por la parte de presión. El campo lejano del
+arco C está bien puesto: no hay bloqueo apreciable ni a 6.24 cuerdas. **Comparar
+con el cartesiano, donde pasar de 8×5 a 24×16 movía el L/D de 27.70 a 31.70
+(14 %)** — es otra liga. Contra XFOIL el Cd de presión sale incluso mejor:
++0.56 % frente a Ncrit=5 (v1 daba −1.14 %).
+
+**Y explica la dispersión de la circulación**, que era la quinta capa abierta del
+cartesiano: el cambio de Γ **escala monótonamente con el radio del lazo** (−0.23 %
+a r=0.15c, −5.82 % a r=1.50c). O sea, la dispersión entre lazos es **artefacto
+del dominio finito**, no defecto de la discretización: cuanto más cerca queda el
+borde lejano, más recorta el lazo grande. El estimador de superficie, que es el
+que se usa, no se entera.
+
 ## Qué es
 Simulador CFD 2D incompresible (Navier-Stokes) en GPU (CuPy, RTX 3070 Ti) para perfiles alares, base de un futuro optimizador aerodinámico. El solver cartesiano vive en `Sim_Cartesiano/Simulador2D.py` (~8000 líneas, clase `Mesh` + `main()`); el curvilíneo, en `curvo/`.
 
@@ -204,7 +694,7 @@ Simulador CFD 2D incompresible (Navier-Stokes) en GPU (CuPy, RTX 3070 Ti) para p
 - Sólidos por IBM (Immersed Boundary): máscara rasterizada + ghost-cell no-slip (`ibm_wall_mode="ghost_noslip"`).
 - **Ejecutar SIEMPRE con `.venv/bin/python`** (el python3 del sistema no tiene CuPy).
 
-## DOMINIOS ARBITRARIOS DESDE CAD + INTERFAZ (2026-09-01, sin commitear)
+## DOMINIOS ARBITRARIOS DESDE CAD + INTERFAZ (`bff0838`, `c104ba1`)
 
 El solver ya no está atado a "un perfil alar dentro de una caja". Admite
 **contornos importados de DXF**: un contorno exterior que define las paredes del
@@ -325,8 +815,8 @@ convergente 2:1 (balance < 3 %, aceleración = razón de alturas < 5 %). Geometr
 en `scripts/agent_tests/formas_dominio.py`. Ejemplos listos para abrir:
 `.venv/bin/python scripts/agent_tests/demo_gui.py` → `results/gui_demo/`.
 
-**Arrancar la interfaz**: `./lanzar_gui.sh`. Necesita `python3-pyside6.*`,
-`python3-pyqtgraph` y `ezdxf`; el venv tiene ahora
+**Arrancar la interfaz**: `./lanzar_gui.sh` desde `Sim_Cartesiano/`. Necesita
+`python3-pyside6.*`, `python3-pyqtgraph` y `ezdxf`; el venv tiene
 `include-system-site-packages = true` (copia en `.venv/pyvenv.cfg.bak`).
 **Ojo: la GUI usa PyQt6, no PySide6** — pyqtgraph elige PyQt6 cuando está
 disponible, y cargar los dos bindings en el mismo proceso rompe los imports de
@@ -341,11 +831,9 @@ el perímetro de la caja; bandas finas múltiples.
 ## RESULTADOS FINALES DEL TFG — CERRADOS 2026-08-26
 
 **Estos son los resultados definitivos que se presentan.** Todo en
-[`resultados_finales/`](resultados_finales/); leer su
-[`README.md`](resultados_finales/README.md) y
-[`richardson/INFORME.md`](resultados_finales/richardson/INFORME.md) antes de
-citar nada. Inventario de las 744 figuras en
-[`resultados_finales/FIGURAS.md`](resultados_finales/FIGURAS.md).
+`Sim_Cartesiano/resultados_finales/`; leer su `README.md` y
+`richardson/INFORME.md` antes de citar nada. Inventario de las 744 figuras en
+`resultados_finales/FIGURAS.md`.
 
 **72/72 puntos**: 2 perfiles × 4 mallas (dx = 0.008 / 0.006 / 0.004 / 0.002) × 9
 ángulos (α = 0 a 8 **de grado en grado**), dominio 24×16, Re=1e5, t≈20 en todas,
@@ -440,13 +928,13 @@ estimaciones indicativas con p=2 nominal, no medidas del error de discretizació
 2. **Lo que sí sobrevive: el Cd oscila entre mallas y arrastra al L/D.** Y el estudio de Richardson sobre la polar completa (`835a874`, 5 ángulos × 3 mallas, ~48 h GPU) confirma que no es cosa de un ángulo desafortunado: **el Cl converge monótono en los cinco ángulos, el Cd rompe la monotonía en α=4 y α=6**. Ningún GCI de Cd ni de L/D es citable; solo la banda entre mallas.
 3. **Y hay un tercer sesgo, medido en agosto y mayor que los dos anteriores: el dominio.** Toda la campaña del GA corrió en Lx=8, Ly=5 con fronteras top/bottom `slip` (túnel cerrado, no campo lejano). Ampliar a 24×16 sube el L/D del ganador de 27.70 a 31.70 a α=4. El **orden** entre individuos parece conservarse (medido en 2 de 3), el **valor absoluto** no.
 
-**VERIFICACIÓN NUMÉRICA — documento en [`docs/verificacion_numerica.md`](docs/verificacion_numerica.md) (10 secciones).** Leerlo antes de citar cualquier L/D, pero **está desactualizado desde el 14 de agosto**: no incorpora la ventana larga, ni el fix del fitness, ni el estudio de dominio, ni el Richardson de la polar. Guion del TFG en `docs/PROMPT_TFG.md`; memoria en construcción en `docs/tfg/`, con el texto de sustitución de los capítulos 4-6 ya escrito en `docs/tfg/resultados_finales_v2.txt` (`99ffaa2`).
+**VERIFICACIÓN NUMÉRICA — documento en `docs/verificacion_numerica.md` (10 secciones).** Leerlo antes de citar cualquier L/D, pero **está desactualizado desde el 14 de agosto**: no incorpora la ventana larga, ni el fix del fitness, ni el estudio de dominio, ni el Richardson de la polar. Guion del TFG en `docs/PROMPT_TFG.md`; memoria en construcción en `docs/tfg/`, con el texto de sustitución de los capítulos 4-6 ya escrito en `docs/tfg/resultados_finales_v2.txt` (`99ffaa2`).
 
-**Reorganización de resultados**: toda la campaña anterior está archivada en **`results/1eraGranOptimizacion/`** (`convergence_study/`, `verificacion_numerica/`, `agent_tests/`, `barridos/`, `metricas_ga/`, `comparativas_v1/`, `videos_ganadores/`, …). `results/verificacion_numerica/` en la raíz solo contiene lo nuevo. Cualquier ruta de este documento o de scripts antiguos que apunte a `results/convergence_study/...` hay que leerla bajo `results/1eraGranOptimizacion/`. El `.gitignore` se reancló a patrones `**/` porque los anclados a `results/` dejaron de aplicar tras el archivado.
+**Reorganización de resultados**: toda la campaña anterior está archivada en **`results/1eraGranOptimizacion/`** (`convergence_study/`, `verificacion_numerica/`, `agent_tests/`, `barridos/`, `metricas_ga/`, `comparativas_v1/`, `videos_ganadores/`, …). `results/verificacion_numerica/` en la raíz solo contiene lo nuevo. Cualquier ruta de este documento o de scripts antiguos que apunte a `results/convergence_study/...` hay que leerla bajo `results/1eraGranOptimizacion/` **y ahora, además, bajo `Sim_Cartesiano/`**. El `.gitignore` se reancló a patrones `**/` porque los anclados a `results/` dejaron de aplicar tras el archivado.
 
-### Optimización del solver de presión — 5.4× por polar, ACTIVA POR DEFECTO (2026-08-24, sin commitear)
+### Optimización del solver de presión — 5.4× por polar, ACTIVA POR DEFECTO
 
-Documento completo en [`docs/OPTIMIZACION_SOLVER.md`](docs/OPTIMIZACION_SOLVER.md). Polar completa (6 ángulos, dx=0.002, dominio C) de **7.73 h a 1.43 h**, con la divergencia residual **por debajo** de la que daba la configuración anterior.
+Documento completo en `docs/OPTIMIZACION_SOLVER.md`. Polar completa (6 ángulos, dx=0.002, dominio C) de **7.73 h a 1.43 h**, con la divergencia residual **por debajo** de la que daba la configuración anterior.
 
 **Vuelta atrás**: `OPT_SOLVER_OFF=1` más `mg_max_outer=8, mg_cycles_per_outer=5` reproduce el comportamiento previo, comprobado bit a bit.
 
@@ -465,7 +953,7 @@ Más el presupuesto de proyección: **8×5 → 2×3** (en `main()` y en `RunGA.C
 
 **Hallazgos que importan más allá del rendimiento:**
 
-1. **El multigrid nunca alcanzaba su tolerancia** (`frac_converge = 0.0`), y la causa es de discretización, no del solver: malla colocada, y en el modo tablero el gradiente centrado se anula (símbolo de L = −4/h², de D·G = 0). **El 46.2 % de la divergencia residual es modo par-impar**, que ninguna iteración puede eliminar. `_build_projection_faces` no escapa: interpolación lineal pura, sin Rhie-Chow.
+1. **El multigrid nunca alcanzaba su tolerancia** (`frac_converge = 0.0`), y la causa es de discretización, no del solver: malla colocada, y en el modo tablero el gradiente centrado se anula (símbolo de L = −4/h², de D·G = 0). **El 46.2 % de la divergencia residual es modo par-impar**, que ninguna iteración puede eliminar. `_build_projection_faces` no escapa: interpolación lineal pura, sin Rhie-Chow. **Esto es exactamente lo que el curvo resuelve** (ver F4: el operador **es** D·G y la divergencia par-impar baja a 1e-9).
 2. **La divergencia media es mal indicador de convergencia.** Subir el presupuesto de 8×5 a 12×6 no mueve la divergencia (−0.7 %) pero cambia Cl un +4.00 %. Es justo lo que usa `tol_div` como criterio.
 3. **La configuración anterior no estaba convergida en presupuesto de proyección.** Por debajo de 8×5 la degradación es monótona y fuerte; por encima hay ~4 % de dispersión en Cl. Es incertidumbre numérica real, del orden de la banda del GCI (Cl 4.25 %), y **no figura junto a la de malla en el estudio**.
 4. **La malla es fuertemente anisótropa** (30 % de celdas con relación de aspecto > 8, anisotropía del operador hasta 2500) y eso rompe las **dos** mitades del multigrid: el suavizador punto a punto y el coarsening isótropo. Levantar el tope de niveles **empeora** (divergencia +62 %). La relajación por líneas arregla el suavizador y aun así pierde: cuesta 5.1× por ciclo.
@@ -487,7 +975,7 @@ Más el presupuesto de proyección: **8×5 → 2×3** (en `main()` y en `RunGA.C
 
 **Consecuencia**: las polares publicadas y el estudio de Richardson **no cambian** y siguen siendo reproducibles. Pero no se deben **mezclar** configuraciones: la diferencia es del orden de lo que el estudio de malla pretende medir.
 
-### Criterio de parada — tercera versión, la puerta de ruido pasa a ser el CI95 (sin commitear)
+### Criterio de parada — cuarta versión, la puerta de ruido es el CI95
 
 Historia completa, porque las tres versiones anteriores fallaron por **medir la cosa equivocada** y conviene no repetirlo:
 
@@ -503,7 +991,7 @@ Historia completa, porque las tres versiones anteriores fallaron por **medir la 
    - `criterio_ci95.py` **no reimplementa nada**: importa `_detect_series_convergence` del solver y la evalúa sobre las series guardadas, así que lo validado es el código que corre.
    - Fuente de verdad en fichero: `results/verificacion_numerica/criterio_parada.json` (**sobrescrito con el criterio CI95**; el ajuste completo está en `criterio_ci95.json`), leído por `verificacion_numerica.criterio_calibrado()`, `run_convergence_study.py`, `gci_ganador.py`, `test_espesor_malla.py` y `ventana_larga_dx001.py` — todos migrados de `tol_noise` a `tol_ci95`. `scripts/agent_tests/criterio_parada.py` queda marcado como **SUPERADO** en su docstring.
    - **`min_t=5.0` sigue siendo lo que arregla el modo de fallo restante**: sin él, dos series paraban en t≈4.1–4.4 con +10.6 % y +19.6 % — mesetas falsas previas al reataque de la burbuja laminar.
-   - **Ojo antes de commitear**: el árbol tiene `_n_efectivo` **definida dos veces** en `Simulador2D.py` (líneas 7099 y 7121, idénticas). Borrar una.
+   - **Pendiente de limpieza**: `_n_efectivo` sigue **definida dos veces** en `Sim_Cartesiano/Simulador2D.py` (líneas **7775 y 7797**, idénticas). Borrar una. Es lo único que quedó del aviso de agosto tras los commits.
 - **El residual de campo no se usa** en el criterio de L/D (`tol_res=inf`). Pero **el guardián de estado estacionario `stop_on_convergence` sí actúa y ya ha estropeado datos**: truncó α=8 (10100 de 26000 iters) y α=10 (7950) en `polar_2grados_dom24x16`. En estudios de malla o de ventana hay que desactivar **las dos** paradas. `change_v` se descarta como residual: se normaliza por la norma de v, pequeña en flujo casi horizontal, vale ~0.5 permanentemente.
 - **Cableado verificado en vivo** con la versión 3 (individuo 2019, dx=0.004): offline t_parada=7.013 / L/D=18.716 vs solver 7.0135 / 18.697. Ahorro frente a presupuesto fijo: 33–45 %.
 
@@ -524,9 +1012,9 @@ Historia completa, porque las tres versiones anteriores fallaron por **medir la 
 
 El sesgo en valor absoluto a dx=0.004 es de **−44.9 % ± 68** y no importa para el orden, pero **obliga a validar el ganador a dx=0.002**. Dos avisos: **1265** da L/D=**−1.29** a dx=0.004 (real 0.559) — el GA nunca vio fitness negativo porque la parada lo enmascaraba; **2312** engaña a las dos mallas gruesas por igual, ahí el artefacto es geométrico. **Matiz de agosto**: medido sobre geometrías del historial viejo; el ganador de `tfg2` (espesor 2.2 %) muestra que a esa escala de cuerpo fino el orden entre mallas deja de ser fiable.
 
-**Validación externa contra XFOIL** (NACA0012 Re=1e5, Ncrit=9, airfoiltools; `validacion_xfoil.json`): **la sustentación es buena, la resistencia no.** MAE(Cl)=0.0912, pendiente dCl/dα=0.10211 vs XFOIL 0.11107 y teoría 2π 0.10966. MAE(Cd)=0.036, **error medio en Cd +123.8 %, monótono creciente con α** (−2.4 % a α=0 → +226 % a α=10). Causas plausibles: resolución de capa límite, separación/reataque prematuro de la burbuja, bidimensionalidad. **El L/D absoluto NO es comparable con XFOIL ni con experimento, y como el error de Cd depende de α tampoco es un factor de escala divisible.** Lo que sí se sostiene: Cl, pendiente de sustentación, y comparación perfil-contra-perfil a igual α, misma malla **y mismo dominio**.
+**Validación externa contra XFOIL** (NACA0012 Re=1e5, Ncrit=9, airfoiltools; `validacion_xfoil.json`): **la sustentación es buena, la resistencia no.** MAE(Cl)=0.0912, pendiente dCl/dα=0.10211 vs XFOIL 0.11107 y teoría 2π 0.10966. MAE(Cd)=0.036, **error medio en Cd +123.8 %, monótono creciente con α** (−2.4 % a α=0 → +226 % a α=10). Causas plausibles: resolución de capa límite, separación/reataque prematuro de la burbuja, bidimensionalidad. **El L/D absoluto NO es comparable con XFOIL ni con experimento, y como el error de Cd depende de α tampoco es un factor de escala divisible.** Lo que sí se sostiene: Cl, pendiente de sustentación, y comparación perfil-contra-perfil a igual α, misma malla **y mismo dominio**. **El curvo baja ese +124 % de Cd a +15 %** (validación 1), así que el sesgo era del IBM cartesiano, no del modelo.
 
-**Transición SA-BC implementada y validada** (`8e29bd5`): `transition_model="sa_bc"` + `freestream_Tu=0.1` (default `"none"`, requiere `turb_model="sa"`). Intermitencia algebraica de Bas-Cakmakcıoğlu 2016: γ = 1−exp(−√T1−√T2) con Re_θc por la correlación de Menter, modulando **solo la producción** de SA; `SA_BC_CHI1=0.002`, `SA_BC_CHI2=5.0`; γ en `Mesh.sa_gamma`. Validada en `results/1eraGranOptimizacion/agent_tests/sabc_*`.
+**Transición SA-BC implementada y validada** (`8e29bd5`): `transition_model="sa_bc"` + `freestream_Tu=0.1` (default `"none"`, requiere `turb_model="sa"`). Intermitencia algebraica de Bas-Cakmakcıoğlu 2016: γ = 1−exp(−√T1−√T2) con Re_θc por la correlación de Menter, modulando **solo la producción** de SA; `SA_BC_CHI1=0.002`, `SA_BC_CHI2=5.0`; γ en `Mesh.sa_gamma`. Validada en `results/1eraGranOptimizacion/agent_tests/sabc_*`. **Aún no portada al curvo**, y es lo que explica su −17 % de Cl.
 
 **Campaña de GA "1eraGranOptimizacion" completada** (`74add38`, `43d95e9`): modo `--mixto <tag>`, 4 semillas nuevas aptas a bajo Re (`SD7037`, `E387`, `SG6043`, `MH32`), flags `--multipunto/--delta-angulo/--fitness-modo`, `--transition-model/--freestream-tu`, `--run-tag`. **Todos esos L/D son de la señal sesgada; no citar.**
 
@@ -583,7 +1071,6 @@ El líder de la exploración pierde 3.85 puntos al refinar mientras los otros do
 
 - **El Cl queda prácticamente convergido entre las dos mallas finas** (0.6865 vs 0.6878). Ni el `p=1.52` ni el extrapolado 0.6841 de la lectura vieja son citables: con el punto corregido la razón de residuos es negativa y la convergencia es oscilatoria, pero la banda es del 0.19 %, o sea ruido.
 - **Cd oscila** (baja y vuelve a subir, razón −0.93) y **arrastra al L/D** (razón −0.61). La banda citable del ganador se estrecha de 26.7–28.7 a **27.1–28.7**, y sigue siendo una banda, no un valor.
-- **Pendiente barato**: dx=0.004 y dx=0.002 **todavía usan el Cl instantáneo**; allí el flujo llega a estacionario y la diferencia debería ser pequeña, pero hay que rehacerlas (~66 min) para que las tres mallas usen la misma definición.
 - Fluctuación instantánea medida a dx=0.001: Cl **6.5 %**, Cd **15.5 %** — de ahí venía todo el ruido de estimador.
 - **Estacionariedad por tramos** (cuatro tramos de t≈14 entre t=14 y t=71): L/D 27.01 / 27.15 / 27.18 / 27.05. El flujo es estadísticamente estacionario aunque nunca alcance estado estacionario.
 
@@ -592,12 +1079,12 @@ El líder de la exploración pierde 3.85 puntos al refinar mientras los otros do
 - **El criterio de la versión 3 no llegó a saltar** (`converged_clcd=false`, 192000 de 192000): esa fue la prueba que motivó la versión 4 (puerta de CI95). A esta resolución el perfil **no tiene estado estacionario**; las mallas gruesas sí convergen porque la difusión numérica amortigua el desprendimiento.
 - **Cd: 0.025430 ± 0.000281 (CI95, 768 muestras) frente a 0.025507 con t=12 → 0.30 %, dentro del CI95.** El promediado temporal no era el problema: **la oscilación del Cd entre mallas es espacial y real**.
 - **El Cl NO se movía un 6 %** — eso era el bug de fase del snapshot, corregido en `08af2c4`. La media temporal es 0.6878 con las dos ventanas.
-- Queda un residuo real de dispersión entre estimadores sobre el mismo campo: Cl 0.6878 (media de superficie) frente a 0.6508 (circulación en lazo 0.15c) y 0.6419 (∮ΔCp en la cuerda) — **~7 %, no el 12 % que se creía**, pero el flag `cl_cp_discrepancy` sigue levantándose y `ΔCp_TE=−0.092` sigue doblando la tolerancia. Los lazos grandes bajan a Cl_circ 0.51 (0.40c y 0.80c) y 0.29 (1.50c): **la circulación no cierra**.
+- Queda un residuo real de dispersión entre estimadores sobre el mismo campo: Cl 0.6878 (media de superficie) frente a 0.6508 (circulación en lazo 0.15c) y 0.6419 (∮ΔCp en la cuerda) — **~7 %**, y `ΔCp_TE=−0.092` dobla la tolerancia. Los lazos grandes bajan a Cl_circ 0.51 (0.40c y 0.80c) y 0.29 (1.50c): **la circulación no cierra**. **La validación 2 del curvo apunta a que buena parte de esa caída con el radio del lazo es truncamiento del dominio**, no defecto del esquema.
 - **No repetir esta corrida**: el `.npz` de series está commiteado y el análisis se rehace offline.
 
-**Ghost cells del borde de salida entre mallas** (`te_report_mallas.py` → `results/verificacion_numerica/te_report_mallas.json`, ~1 min sin simular): dx=0.004 → 11 ghosts en el TE, dx=0.002 → 14, dx=0.001 → 15; **irreparables en el TE = 0 en las tres** (1 irreparable en todo el dominio a dx=0.002). **La distribución es suave en dx**, así que la hipótesis "las ghost-cells de extradós e intradós se solapan y refinar lo empeora" **no está respaldada por el conteo**: el error de discretización no salta por ahí. La ambigüedad de fuerza sigue abierta, pero el sospechoso ya no es el reparto de ghosts.
+**Ghost cells del borde de salida entre mallas** (`te_report_mallas.py` → `results/verificacion_numerica/te_report_mallas.json`, ~1 min sin simular): dx=0.004 → 11 ghosts en el TE, dx=0.002 → 14, dx=0.001 → 15; **irreparables en el TE = 0 en las tres** (1 irreparable en todo el dominio a dx=0.002). **La distribución es suave en dx**, así que la hipótesis "las ghost-cells de extradós e intradós se solapan y refinar lo empeora" **no está respaldada por el conteo**: el error de discretización no salta por ahí.
 
-### Estudio de independencia de dominio — el sesgo más grande de la campaña (sin commitear)
+### Estudio de independencia de dominio — el sesgo más grande de la campaña
 
 `scripts/agent_tests/estudio_dominio.py` → `results/verificacion_numerica/estudio_dominio/{INFORME.md,analisis.json,estudio_dominio.csv,png,campos/}`. Ganador de `islands_tfg2`, α=4°, dx=0.002, 13000 iters fijos; **solo cambia el dominio**.
 
@@ -618,14 +1105,15 @@ Motivación: top/bottom son `slip` (v=0) — **paredes de túnel cerrado, no cam
 - **F (24×5) da el L/D más alto de todos (36.01) y hay que descartarlo**: `eps_top=0.0229` y `eps_bot=−0.0172` — es bloqueo de túnel puro, no física.
 - **Los dos errores NO son aditivos**: el factorial da una interacción en Cl de +0.0245 sobre un efecto lateral de −0.014…−0.038 y longitudinal de +0.026…+0.051. **No vale corregir cada frontera por separado.**
 - **Decisión: el dominio de referencia es C (Lx=24, Ly=16, cx=6)** para polares y simulaciones sueltas. Coste medido (`bench_dominio.py` → `bench_dominio.jsonl`): el estirado satura en dx_max, así que ampliar apenas añade celdas; el precio está en el Poisson — 7.18 it/s en 8×5 → 4.76 en 24×16 → 3.91 en 40×24. **C cuesta ~50 % más por iteración que el dominio del GA, no un factor.**
+- **En el curvo esto casi desaparece** (validación 2): recortar el arco C de 8.76 a 6.24 cuerdas mueve el Cl un 0.01 %. La sensibilidad al dominio del cartesiano es del IBM + fronteras `slip`, no de la física.
 
-**¿Se conserva el ranking del GA al cambiar de dominio?** (`ranking_dominio.py` → `results/verificacion_numerica/ranking_dominio/`): top-1 y top-2 de la población final reevaluados con **el mismo presupuesto** (13000 iters, la campaña usó 10000/7750/5950 por el early-stop y con n distinto las barras no son comparables). top1 27.75 (fitness GA) → **31.81** en B; top2 27.23 → **29.51** en B. **El orden se conserva y la diferencia (2.30) supera el CI95 de cada uno (~1.1), pero por poco.** **Incompleto**: falta el top-3 y faltan las reevaluaciones en el dominio A con presupuesto igualado — sin ellas no se puede afirmar que el sesgo de dominio sea uniforme entre perfiles.
+**¿Se conserva el ranking del GA al cambiar de dominio?** (`ranking_dominio.py` → `results/verificacion_numerica/ranking_dominio/`): top-1 y top-2 de la población final reevaluados con **el mismo presupuesto** (13000 iters, la campaña usó 10000/7750/5950 por el early-stop y con n distinto las barras no son comparables). top1 27.75 (fitness GA) → **31.81** en B; top2 27.23 → **29.51** en B. **El orden se conserva y la diferencia (2.30) supera el CI95 de cada uno (~1.1), pero por poco.** **Incompleto**: falta el top-3 y faltan las reevaluaciones en el dominio A con presupuesto igualado.
 
-### Asintótico temporal y polares del dominio C (sin commitear)
+### Asintótico temporal y polares del dominio C
 
 **Cortar en t≈10 sobreestima el Cd ~5 %** (`asintotico_alpha4_domC.py` → `results/asintotico_alpha4_domC/`). Ganador, α=4, dx=0.002, dominio C, llevado a **t=41.5** (52000 iters, 3.4 h): el L/D de la cola sube 24.13 (t=5) → 32.33 (t=10) → **34.05 (t=20) y ahí se queda plano** (34.03 / 34.13 / 34.09 / 34.05 hasta t=41.5). **Toda la corrección está en el Cd** (0.02680 → 0.02099 → 0.02003); el Cl apenas se mueve (0.6818 desde t≈12). Doblar de t=20 a t=40 mueve el L/D 0.01.
 
-**Extrapolación a t→∞** (`extrapolacion_polar.py`): **Richardson no vale en el tiempo** — la cola es un transitorio que decae y luego mesetea, no una ley de potencias. Contrastado contra el único punto con verdad medida (α=4, valor real 34.084): Richardson sobre T=5/10/20 da 39.41 (**+15.6 %**), el ajuste exponencial `f(T) = F∞ − A·e^(−T/τ)` sobre T, 2T y 4T da 34.66 (**+1.7 %**). El ajuste solo aplica si la razón de incrementos cae en (0,1); si no (desprendimiento sin meseta, o serie cortada por el guardián de residual) se marca **n/a** — ahí no hay valor asintótico que extraer.
+**Extrapolación a t→∞** (`extrapolacion_polar.py`): **Richardson no vale en el tiempo** — la cola es un transitorio que decae y luego mesetea, no una ley de potencias. Contrastado contra el único punto con verdad medida (α=4, valor real 34.084): Richardson sobre T=5/10/20 da 39.41 (**+15.6 %**), el ajuste exponencial `f(T) = F∞ − A·e^(−T/τ)` sobre T, 2T y 4T da 34.66 (**+1.7 %**). El ajuste solo aplica si la razón de incrementos cae en (0,1); si no (desprendimiento sin meseta, o serie cortada por el guardián de residual) se marca **n/a**.
 
 **Polares disponibles, y NO son comparables entre sí punto a punto**:
 
@@ -639,14 +1127,14 @@ Motivación: top/bottom son `slip` (v=0) — **paredes de túnel cerrado, no cam
 
 Polar del ganador vs NACA0012 a dx=0.002 en el **dominio del GA** (L/D, α=0…10 de 2 en 2): 2.53 / 15.49 / **27.70** / 21.50 / 14.91 / 10.32 contra NACA 0.01 / 8.93 / 13.19 / 12.74 / 8.39 / 6.61.
 
-Polar **corregida a t→∞ en el dominio C** (`figuras_analisis_polar.py` → `results/analisis_polar/`, columna `ld_fusion`; **no es simulación nueva**: es la polar de 1 grado a t≈10 multiplicada por el factor F∞/f(t=10) medido en los ángulos pares e interpolado, y solo se dibuja donde ese factor está acotado por dos ángulos con meseta):
+Polar **corregida a t→∞ en el dominio C** (`figuras_analisis_polar.py` → `results/analisis_polar/`, columna `ld_fusion`; **no es simulación nueva**):
 
 | α | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---|---|---|---|---|---|---|---|---|---|
 | ganador | 10.37 | 18.50 | 32.40 | **32.67** | 29.01 | 22.01 | 17.79 | 14.36 | 11.72 | 10.09 |
 | NACA0012 | 5.46 | 9.63 | 13.43 | **14.38** | 13.19 | 12.60 | 10.17 | 7.10 | 5.51 | 4.19 |
 
-Máximo en el punto de diseño (α=3–4) y ventaja en todo el rango: **mejora de banda ancha, no sobreajuste al ángulo**. La ventaja es ~2.3× a α=4. **El valor absoluto no es citable** (ver Richardson abajo); la relación entre los dos perfiles, medida en el mismo dominio, misma malla y misma ventana, sí.
+Máximo en el punto de diseño (α=3–4) y ventaja en todo el rango: **mejora de banda ancha, no sobreajuste al ángulo**. La ventaja es ~2.3× a α=4. **El valor absoluto no es citable**; la relación entre los dos perfiles, medida en el mismo dominio, misma malla y misma ventana, sí.
 
 ### Richardson sobre la POLAR — el Cd no converge en malla (`835a874`)
 
@@ -658,11 +1146,7 @@ Máximo en el punto de diseño (α=3–4) y ventaja en todo el rango: **mejora d
 > extrapolacion robusta que no produce Cl de 2.91 ni Cd negativos.
 > **No citar de aqui el 34.04 ni las bandas 19-55 %.**
 
-`scripts/agent_tests/richardson_polar_domC.py` → `results/richardson_polar_domC/{richardson.json,polares.csv,polar_dx*.json,series/,campos/,figuras/,run.log}`. Tres mallas (dx=0.004/0.002/0.001, r=2) × cinco ángulos (0, 2, 4, 6, 8) en el dominio C, **~48 h de GPU** (13000/26000/52000 iters, t≈20 igual en las tres; la malla fina cuesta ~6 h por ángulo).
-
-**Por qué la polar y no un ángulo suelto**: con un solo ángulo no hay forma de distinguir "Richardson no aplica" de "ese ángulo cayó mal". Cinco ángulos dan cinco estimaciones independientes de p.
-
-**Las dos paradas van desactivadas a propósito** (criterio de L/D y guardián de residual): cortan a t distinto en cada malla y meten dependencia de ventana dentro de la diferencia entre mallas, que es justo lo que se quiere medir. El criterio calibrado **sí se pasa al solver para que registre su veredicto sin actuar**, y además se reproduce offline sobre la serie volcada de cada punto con la función del propio solver — así queda medido dónde habría parado sin pagar el sesgo de que parara.
+`scripts/agent_tests/richardson_polar_domC.py` → `results/richardson_polar_domC/`. Tres mallas (dx=0.004/0.002/0.001, r=2) × cinco ángulos (0, 2, 4, 6, 8) en el dominio C, **~48 h de GPU**.
 
 | magnitud | monótonos | p medio | banda media entre mallas |
 |---|---|---|---|
@@ -670,11 +1154,10 @@ Máximo en el punto de diseño (α=3–4) y ventaja en todo el rango: **mejora d
 | Cd | 3/5 (rompe en α=4 y α=6) | 2.98 ± 1.73 | 39.2 % |
 | L/D | 4/5 (rompe en α=4) | 2.28 ± 1.43 | 58.8 % |
 
-- **El Cl es lo único citable**: monótono en los cinco ángulos, con p consistente y del orden esperado. GCI fino **1.1–5.7 % fuera de α=0** (α=2: 5.7 %, α=4: 4.2 %, α=6: 1.1 %, α=8: 2.3 %). **α=0 es un caso aparte**: Cl 0.074/0.151/0.187, GCI fino 21 % — a sustentación casi nula el error relativo explota y el punto no dice nada.
-- **El Cd rompe justo en el punto de diseño**: a α=4 vale 0.02426 / 0.01999 / 0.02317 (no monótono, GCI fino 50 %), y a α=6 la razón de residuos casi se anula (p=6.44, GCI fino 0.006 % — un artefacto, no una medida).
-- **El L/D lo hereda**: a α=4 da 27.62 / **34.04** / 30.17 — banda del **21 %**. Ese 34.04 es el número que sale de la polar del dominio C a dx=0.002, y **la malla fina no lo confirma**.
-- **Conclusión operativa: ningún GCI de Cd ni de L/D es citable; solo la banda entre mallas (19–55 %).** Para el Cl, sí se puede citar el GCI fino.
-- Los campos finales (355 MB de u/v/p) quedan fuera del índice; están en local para instrumentar el borde de salida. La corrida α=8 a dx=0.001 con ventana corta se archivó aparte como `DESCARTADO_ventana_corta_*` en vez de mezclarla con el resto.
+- **El Cl es lo único citable**: monótono en los cinco ángulos. GCI fino **1.1–5.7 % fuera de α=0**. **α=0 es un caso aparte**: GCI fino 21 % — a sustentación casi nula el error relativo explota.
+- **El Cd rompe justo en el punto de diseño**: a α=4 vale 0.02426 / 0.01999 / 0.02317 (no monótono, GCI fino 50 %).
+- **El L/D lo hereda**: a α=4 da 27.62 / **34.04** / 30.17 — banda del **21 %**.
+- **Conclusión operativa: ningún GCI de Cd ni de L/D es citable; solo la banda entre mallas (19–55 %).**
 
 **El adelgazamiento del perfil NO es artefacto de malla** (`test_espesor_malla.py` → `espesor_vs_malla.json`). El GA lleva el espesor máximo del 12 % (semilla) a **~1.9–2.2 %** con el L/D subiendo monótonamente. Cuatro ganadores del mismo linaje reevaluados a dx=0.002:
 
@@ -685,28 +1168,42 @@ Máximo en el punto de diseño (α=3–4) y ventaja en todo el rango: **mejora d
 | e6_GM15 | 1.91 % | 25.44 | 28.82 | 0.601 | 0.0209 |
 | e6_s1014 | 2.13 % | 25.66 | **30.17** | 0.728 | 0.0241 |
 
-**El orden se conserva** entre mallas dentro de ese linaje y la mejora solo se encoge de 1.513× a 1.371×. El adelgazamiento es física de Re bajo — el Cd cae a la mitad mientras el Cl solo baja de 1.05 a 0.73. **Matices**: el linaje es homogéneo, y el caso s1014/epoch9 (espesor máximo al 84 % de cuerda) demuestra que fuera de él la malla gruesa sí reordena.
+**El orden se conserva** entre mallas dentro de ese linaje y la mejora solo se encoge de 1.513× a 1.371×. El adelgazamiento es física de Re bajo. **Matices**: el linaje es homogéneo, y el caso s1014/epoch9 (espesor máximo al 84 % de cuerda) demuestra que fuera de él la malla gruesa sí reordena.
 
 Tres defectos que hacían inviable una corrida de días, corregidos en `5213410`:
 
-1. **Fitness negativo indistinguible de un fallo.** `calcular_fitness` filtraba `ld > 0`, así que un perfil con L/D<0 devolvía 0.0 — el mismo valor que un crasheo. Ahora hay centinela explícito `Individuo.evaluado`; el pool de reproducción pasa de `fitness > 0` a `ind.resultados`.
-2. **Reanudar costaba una generación entera**: el checkpoint guardaba el fitness pero no lo restauraba → 16 re-simulaciones, 3.1 h por pausa. Ahora restaura fitness, resultados y `evaluado`.
-3. **La pausa no paraba nada**: RunGA absorbía el Ctrl+C y `_run_ga` no lo miraba. Ahora se re-lanza como `KeyboardInterrupt` y las fases que llaman a `simular_perfil` consultan el centinela entre simulaciones.
+1. **Fitness negativo indistinguible de un fallo.** `calcular_fitness` filtraba `ld > 0`, así que un perfil con L/D<0 devolvía 0.0 — el mismo valor que un crasheo. Ahora hay centinela explícito `Individuo.evaluado`.
+2. **Reanudar costaba una generación entera**: el checkpoint guardaba el fitness pero no lo restauraba → 16 re-simulaciones, 3.1 h por pausa.
+3. **La pausa no paraba nada**: RunGA absorbía el Ctrl+C y `_run_ga` no lo miraba.
 
-Además: `parada_pedida()` acepta fichero centinela (las corridas de verificación aceptan `STOP_SIMULATION.trigger` en la raíz); **`guardar_memoria` ya no pisa el histórico** — volcaba `datos_X` tal cual, así que una corrida con memoria vacía lo borraba todo (una prueba de humo de 10 individuos se llevó 2347 experiencias); barra de progreso a 1 actualización/minuto cuando la salida no es TTY; flags `--dx` y `--t-target`; `sim_last.npz`, `_temp_gen*_ind*.dat` y `refine_tmp/` fuera del control de versiones.
-
-**Cambios de código pendientes de commit**: `Simulador2D.py` — `_n_efectivo` (duplicada, limpiar) y `_detect_series_convergence` reescrita sobre CI95 con ventana auto-ensanchable, devuelve `(drift, ci95, converged)`; kwarg `clcd_tol_noise` → **`clcd_tol_ci95`** (cualquier script que pase el viejo falla). `scripts/RunGA.py` — **`dump_field_path`**: vuelca el campo final (u, v, p, máscara sólida y los ejes 1D de la malla estirada) en el instante de parada, sea por convergencia o por contador; de ahí salen los mapas de |u| y streamlines de las polares. `verificacion_numerica.simular(..., dump_field=...)`. Scripts nuevos: `criterio_ci95.py`, `estudio_dominio.py`, `bench_dominio.py`, `ranking_dominio.py`, `asintotico_alpha4_domC.py`, `polar_fina.py`, `polar_fina_dominio_c.py`, `polar_2grados_dom24x16.py`, `polar_naca0012.py`, `extrapolacion_polar.py`, `figuras_analisis_polar.py`.
+Además: `parada_pedida()` acepta fichero centinela; **`guardar_memoria` ya no pisa el histórico** (volcaba `datos_X` tal cual, y una prueba de humo de 10 individuos se llevó 2347 experiencias); barra de progreso a 1 actualización/minuto sin TTY; flags `--dx` y `--t-target`.
 
 ### Memoria del TFG (`docs/tfg/`)
 
 Pipeline propio: fuente en `memoria.txt` (marcas `#1..#4`, `$$latex$$`, `[FIG]/[TBL]/[TOC]/[PB]`, tablas `| a | b |`), `build_tfg.py` sustituye `word/document.xml` sobre la plantilla oficial EETAC `MaquetaTFG.docx`, `latex2omml.py` convierte el subconjunto de LaTeX usado a OMML (lanza `ValueError` si algo no está soportado, para que falle en generación y no en Word) y `acentuar.py`/`acentuar2.py` restauran tildes usando `/usr/share/dict/spanish`. Salida versionada: `TFG.docx`.
 
-- `resultados_finales_v2.txt` (`99ffaa2`, no se compila): texto de sustitución para los capítulos 4, 5 y 6, con la misma marcación y una tabla de trazabilidad de cada número contra su fichero de resultados. Cae la restricción del capítulo 4 (la sección 4.6 ya se puede escribir), los resultados van con banda de incertidumbre en vez de valor puntual, el capítulo 5 gana tres limitaciones medidas y el 6 cambia todas las cifras de energía y emisiones.
-- **Tres apartados reescritos y compilados como extractos sueltos** (sin seguir): `3.4.2` difusión numérica del esquema de advección, `3.8.2` corrección de presión de fondo, `3.10.3` la evaluación CFD como función de fitness — cada uno con su `.txt` fuente, `.docx` y `.pdf`.
-- `figuras/diagrama_solver.{excalidraw,png,svg}` — diagrama del solver, sin seguir.
-- El flujo está a medio migrar: hay `TFG.odt` y `TFG_v1_con_tus_ediciones.odt` sin seguir (edición en LibreOffice) junto al `TFG.docx` generado. **Decidir si se sigue con `build_tfg.py` o se pasa a edición manual.**
+**El TFG está presentado** (`dd1b04f`, `fadfa60`, `562f858`). Lo que sigue en este repo es trabajo posterior a la entrega: el solver curvilíneo.
 
-**Estado del árbol**: `835a874` es el último commit; **queda sin commitear todo el bloque de agosto 15-24** — recalibrado CI95 (`Simulador2D.py`, 138 líneas), `dump_field_path` en `RunGA.py`, los 11 scripts nuevos de dominio/polar/extrapolación, `results/analisis_polar/`, `results/asintotico_alpha4_domC/`, las tres carpetas de polares, `estudio_dominio/`, `ranking_dominio/`, `bench_dominio*`, `criterio_ci95.json`, y los apartados del TFG. **`polar_results.json` sale modificado**: lo escribe `main()` en cada corrida suelta, es salida automática, no un resultado curado. **`cerebro_aerodinamico.pkl` sale modificado y sigue fuera de los commits**: en disco está el truncado por la prueba de humo (74 experiencias frente a las 2347 de `8ab2461`) y mezcla genes de longitudes distintas entre islas, así que el oráculo no consigue cargarlo — se reconstruye aparte, **no commitear esa versión**. `RESUMEN.md.tmp` es artefacto del hook. `graphify-out/` sale modificado (grafo del repo regenerado).
+- `resultados_finales_v2.txt` (`99ffaa2`): texto de sustitución para los capítulos 4, 5 y 6, con una tabla de trazabilidad de cada número contra su fichero de resultados.
+- **Tres apartados reescritos y compilados como extractos sueltos**: `3.4.2` difusión numérica del esquema de advección, `3.8.2` corrección de presión de fondo, `3.10.3` la evaluación CFD como función de fitness.
+- `figuras/diagrama_solver.{excalidraw,png,svg}` — diagrama del solver.
+
+**Estado del árbol (2026-09-17)**: rama **`Geometria_Ajustada`**, HEAD **`ecb8dc0`**,
+**árbol limpio** salvo este `RESUMEN.md` y `RESUMEN.md.tmp`, que es artefacto del
+hook y no se commitea.
+Todo el bloque de agosto que estuvo pendiente doce días (recalibrado CI95,
+`opt_solver.py`, estudio de dominio, polares del dominio C, resultados finales)
+**ya está commiteado**, junto con la geometría arbitraria (`bff0838`), la GUI
+(`c104ba1`), la reorganización en dos solvers (`bdca39b`) y el curvo entero
+(`87b56fe`, `6ea1e7b`) con los cuatro pasos de la fase 1 de optimización
+(`8e0e112`, `6a0f886`, `b2c9fe0`, `1918c80`) y el primero de la fase 2
+(`ecb8dc0`, nivel grueso 30 → 4 barridos).
+Queda por limpiar la definición duplicada de `_n_efectivo`
+(`Sim_Cartesiano/Simulador2D.py:7775` y `:7797`).
+`Sim_Cartesiano/cerebro_aerodinamico.pkl` sigue siendo el truncado por la prueba
+de humo (74 experiencias frente a las 2347 de `8ab2461`) y mezcla genes de
+longitudes distintas entre islas, así que el oráculo no lo carga — hay que
+reconstruirlo, no confiar en el que hay.
 
 ## Estado histórico (2026-07-12, rama Malla-Variable)
 
@@ -721,16 +1218,16 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
 **Resultados validados** (JSON+npz en `results/1eraGranOptimizacion/agent_tests/wc_*`; `a5c14b7`):
 - `wc_re1e3_a5` (Re=1e3, α=5): Cl=0.211±0.0004, Cd=0.148, Q_lazo=+0.02, ΔCp_TE=0.04. **Clava el DNS de referencia (Kurtulus Re=1000: Cl~0.22, Cd~0.146)**. Legacy daba 0.14 con Q=-0.06.
 - `wc_sa_a0` (α=0, SA): Cl=0.0003, sin NaN — simetría perfecta.
-- `wc_sa_a5_dx2_long` (48k iters, t=18.3, 2h GPU): Q=0.0032, **Cl converge en plateau 0.32**. **PROYECCIÓN EXONERADA: Q→0 no recupera el Cl.** Hipótesis Q→Cl pendiente ~20 FALSIFICADA.
+- `wc_sa_a5_dx2_long` (48k iters, t=18.3, 2h GPU): Q=0.0032, **Cl converge en plateau 0.32**. **PROYECCIÓN EXONERADA: Q→0 no recupera el Cl.**
 - **Diagnóstico del déficit (0.32 vs 0.55)**: SA sobre-difunde. BL en x/c=0.5 de espesor ~0.07c (3× placa plana turbulenta), χ=nu_t/nu~40-50 (teórico ~8), Cp_min=-0.81 (esperado ~-1.9).
-- `wc_sa_a5_dx2_lam01` (sa_nu_tilde_factor=0.1): **PEOR** — Cl=0.266, LSB reapareciendo. **Falsificada la hipótesis fully-turbulent**; mantener `sa_nu_tilde_factor=3.0`. (La transición se resolvió después con SA-BC.)
+- `wc_sa_a5_dx2_lam01` (sa_nu_tilde_factor=0.1): **PEOR** — Cl=0.266, LSB reapareciendo. **Falsificada la hipótesis fully-turbulent**; mantener `sa_nu_tilde_factor=3.0`.
 - `wc_sa_a5_dx1` (dx=0.001): **Cl=0.389** (vs 0.32 a dx=0.002). **Camino resolución confirmado, error ~1º orden en dx.**
 - **Causa dominante identificada: difusión numérica del SL bilineal, nu_num≈u·dx/2** (independiente de dt) — 1º orden, ~5-10× nu molecular cerca de pared a Re=1e5. A Re=1e3 era ~10 % de nu (por eso clavó el DNS).
-- **MacCormack implementado** (`advection_scheme="maccormack"`, default "sl"): corrección Selle 2008 con limitador min/max del stencil y **banda de 2 celdas junto al sólido en SL puro** (sin banda, la corrección sobre el staircase mete pico espurio Cp=-11 en TE). Validación Re=1e3 α=5: Cl=0.245/Cd=0.155.
-- `wc_mc_sa_a5_dx2`: **Cl=0.452** (SL daba 0.32), Cp_min=-1.20, x_succión=0.015, Cd=0.040. **Cuarta capa (nu_num del SL) CONFIRMADA y resuelta.** Coste ~4 %.
-- `wc_mc_sa_a5_dx1`: **Cl=0.496 ✓ OBJETIVO CUMPLIDO**, Cd=0.0335, Cp_min=-1.24, Q=0.005. **Richardson dx→0: Cl≈0.54 — clava el físico 0.55.**
-- **CONFIG DE REFERENCIA DEL OPTIMIZADOR**: `wall_treatment="consistent"` + `turb_model="sa"` + `advection_scheme="maccormack"` (+ `transition_model="sa_bc"`). dx=0.002 para validación, dx=0.004 legítimo para explorar/rankear dentro de un linaje homogéneo.
-- **POLAR VALIDADA** (`wc_mc_polar_a0/a2/a8`, dx=0.002): Cl(α)= 0(0.000), 2(0.185), 5(0.452), 8(0.708); Cd= 0.0305/0.0323/0.0404/0.0624. Monotonía ✓, pendiente 0.088/deg ✓, simetría α=0 exacta ✓. **DIAGNÓSTICO DE 4 CAPAS CERRADO.** (Todo sobre NACA0012, espesor 12 %.)
+- **MacCormack implementado** (`advection_scheme="maccormack"`, default "sl"): corrección Selle 2008 con limitador min/max del stencil y **banda de 2 celdas junto al sólido en SL puro**. Validación Re=1e3 α=5: Cl=0.245/Cd=0.155.
+- `wc_mc_sa_a5_dx2`: **Cl=0.452** (SL daba 0.32), Cp_min=-1.20, Cd=0.040. **Cuarta capa (nu_num del SL) CONFIRMADA y resuelta.** Coste ~4 %.
+- `wc_mc_sa_a5_dx1`: **Cl=0.496 ✓ OBJETIVO CUMPLIDO**, Cd=0.0335, Q=0.005. **Richardson dx→0: Cl≈0.54 — clava el físico 0.55.**
+- **CONFIG DE REFERENCIA DEL OPTIMIZADOR (cartesiano)**: `wall_treatment="consistent"` + `turb_model="sa"` + `advection_scheme="maccormack"` (+ `transition_model="sa_bc"`). dx=0.002 para validación, dx=0.004 legítimo para explorar/rankear dentro de un linaje homogéneo.
+- **POLAR VALIDADA** (`wc_mc_polar_a0/a2/a8`, dx=0.002): Cl(α)= 0(0.000), 2(0.185), 5(0.452), 8(0.708). Monotonía ✓, pendiente 0.088/deg ✓, simetría α=0 exacta ✓. **DIAGNÓSTICO DE 4 CAPAS CERRADO.**
 - **Script de barrido CFL/dx/α**: `scripts/agent_tests/run_cfl_sweep.py` — 30 sims resumibles. **Aún no ejecutado.**
 
 **Diagnóstico histórico cerrado (4 capas, evidencia en `results/1eraGranOptimizacion/agent_tests/`)**:
@@ -738,98 +1235,199 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
 2. Pared sub-resuelta: SA necesita dx≤0.002 (y+≲10).
 3. Inconsistencia IBM↔proyección: legacy absorbía masa (sobre-circulación 2.2×). **Resuelta con `wall_treatment="consistent"`**.
 4. Difusión numérica del SL bilineal. **Resuelta con `advection_scheme="maccormack"`**.
-- **Quinta capa abierta (agosto 2026)**: definición de fuerza sobre cuerpos ultrafinos — la circulación no cierra (Cl_circ cae de 0.65 a 0.29 al agrandar el lazo), ~7 % de dispersión entre estimadores de Cl, ΔCp_TE del doble de la tolerancia. **El conteo de ghost-cells del TE es suave entre mallas, así que el reparto de ghosts no es el mecanismo**; refinar tampoco lo arregla.
+- **Quinta capa (definición de fuerza sobre cuerpos ultrafinos)**: en el cartesiano sigue abierta. **En el curvo ya no aparece**: los tres estimadores de Cl cuadran al 1.8 %, Γ varía 6.1 % con el lazo, `ΔCp_TE = −0.025` sin parche de Kutta, y la validación 2 muestra que lo que queda de dispersión entre lazos es truncamiento del dominio. La vía para cerrarla es la malla body-fitted, no seguir instrumentando el IBM.
 - Métrica decisiva: Q_lazo=∮u·n dl (`q_loop_025c/075c`).
 
-**GA de optimización de perfiles (`scripts/RunGA.py`)**: `simular_perfil` corre sobre consistent+SA+MacCormack, `main(config)` reutilizable con retorno dict, población mixta multi-semilla (`archivos_base` + `resamplear_a_grid`), parada por `tiempo_limite_s`, mutación con sigma adaptativa, parada por estancamiento, checkpoint de genes en `estado_ga.json` (escritura atómica). Orquestador `scripts/agent_tests/run_convergence_study.py` (deadline-driven, resumible): Fase0 calibración dx, Arm A GA por-semilla, Arm B población mixta, S2 islas con migración (`--islands`), S3 refine top-k, `--aislado`, `--mixto`, `--multipunto`. Memoria de ML persistente: `cerebro_aerodinamico.pkl` + `aprendizaje_ML.jsonl`.
+**GA de optimización de perfiles (`scripts/RunGA.py`)**: `simular_perfil` corre sobre consistent+SA+MacCormack, `main(config)` reutilizable con retorno dict, población mixta multi-semilla, parada por `tiempo_limite_s`, mutación con sigma adaptativa, checkpoint de genes en `estado_ga.json` (escritura atómica). Orquestador `scripts/agent_tests/run_convergence_study.py` (deadline-driven, resumible). Memoria de ML persistente: `cerebro_aerodinamico.pkl` + `aprendizaje_ML.jsonl`.
 
-**Estudio de convergencia (CERRADO, `a0ee4f3`)**: Arm A no converge (4 semillas → 4 óptimos locales, CV=0.172); el test aislado sin migración (28 h GPU) da dist-forma media **0.0557** (igual/peor que la partida 0.0507) → **la convergencia que producen las islas la fuerza la MIGRACIÓN, no una física de óptimo único**. Fixes asociados: `bf6824e`, `ac235b1`, `9309f00`, `30c7cf6`.
+**Estudio de convergencia (CERRADO, `a0ee4f3`)**: Arm A no converge (4 semillas → 4 óptimos locales, CV=0.172); el test aislado sin migración (28 h GPU) da dist-forma media **0.0557** (igual/peor que la partida 0.0507) → **la convergencia que producen las islas la fuerza la MIGRACIÓN, no una física de óptimo único**.
 
 ## Próximos pasos
 
-**Prioridad (2026-08-26, tras cerrar los resultados finales)**
+**Prioridad (2026-09-18) — el foco es el solver curvilíneo**
 
-1. **Commitear todo el bloque de agosto.** Son ~12 días sin seguir: recalibrado
-   CI95, estudio de dominio, polares del dominio C, optimización del solver
-   (`opt_solver.py`), `warm_start_filtered`, la extrapolación robusta y el
-   estudio final completo. **Antes**: borrar la definición duplicada de
-   `_n_efectivo` en `Simulador2D.py` (líneas 7099 y 7121, idénticas) y decidir
-   qué entra de `results/` y de `resultados_finales/` (los `.npz` de campos son
-   ~2 GB y el `.gitignore` ya los excluye).
-2. **Escribir los capítulos 4-6 con los datos de `resultados_finales/`.** El
-   texto de `docs/tfg/resultados_finales_v2.txt` está escrito contra el estudio
-   anterior y hay que rehacerlo: cambia la terna, el número de ángulos, los
-   valores y la conclusión (antes cerraba en negativo, ahora la ventaja del
-   ganador es robusta). Las 9 figuras de `FIGURAS.md` §1 son las que van.
-3. **Actualizar `docs/verificacion_numerica.md`**, congelado desde el 14 de
+Las dos fases de optimización están **cerradas y confirmadas sobre 8 000 pasos**:
+167.0 → **83.94 ms/paso, ×1.99, 5.99 → 11.91 it/s**, con la peor fuerza movida un
+**0.013 %** y la divergencia residual **bajando un 11.7 %**. Ver "Dónde se va el
+tiempo" y la sección de la fase 2. Lo siguiente:
+
+0. **Medir qué le hace la cola del TE a Cl/Cd.** Es lo único que queda abierto
+   del cambio del 21-sep: la malla es buena y la geometría añadida está acotada y
+   avisada, pero **el efecto en las fuerzas no está medido**. AG24 añade 0.39 % de
+   cuerda, NACA_0012 0.96 %. Un par de corridas contra el caso afilado lo cierra.
+1. **La presión es ahora la etapa más cara** (34.58 ms, 41.2 % del paso). Es un
+   solo campo, así que no hay nada que fundir: el margen está en el número de
+   iteraciones del PCG, no en los kernels.
+2. **Momento con `correcciones` 1 → 0.** Quitaría la mitad de las resoluciones de
+   momento sin tocar CUDA. El `punto_fijo.py` de la fase 1 ya demostró que el
+   punto fijo de la corrección diferida no depende del número de iteraciones
+   (orden 2.00 difusivo / 2.02 convectivo con 0, 1 y 2), pero cambia la física
+   discreta y necesita su propia validación larga.
+3. **Portar SA-BC al curvo.** Sigue siendo la prioridad de física. Es la causa
+   medida del −17 % de Cl y del +15 % de Cd contra XFOIL: el SA es turbulento
+   desde el borde de ataque y XFOIL transiciona en x/c=0.27–0.37. El modelo ya
+   está implementado y validado en el cartesiano (`transition_model="sa_bc"`, γ
+   algebraica de Bas-Cakmakcıoğlu modulando solo la producción); hay que
+   trasladarlo a `curvo/turbulencia.py`. **No tocar el esquema antes de esto.**
+4. **Cerrar F6: validación externa del cilindro.** Es lo único de la fase que
+   queda. Referencia a tener presente: el cartesiano 2D daba Cd 1.5–1.67 frente a
+   1.1–1.2 experimental (+25–40 %) con St 0.20 correcto, así que un Cd alto ahí
+   no es "más real".
+5. **Arreglar o retirar la tolerancia de
+   `test_curvo_gpu.py::test_float32_da_la_misma_respuesta`** (3.32e-09 contra
+   1e-09, `tests/test_curvo_gpu.py:300`). Es pre-existente —falla igual en
+   `6ea1e7b`, comprobado con `git stash`— y es el único fallo de la suite; o se
+   justifica el umbral con la discretización que se usa, o se sube con razón
+   escrita.
+6. **Tablero par-impar en el `Cp` de pared** (amplitud 0.11 cerca del TE y
+   creciendo). Nace en `div(m*)` y se acumula en `p += phi`; no toca ni a `u`, ni
+   a `v`, ni a las fuerzas integradas, pero ensucia el Cp que se publica. **No es
+   el número de correcciones cruzadas ni los barridos del nivel grueso, ni la
+   fusión de campos**: con 1 y con 2 correcciones, con 4 y con 30 barridos, y en
+   serie o fundido, la fracción de tablero sale igual a tres cifras (1.334e-4).
+7. **Limpiar `_n_efectivo` duplicada** en `Sim_Cartesiano/Simulador2D.py`
+   (líneas 7775 y 7797, idénticas).
+
+**Del cartesiano — abiertos, pero ya no son la línea principal**
+
+8. **Actualizar `docs/verificacion_numerica.md`**, congelado desde el 14 de
    agosto: no incorpora la ventana larga, el fix del fitness, el estudio de
-   dominio, el Richardson de la polar ni nada del estudio final.
-4. **Investigar el colapso de dt a dx=0.001.** Es el único obstáculo para una
-   terna apoyada en las mallas finas, que sería mejor que la actual. La firma
-   (dt cayendo ×6.8 sin estabilizar) apunta a la misma familia que el blowup del
-   modo par-impar, que `warm_start_filtered` mitiga pero no cura.
-5. **Diagnosticar el exceso de Cd** (+226 % a α=10 frente a XFOIL) y su no
-   convergencia en malla, que es la incertidumbre dominante que queda. El GA
-   converge a cuerpos de 2 % de espesor, así que un Cd sesgado sesga el óptimo de
-   espesor.
-
-**Anteriores (siguen abiertos)**
-
-6. **Cerrar la definición de fuerza sobre cuerpos ultrafinos.** ~7 % entre
-   estimadores de Cl, `ΔCp_TE = −0.092`, circulación que no cierra. El conteo de
-   ghost-cells **ya está descartado** como mecanismo (`te_report_mallas.json`:
-   11/14/15 ghosts, 0 irreparables en las tres mallas); el siguiente paso es
-   comprobar si `kutta_enforce` cierra la circulación y decidir qué estimador
-   vale. Misma familia que el punto 5.
-7. **Terminar `ranking_dominio.py`**: falta el top-3 y las reevaluaciones en el
-   dominio A con presupuesto igualado. Sin ellas no se puede afirmar que el sesgo
-   de dominio sea uniforme entre perfiles, y de eso depende que la campaña del GA
-   sea rescatable como *ranking*.
-8. **Post-proceso de `tfg2`**: pasar `metricas_ga.py` sobre
-   `results/convergence_study/islands_tfg2/` y **reconstruir
-   `cerebro_aerodinamico.pkl`** — el de disco está truncado a 74 experiencias y
-   mezcla genes de longitudes distintas entre islas; hay que resamplear a un grid
-   común antes de reentrenar. Es la causa del error no fatal "inhomogeneous
-   shape" que salía en cada arranque de isla, por el que el surrogate arrancaba
-   en frío cada época.
-9. **Activar el surrogate** (`usar_ia=True`, percentil 70): ahorro estimado del
-   69 % del CFD perdiendo el 2.5 % de la élite. Reentrenar sobre los 1160
-   registros nuevos de `tfg2`, no sobre el historial sesgado. Depende del 8.
-10. **Si hay una tercera campaña de GA, correrla en el dominio C** — cuesta ~50 %
-    más por iteración, no un factor, y el 8×5 mete un sesgo de +4 puntos de L/D en
-    el valor absoluto. Alternativa barata: 8×5 para explorar, refinar el top-k
-    en C.
-11. **GA multipunto α ∈ {2,4,6}**: etapa `multipunto` ya cableada en
-    `cola_tfg.sh`, fuera de la cola por defecto. **Antes conviene resolver 5 y 6**
-    — si la fuerza no está bien definida en la geometría a la que converge el GA,
-    multiplicar ángulos multiplica el problema.
-12. Estudio de convergencia CERRADO: no relanzar corridas de diagnóstico de la
-    misma pregunta. Direcciones abiertas: más diversidad/multi-arranque para un
-    óptimo global real; revisar físicamente el óptimo de camber alto.
-13. **Ejecutar el barrido** `scripts/agent_tests/run_cfl_sweep.py` (30 sims,
+   dominio, el Richardson de la polar ni el estudio final.
+9. **Investigar el colapso de dt a dx=0.001.** Único obstáculo para una terna
+   apoyada en las mallas finas. La firma (dt cayendo ×6.8 sin estabilizar) apunta
+   a la misma familia que el blowup del modo par-impar, que `warm_start_filtered`
+   mitiga pero no cura. **El curvo no tiene ese problema** (el operador es D·G),
+   así que puede que la respuesta correcta sea no arreglarlo.
+10. **El exceso de Cd** (+226 % a α=10 frente a XFOIL) y su no convergencia en
+    malla es la incertidumbre dominante que le queda al cartesiano. El GA
+    converge a cuerpos de 2 % de espesor, así que un Cd sesgado sesga el óptimo
+    de espesor. En el curvo ese sesgo ya baja a +15 % y se explica por transición.
+11. **Terminar `ranking_dominio.py`**: falta el top-3 y las reevaluaciones en el
+    dominio A con presupuesto igualado. Sin ellas no se puede afirmar que el
+    sesgo de dominio sea uniforme entre perfiles, y de eso depende que la campaña
+    del GA sea rescatable como *ranking*.
+12. **Post-proceso de `tfg2`**: pasar `metricas_ga.py` sobre
+    `results/convergence_study/islands_tfg2/` y **reconstruir
+    `cerebro_aerodinamico.pkl`** — el de disco está truncado a 74 experiencias y
+    mezcla genes de longitudes distintas entre islas; hay que resamplear a un
+    grid común antes de reentrenar. Es la causa del error no fatal "inhomogeneous
+    shape" que salía en cada arranque de isla.
+13. **Activar el surrogate** (`usar_ia=True`, percentil 70): ahorro estimado del
+    69 % del CFD perdiendo el 2.5 % de la élite. Reentrenar sobre los 1160
+    registros nuevos de `tfg2`, no sobre el historial sesgado. Depende del 12.
+14. **Si hay una tercera campaña de GA, el candidato natural es el curvo**, no el
+    cartesiano en dominio C: el curvo no tiene sesgo de dominio (0.01 % en Cl),
+    el Cd está a +15 % en vez de +124 %, la malla se genera en 0.02 s y va ya a
+    9.63 it/s. Lo que falta para eso es el generador sobre geometrías del GA — ahí
+    el 15.9 % de éxito al mallar mide la geometría (cúspides con radio de morro
+    mediano 3e-4 c), no el generador.
+15. **GA multipunto α ∈ {2,4,6}**: etapa `multipunto` ya cableada en
+    `cola_tfg.sh`, fuera de la cola por defecto.
+16. **Ejecutar el barrido** `scripts/agent_tests/run_cfl_sweep.py` (30 sims,
     resumible) — sigue pendiente, ninguna sim lanzada.
-14. Opcional barato: probar MacCormack + turbo_hd (~19 it/s esperado) para
-    pre-screening.
-15. Actualizar rutas en scripts que apunten a `results/convergence_study/...` o
+17. Actualizar rutas en scripts que apunten a `results/convergence_study/...` o
     `results/verificacion_numerica/{gci,polar,reeval_*}.json` — los de la campaña
-    vieja viven bajo `results/1eraGranOptimizacion/`. **Cuidado**:
+    vieja viven bajo `results/1eraGranOptimizacion/` y **todo el árbol del
+    cartesiano cuelga ahora de `Sim_Cartesiano/`**. **Cuidado**:
     `results/convergence_study/` contiene la campaña NUEVA (`islands_tfg2/`), así
     que una ruta antigua ya no falla: apunta a datos distintos.
-16. `polar_results.json` en la raíz lo escribe `main()` en cada corrida suelta y
-    se ensucia con puntos de verificación. No es una polar curada; no leerlo como
-    resultado.
+18. `polar_results.json` en la raíz de `Sim_Cartesiano/` lo escribe `main()` en
+    cada corrida suelta y se ensucia con puntos de verificación. No es una polar
+    curada; no leerlo como resultado.
 
-**Cerrados por el estudio final del 2026-08-26**, no rehacer:
+**Cerrados, no rehacer:**
 
+- ~~Paso 1 de la fase 1~~ — hecho (`8e0e112`), bit a bit idéntico.
+- ~~Paso 2: `correcciones` de momento 2→1~~ — hecho (`6a0f886`), −14.6 % de tiempo
+  con ΔCl +0.001 % y ΔCd −0.000 %. **No rehacer el barrido de orden desde frío**:
+  esa medida es la que engañó, el punto fijo es el mismo con 1 y con 2.
+- ~~Paso 3: `correcciones_p` de presión 2→1~~ — hecho (`b2c9fe0`), acumulado
+  162.5 → 127.8 ms con ΔCl +0.000 % y ΔCd −0.003 %. **No volver a levantar la
+  hipótesis del tablero**: se midió y la fracción par-impar en `p`, en la
+  velocidad y la oscilación del Cp en el TE son idénticas con 1 y con 2.
+- ~~Paso 4: SA `correcciones` 1→0~~ — hecho (`1918c80`), acumulado 162.5 →
+  116.5 ms (−28.3 %, 8.58 it/s) con ΔCl +0.001 %, ΔCd −0.002 % y `nu_t/nu`
+  +0.008 %. **No decir que el SA quedó en upwind de 1.er orden**: con 0 el bucle
+  sigue evaluando la corrección diferida una vez sobre el campo anterior, es
+  Picard retrasado un paso. Y **no rehacer el barrido de punto fijo**: con
+  `corr ∈ {0,1,2}` los errores son idénticos a seis decimales en las tres mallas
+  y en los dos regímenes, con orden 2.00 / 2.02.
+- ~~Fase 2, paso 1: barridos del nivel grueso 30→4~~ — hecho (`ecb8dc0`),
+  115.64 → 103.81 ms (×1.11, presión ×1.20) con las fuerzas dentro del 0.005 %.
+  **No rehacer el barrido de `grueso`**: en convección el historial de residuos
+  es idéntico con 1, 2, 4, 8 y 30, y en presión el factor del PCG mejora al bajar
+  (0.067 → 0.021). Y **no leer el +379 % del máximo de divergencia como
+  regresión**: el tablero no se mueve (7.848e-5 → 7.843e-5).
+- ~~Bajar `minimo` (profundidad de la jerarquía)~~ — medido de 8 a 5 niveles
+  (`minimo` 9 → 576): sin tendencia clara de tiempo. Descartado, el coste es por
+  lanzamiento y no por número de niveles.
+- ~~Fusión ingenua de `u` y `v` con `float d[nc]`~~ — medida y descartada: ×0.73
+  por derrame a memoria local. La vía buena son escalares `d0`, `d1`.
+- ~~Commitear el bloque de agosto~~ — hecho, el árbol está limpio.
+- ~~Escribir los capítulos 4-6 del TFG~~ — el TFG está presentado.
 - ~~Rehacer dx=0.004 y 0.002 del GCI del ganador con el Cl promediado~~ — el
   estudio final recalcula los 72 puntos de cero con la misma definición de fuerza
   en todas las mallas.
 - ~~Dar bandas en vez del 28.88 y el 34.04~~ — sustituidos por los valores de
   `resultados_finales/`, con extrapolación robusta y GCI por magnitud.
+- ~~Estudio de convergencia del GA~~ — cerrado, la convergencia la fuerza la
+  migración. No relanzar corridas de diagnóstico de la misma pregunta.
+- ~~El reparto de ghost-cells del TE como mecanismo del error de fuerza~~ —
+  descartado con el conteo (11/14/15, 0 irreparables en las tres mallas).
 
 ## Tests
 
-**Del estudio final (2026-08-26)** — ya ejecutados, `resultados_finales/`:
+**Del curvo (2026-09-17)**:
+
+- `.venv/bin/python -m pytest tests/ -q` — 139 tests, 4–6 min, 15 piden GPU.
+  **138 pasan**; el fallo de `test_curvo_gpu.py::test_float32_da_la_misma_respuesta`
+  (`3.32e-09 < 1e-09`) es pre-existente en HEAD — verificado con `git stash`,
+  falla idéntico sin los cambios de la cola del TE.
+- Los tests de GUI piden `QT_QPA_PLATFORM=offscreen` si no hay pantalla.
+- **Se sustituyó el test canario `test_perfiles_que_solo_se_mallan_en_etapa_1[AG24]`**,
+  que afirmaba que AG24 *debe* plegar y decía explícitamente que tenía que fallar
+  cuando alguien lo arreglase. En su sitio hay tres tests que fijan el
+  **mecanismo**, no el síntoma: que sin cola las celdas plegadas están en el TE y
+  no en el morro, que la cola no mueve ningún punto del perfil, y que un TE
+  afilado sale bit a bit idéntico con cualquier `cola_te`.
+- `.venv/bin/python -m pytest tests/test_curvo_proyeccion.py -q` — **23/23 en
+  50 s**. Es la puerta que hay que pasar al tocar `correcciones_p`.
+- **El plan de la fase 2 menciona un `tests/test_curvo_multigrid.py` que no
+  existe.** Al tocar `multigrid.py` la cobertura real son `test_curvo_gpu.py`,
+  `test_curvo_conveccion.py` y `test_curvo_proyeccion.py`; si se quieren tests de
+  multigrid aislados hay que escribir el fichero.
+- **El test de orden de `test_curvo_conveccion.py` usa 8 correcciones a propósito**:
+  mide desde frío, donde el número de correcciones sí marca el orden. El solver de
+  producción reanuda del paso anterior y con **1 — y también con 0** llega al mismo
+  punto fijo (razón de errores 1.000000 en 24/48/96, orden 2.00 difusivo y 2.02
+  convectivo). No "arreglar" el test bajándolo.
+- `validacion/v1_naca0012_re1e5_a5/correr.py <carpeta> [clave=valor ...]` — corre
+  un caso completo de validación en la carpeta que se le pase, aceptando
+  overrides por línea de órdenes (`distancia_lejos=6.0 x_salida=18.39` es lo que
+  generó v2). Escribe `caso.json`, `malla.npz`, `historia.npz`, `pared_final.npz`,
+  `resultados.json`, `reparto.json` y `figuras/malla.png`. **Lanzar siempre con
+  `PYTHONPATH=.` desde la raíz.**
+- `validacion/<caso>/analizar.py` — las figuras y el análisis del caso; límites de
+  vista y número de celdas salen de `caso.json`, no cableados. `malla_dominio()`
+  dibuja la extensión real del dominio.
+- `bench_0b.py` — micro-benchmark de `cv.sistema` y `jerarquia` por paso; es de
+  donde salió el techo de 3.8 % que motivó el paso 1.
+- `punto_fijo.py` (scratchpad) — barrido de `correcciones ∈ {0,1,2}` **encadenando
+  llamadas que reanudan**, sobre la solución manufacturada, en los dos regímenes y
+  las tres mallas. Es la medida que cerró los pasos 2 y 4; la versión desde frío
+  es la que engaña.
+- **Protocolo del A/B de optimización**: 800 pasos del caso v3, mismo `dt` y misma
+  malla, comparando `historia.npz` columna a columna y el `reparto.json`. Mirar la
+  **mediana** de la divergencia, no su máximo: el máximo salta con el instante en
+  que cae el último paso y ya produjo un falso +199 % (paso 2) y un falso +379 %
+  (`ecb8dc0`). Y cuando la divergencia suba de verdad —como en los pasos 3 y 4—,
+  **medir el modo par-impar** (fracción de tablero en `p` y en la velocidad,
+  oscilación del Cp de pared en el TE) antes de llamarlo degradación: son cosas
+  distintas. **Los totales solo son comparables dentro del mismo A/B**: entre
+  sesiones el mismo código ha medido entre 107.7 y 116.5 ms.
+
+**Del cartesiano, del estudio final (2026-08-26)** — ya ejecutados,
+`Sim_Cartesiano/resultados_finales/`:
 
 - `scripts/agent_tests/resultados_finales.py` — runner completo: 72 puntos,
   reanudable por punto, Richardson e informe. `--solo-analisis` y
@@ -838,54 +1436,90 @@ El Laplaciano masked ya era Neumann correcto; el problema era que divergencia y 
   mismo conjunto de casos. Sin GPU, segundos.
 - `scripts/agent_tests/rf_richardson_figuras.py` — las 6 figuras individuales de
   Richardson, líneas suavizadas con PCHIP. Sin GPU.
-- `scripts/agent_tests/rf_figuras_extra.py` — Cp de superficie (leído del
-  contorno de la máscara, sin reproducir la rotación del perfil), polar de
+- `scripts/agent_tests/rf_figuras_extra.py` — Cp de superficie, polar de
   resistencia, malla y comparativa extrapolada. Sin GPU.
 - `scripts/agent_tests/rf_progreso.py` — visor de progreso por memoria
   compartida; funciona con el runner redirigido a fichero.
 
 **Anteriores**:
 
-- `scripts/agent_tests/richardson_polar_domC.py` — Richardson de tres mallas × cinco ángulos en el dominio C, paradas desactivadas, presupuesto fijo t≈20 → `results/richardson_polar_domC/`. **~48 h GPU, ya ejecutado y commeteado (`835a874`); no relanzar.** Reanudable por punto.
-- `scripts/agent_tests/te_report_mallas.py` — ghosts e irreparables en el TE para las tres mallas. Solo construye la malla y corre una iteración: ~1 min, sin GPU real → `results/verificacion_numerica/te_report_mallas.json`.
-- `scripts/agent_tests/criterio_ci95.py` — recalibración del criterio de parada con puerta de CI95 sobre N efectivo; importa la función del solver y la evalúa sobre series guardadas (sin GPU) → `criterio_ci95.json` (+ sobrescribe `criterio_parada.json`). **Sustituye a `criterio_parada.py`, que queda como histórico.**
-- `scripts/agent_tests/estudio_dominio.py [--solo A,E] [--analisis]` — independencia de dominio, 7 casos a dx=0.002 → `estudio_dominio/{INFORME.md,analisis.json,csv,png,campos/}`. **No se lanza solo.** ~5 h GPU.
-- `scripts/agent_tests/bench_dominio.py --lx 12 --ly 8 --cx 3` — coste por iteración vs tamaño de dominio, un caso por invocación (subproceso limpio, sin fragmentar la GPU) → `bench_dominio.jsonl`.
-- `scripts/agent_tests/ranking_dominio.py [--analisis]` — ¿el orden del GA sobrevive al cambio de dominio? Mismo presupuesto para todos. **Incompleto: falta el top-3 y el dominio A.**
-- `scripts/agent_tests/asintotico_alpha4_domC.py [--analisis]` — α=4 del ganador hasta t≈41.5 en dominio C, vuelca serie completa y campo final → `results/asintotico_alpha4_domC/`. 3.4 h GPU, ya ejecutado.
-- `scripts/agent_tests/polar_fina.py` (dominio GA) / `polar_fina_dominio_c.py` (dominio C, 1..10 de grado en grado) / `polar_2grados_dom24x16.py` (dominio C, t≈20, early-stop desactivado) / `polar_naca0012.py` — polares reanudables y pausables con `STOP_SIMULATION.trigger`; cada punto cachea su JSON y vuelca campo + streamlines.
+- `scripts/agent_tests/richardson_polar_domC.py` — Richardson de tres mallas × cinco ángulos en el dominio C → `results/richardson_polar_domC/`. **~48 h GPU, ya ejecutado y commiteado (`835a874`); no relanzar.** Reanudable por punto.
+- `scripts/agent_tests/te_report_mallas.py` — ghosts e irreparables en el TE para las tres mallas. ~1 min, sin GPU real.
+- `scripts/agent_tests/criterio_ci95.py` — recalibración del criterio de parada con puerta de CI95 sobre N efectivo; importa la función del solver y la evalúa sobre series guardadas (sin GPU). **Sustituye a `criterio_parada.py`.**
+- `scripts/agent_tests/estudio_dominio.py [--solo A,E] [--analisis]` — independencia de dominio, 7 casos a dx=0.002. **No se lanza solo.** ~5 h GPU.
+- `scripts/agent_tests/bench_dominio.py --lx 12 --ly 8 --cx 3` — coste por iteración vs tamaño de dominio, un caso por invocación (subproceso limpio).
+- `scripts/agent_tests/ranking_dominio.py [--analisis]` — ¿el orden del GA sobrevive al cambio de dominio? **Incompleto: falta el top-3 y el dominio A.**
+- `scripts/agent_tests/asintotico_alpha4_domC.py [--analisis]` — α=4 del ganador hasta t≈41.5 en dominio C. 3.4 h GPU, ya ejecutado.
+- `scripts/agent_tests/polar_fina.py` / `polar_fina_dominio_c.py` / `polar_2grados_dom24x16.py` / `polar_naca0012.py` — polares reanudables y pausables con `STOP_SIMULATION.trigger`.
 - `scripts/agent_tests/extrapolacion_polar.py` — extrapola cada punto a t→∞ con ajuste exponencial sobre T/2T/4T (Richardson **no** vale en el tiempo). Marca n/a donde no hay meseta.
-- `scripts/agent_tests/figuras_analisis_polar.py` — figuras del análisis de las dos polares del dominio C → `results/analisis_polar/` (incluye la polar corregida a 1 grado, que no es simulación nueva).
-- `scripts/agent_tests/ventana_larga_dx001.py` — ganador a dx=0.001 con tope de 192000 iteraciones. **16.4 h GPU, ya ejecutado y commiteado; no relanzar.**
-- `scripts/agent_tests/gci_ganador.py` — GCI de Roache de tres mallas sobre Cl, Cd y L/D; reanudable, cachea cada malla → `gci_ganador.json`. ~4.3 h GPU, de las que 3.3 h son la malla fina. **Pendiente: rehacer las dos mallas gruesas con el Cl promediado.**
-- `scripts/agent_tests/test_espesor_malla.py` — reevalúa a dx=0.002 ganadores de distintas épocas de una isla → `espesor_vs_malla.json`.
-- `scripts/agent_tests/gran_optimizacion.sh {start|run|stop|status|snapshot|log}` — segunda gran optimización (islas `tfg2`). **Campaña terminada**; queda como plantilla. `stop` deja el centinela `STOP` y espera al checkpoint (≤12 min).
-- `scripts/agent_tests/cola_tfg.sh {run [etapa]|status}` — cola serie reanudable: `calibrar → reeval → gci → polar` (+ `multipunto`, fuera por defecto). `cola_final.sh` — `repolar → validacion → revalidacion`. `cola.sh` — cola genérica de GA.
-- `scripts/agent_tests/verificacion_numerica.py --calibrar|--reeval|--gci|--polar|--repolar|--validacion` — etapas sueltas; `simular()` (con `dump`/`dump_field`), `criterio_calibrado()` y `T_TARGET_CASO` viven aquí.
-- `scripts/agent_tests/series_dx004.py` — 20 series completas a dx=0.004 sin parar: referencia del criterio y test de ranking entre mallas.
+- `scripts/agent_tests/figuras_analisis_polar.py` — figuras del análisis de las dos polares del dominio C.
+- `scripts/agent_tests/ventana_larga_dx001.py` — ganador a dx=0.001, tope 192000 iteraciones. **16.4 h GPU, ya ejecutado; no relanzar.**
+- `scripts/agent_tests/gci_ganador.py` — GCI de Roache de tres mallas sobre Cl, Cd y L/D; reanudable, cachea cada malla.
+- `scripts/agent_tests/test_espesor_malla.py` — reevalúa a dx=0.002 ganadores de distintas épocas de una isla.
+- `scripts/agent_tests/gran_optimizacion.sh {start|run|stop|status|snapshot|log}` — segunda gran optimización (islas `tfg2`). **Campaña terminada**; queda como plantilla.
+- `scripts/agent_tests/cola_tfg.sh {run [etapa]|status}` — cola serie reanudable. `cola_final.sh`, `cola.sh`.
+- `scripts/agent_tests/verificacion_numerica.py --calibrar|--reeval|--gci|--polar|--repolar|--validacion` — etapas sueltas; `simular()`, `criterio_calibrado()` y `T_TARGET_CASO` viven aquí.
+- `scripts/agent_tests/series_dx004.py` — 20 series completas a dx=0.004 sin parar.
 - `scripts/agent_tests/revalidar_ranking.py --n 30` — muestreo estratificado del historial y correlación de rangos; cacheado y reanudable.
 - `scripts/agent_tests/metricas_ga.py` — post-proceso del GA sin GPU (~1 min): 15 figuras + `INFORME.md`. **Pendiente de pasar sobre `tfg2`.**
-- `scripts/agent_tests/mixto.sh` — lanzador de los GA de población mixta. `video_ganador.py` — vídeo del campo. `plot_comparacion_transicion.py` — SA vs SA-BC. `validar_aislado_dx002.py`, `t1_ranking_dx.py`.
-- `scripts/agent_tests/run_kutta_tests.py {smoke|smoke_polygon|baseline_a5|polygon_a5|compare|regression}` — runs coarse (dx=0.004, ~5-15 min) con criterios cuantitativos. **Punto de entrada para el diagnóstico del TE** (punto 4).
+- `scripts/agent_tests/equivalencia_bit.py` — compara `u`, `v`, `p`, `solid`, `cl`, `cd` con `np.array_equal` contra el `Simulador2D.py` de HEAD. **Es la puerta buena**, no el `--compare` del 0.5 %.
+- `scripts/agent_tests/coste_salida.py` — coste por evento de cada vía de salida → `results/coste_salida/INFORME.md`.
+- `scripts/agent_tests/demo_gui.py` — escenas de ejemplo para la interfaz → `results/gui_demo/`.
+- `scripts/agent_tests/run_kutta_tests.py {smoke|smoke_polygon|baseline_a5|polygon_a5|compare|regression}` — runs coarse (dx=0.004, ~5-15 min) con criterios cuantitativos.
 - `scripts/agent_tests/run_cfl_sweep.py` — barrido CFL/dx/α resumible (pendiente de ejecutar).
-- `scripts/agent_tests/run_convergence_study.py --aislado` — test sin migración. **Estudio cerrado**; no relanzar.
-- `scripts/comparativa_barrido_completo.py --smoke` — validación rápida del pipeline outer_sum vs XFoil sin gastar GPU real.
-- `pytest tests/ --ignore=tests/test_generacion_geometrica_ga.py` (5 passed; el de GA está roto pre-existente: importa `RunGA` inexistente).
+- `pytest Sim_Cartesiano/tests/` — 32/32 con la geometría arbitraria dentro.
 - `docs/tfg/build_tfg.py [--plantilla RUTA] [--salida RUTA]` — regenera `TFG.docx` desde `memoria.txt` sobre la plantilla EETAC (sin GPU).
 
-## Diagnósticos clave (métodos de Mesh)
+## Diagnósticos clave
+
+**Del curvo** (`curvo/fuerzas.py`):
+- `estimadores_de_cl(met, u, v, p, info, nu, U, alfa, bc=..., corte=...)` — devuelve los tres estimadores a la vez (superficie, ∮ΔCp, circulación) más `ΔCp_TE`. **Que cuadren entre sí es el criterio de F5**, y a Re=1e5 con SA cuadran al 1.8 %.
+- Γ por lazos de radio creciente: la variación con el radio es **6.1 %**, y la validación 2 muestra que lo que queda escala con el tamaño del dominio.
+- `calidad(..., perfil=...)` — veredicto de malla con avisos. **`perfil` va como argumento con nombre**, no posicional.
+- `Solver(..., cronometro=True)` + `s.reparto()` — reparto del paso en % y ms, con sincronización de GPU antes de cada lectura. Es la medida de referencia de los A/B de optimización.
+- **Fracción de tablero en `p` y en la velocidad, y oscilación del `Cp` de pared en el TE** — el diagnóstico que separa "más divergencia residual" de "modo par-impar creciendo". Valores de referencia sobre el campo final del A/B: 7.8e-5, 1.03e-6 y 8.837e-2, estables entre la base, los pasos 2 y 3 y el nivel grueso de `ecb8dc0`.
+- **`nu_t/nu`** — la guardia del paso 4: con `correcciones=0` en SA se mueve +0.008 % sobre 800 pasos de v3. Si alguna vez se dispara, es ahí donde se ve primero.
+- **Factor de convergencia del ciclo V / PCG** (`mg.resolver`, `mg.resolver_pcg`) — la guardia al tocar `grueso` o la jerarquía: momento converge en 15 ciclos con `grueso` de 1 a 30, presión da factor 0.020–0.067. Puerta: < 0.3.
+
+**Del cartesiano** (métodos de `Mesh`):
 - `compute_circulation()` — Γ en lazos, Cl_circ=-2Γ/(U·c). **Con el ganador de `tfg2` los lazos dan 0.65 / 0.51 / 0.51 / 0.29 (0.15c → 1.50c): la circulación no cierra.**
 - `compute_cp_diagnostics(mu, rho)` — Cl(∮ΔCp), ΔCp_TE, pico de succión.
 - `compute_kutta_dcp_instant(face_data)` — ΔCp_TE instantáneo para el monitor.
-- `debug_te_report()` — ghosts/irreparables cerca del TE (usado por `te_report_mallas.py`).
+- `debug_te_report()` — ghosts/irreparables cerca del TE.
 - `plot_streamlines()`, `plot_forces_over_time()`, `plot_cp_vs_chord()`.
-- Series por muestra: `tvector` (tiempo físico; el dt es adaptativo y el tiempo no se reconstruye desde el índice), `clvector`/`cdvector`, `resvector` (change_u/v/p), `n_muestras_validas`.
-- Del retorno de `simular_perfil`: `cl_ci95`/`cd_ci95`/`ld_ci95` y `n_samples` (**comparar cambios entre corridas contra el CI95 antes de llamarlos reales**), `converged_clcd`, `t_conv_clcd`, `iters_efectivas`, `cl_cp_discrepancy` + `cl_cp_discrepancy_flag`, **`cl_audit_inst`** (Cl instantáneo de la auditoría de superficie: diagnóstico, **no** entra en el L/D desde `08af2c4`), `dump_series_path` (.npz de t/Cl/Cd/L·D) y `dump_field_path` (.npz del campo final).
-- Diagnósticos de frontera leídos del campo final (`estudio_dominio.py`): `eps_top/eps_bot` (aceleración media en la pared slip = bloqueo medido), `v_in_max` (|v| justo dentro del inflow, que el BC fuerza a 0), `u_out_min` (estela viva en la salida si ≪1), `cp_wall_range` (si no es ~0, la pared aún ve el perfil).
+- Series por muestra: `tvector` (tiempo físico; el dt es adaptativo y el tiempo no se reconstruye desde el índice), `clvector`/`cdvector`, `resvector`, `n_muestras_validas`.
+- Del retorno de `simular_perfil`: `cl_ci95`/`cd_ci95`/`ld_ci95` y `n_samples` (**comparar cambios entre corridas contra el CI95 antes de llamarlos reales**), `converged_clcd`, `t_conv_clcd`, `iters_efectivas`, `cl_cp_discrepancy` + flag, **`cl_audit_inst`** (diagnóstico, **no** entra en el L/D desde `08af2c4`), `dump_series_path`, `dump_field_path`.
+- Diagnósticos de frontera leídos del campo final: `eps_top/eps_bot` (bloqueo medido en la pared slip), `v_in_max`, `u_out_min` (estela viva en la salida si ≪1), `cp_wall_range`.
 
-## Config de referencia (fina, `__main__`)
-Lx=12, Ly=8, dx_min=0.001 (malla 3243×1203, ~2 it/s), CFL=0.25, NACA_0012_sharp, min_te_height_factor=1.0, turbo_hd, wake long_fine_x, `wall_treatment="consistent"`, `turb_model="sa"`, `transition_model="sa_bc"`, `advection_scheme="maccormack"`. Parada por convergencia con los defaults nuevos (`clcd_tol_drift=0.005`, `clcd_tol_ci95=0.02`, `clcd_window_conv_time=1.0` mínima y auto-ensanchable, `clcd_min_t_fisico_before_check=5.0`; el fichero calibrado baja `tol_drift` a 0.002 y sube `n_sostenido` a 3).
+## Config de referencia
 
-**Dominio**: para polares y simulaciones sueltas usar **C — Lx=24, Ly=16, cx=6**, no el 8×5 del GA. Manda Lx (estela), no Ly. **En estudios de malla o de ventana, desactivar las DOS paradas** (criterio de L/D y guardián de residual `stop_on_convergence`).
+**Curvo (producción)**: `generar_c(px, py)` a secas — `DN_PARED=8.0e-5`,
+`N_CAPAS_PARED=15`, `CRECIMIENTO_PARED=1.0`, **`COLA_TE=4.0`**, 99×384 = 37 534
+celdas, y⁺ máximo 0.80 a Re=1e5. Con perfil de base roma la malla crece un poco
+(AG24: 99×396 = 38 710) y `info["cola_rel"]` dice cuánta cola se ha añadido. `Solver(X, Y, info, nu=1e-3, alfa=5.0, dt=5e-3, xp=cp,
+dtype=np.float32)`, SA activo, t\*=20. Defaults del solver tras la optimización:
+**`correcciones=1`** (momento), **`correcciones_p=1`** (presión),
+**`avanzar_sa(..., correcciones=0)`** (SA) y **`ciclo_v(..., grueso=4)`** — en los
+tres primeros el punto fijo es el mismo que con 2 (pasos 2, 3 y 4), el 0 de SA
+**no** es upwind de 1.er orden sino la corrección diferida retrasada un paso, y el
+nivel grueso con 4 barridos da el mismo historial de residuos que con 30 (`ecb8dc0`).
+**float32 obligatorio** en la 3070 Ti. Rendimiento actual: **103.81 ms/paso,
+9.63 it/s** sobre la malla de v3, desde los 167 ms de partida.
+Dominio: el arco C por defecto (~26×17.5) y el recortado (24×12.5) dan lo mismo
+en fuerzas al 0.01 %, así que el tamaño se elige por coste, no por sesgo.
 
-**Nota**: el bloque `__main__` puede quedar como scratch de pruebas entre sesiones — usarlo como plantilla, no copiarlo literal.
+**Cartesiano (congelado)**: Lx=12, Ly=8, dx_min=0.001, CFL=0.25,
+NACA_0012_sharp, `min_te_height_factor=1.0`, turbo_hd, wake long_fine_x,
+`wall_treatment="consistent"`, `turb_model="sa"`, `transition_model="sa_bc"`,
+`advection_scheme="maccormack"`. Parada por convergencia con los defaults nuevos
+(`clcd_tol_drift=0.005`, `clcd_tol_ci95=0.02`, `clcd_window_conv_time=1.0`
+mínima y auto-ensanchable, `clcd_min_t_fisico_before_check=5.0`; el fichero
+calibrado baja `tol_drift` a 0.002 y sube `n_sostenido` a 3).
+
+**Dominio del cartesiano**: para polares y simulaciones sueltas usar **C — Lx=24,
+Ly=16, cx=6**, no el 8×5 del GA. Manda Lx (estela), no Ly. **En estudios de malla
+o de ventana, desactivar las DOS paradas** (criterio de L/D y guardián de
+residual `stop_on_convergence`).
+
+**Nota**: el bloque `__main__` de `Simulador2D.py` puede quedar como scratch de
+pruebas entre sesiones — usarlo como plantilla, no copiarlo literal.

@@ -71,6 +71,38 @@ Invocar `../.venv/bin/python` desde dentro funciona pero saca un
 `RuntimeWarning: Unexpected value in sys.prefix` (la ruta no es canonica); es
 inocuo. Los `lanzar_*.sh` usan la ruta absoluta y no lo emiten.
 
+### Campana de polares del solver curvo
+
+La campaña reanudable de NACA 0012 sharp y AG24 se lanza desde la raiz:
+
+```bash
+.venv/bin/python scripts/campana_polares_curvo.py
+```
+
+Por defecto barre alfa de 0 a 15 grados en pasos de 1, usa los parametros de
+malla y solver por defecto, y guarda cada corrida bajo
+`resultados_polares_curvo/<perfil>/`. El estado global queda en
+`estado.json`, por lo que se puede interrumpir con `Ctrl-C` y repetir el mismo
+comando para continuar. Para una prueba corta:
+
+```bash
+.venv/bin/python scripts/campana_polares_curvo.py \
+    --backend numpy --pasos 100 --cada 10
+```
+
+Cada angulo guarda historia, campos, pared, capa limite, calidad de malla y
+metricas de `Cl`, `Cd`, `Cm`, `Cl` por tres estimadores, divergencia, `it/s`,
+iteraciones de Poisson, `dCp` en el borde de salida, `nu_t/nu` y fraccion de
+pared con `Cf < 0`. Las graficas quedan en
+`<perfil>/graficas/`: polar, `Cl/Cd/L/D` frente a alfa, rendimiento y
+divergencia, `Cp/Cf` de pared y perfiles de capa limite.
+
+Si la calidad de malla de un perfil no es valida, la corrida se marca como
+`fallida_malla`, se conserva su diagnostico y la campaña continua sin ejecutar
+el solver sobre datos degenerados. Con los defaults actuales AG24 presenta
+celdas con Jacobiano no positivo y queda marcado de esta forma hasta ajustar
+su malla.
+
 `profiles/` esta en la raiz porque lo usan los dos; dentro de `Sim_Cartesiano/`
 hay un enlace simbolico para que las rutas `ROOT/profiles/...` de su codigo sigan
 resolviendo sin tocar ni una linea.

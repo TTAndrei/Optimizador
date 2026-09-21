@@ -101,3 +101,22 @@ Sim_Cartesiano/results/1eraGranOptimizacion/cfl_sweep/*.npz
 # Frames submuestreados de los videos largos: 2.6 GB de png+npz por instante.
 # Los regenera scripts/agent_tests/render_videos_largos.py.
 Sim_Cartesiano/results/videos_largos/
+
+# --- Salidas del solver curvilineo (2026-09-22) ---
+# Campana de polares (`scripts/campana_polares_curvo.py`): 396 MB en 963 ficheros,
+# los campo_*.npz por instante mas la malla y los json de cada corrida. Todo sale
+# del .dat del perfil y de los parametros de la campana; estado.json ademas guarda
+# rutas absolutas de esta maquina. Las corridas de referencia van a validacion/,
+# que si se versiona.
+resultados_polares_curvo/
+
+# Corridas sueltas de la GUI: 89 MB de campos, historia y triggers por lanzamiento.
+# Son pruebas interactivas, no resultados citables.
+runs/
+
+# Temporal del hook que reescribe RESUMEN.md en cada commit.
+RESUMEN.md.tmp
+
+# Volcado del barrido de variantes de cierre del borde de salida (557 KB): la
+# conclusion esta en el codigo (COLA_TE) y en docs/figuras.
+comparar.json

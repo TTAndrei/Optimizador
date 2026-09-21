@@ -246,7 +246,7 @@ este tope, `generar_c` falla con un mensaje que lo dice.
 # --- Borde de salida romo ----------------------------------------------------
 
 N_BASE_MAX = 8
-"""Tope de puntos por media base del borde de salida.
+"""Tope de puntos por cada lado de la cola del borde de salida.
 
 El numero real sale de gap/2 dividido por el espaciado de pared. Una base mas
 fina que DN_PARED no se puede resolver y se afila al punto medio, dejando
@@ -255,6 +255,46 @@ constancia en `info["te_afilado"]`.
 
 TOL_GAP = 1e-4
 """Espesor de base, relativo a la cuerda, por encima del cual el TE es romo."""
+
+COLA_TE = 4.0
+"""Longitud de la cola de cierre del borde de salida romo, en multiplos del gap.
+
+**Colgar el corte de estela del punto medio de una base plana no se puede
+mallar.** Ese nodo tiene angulo interior de 90 grados: la marcha le pide a la
+vez ser normal a la base (avanzar en +x) y normal al corte (avanzar en +y), y
+un solo nodo no puede abrir un abanico de 90 grados. El resultado es siempre el
+mismo y esta medido: jacobiano negativo en las dos uniones base-estela y
+ortogonalidad de pared por debajo de 30 grados. No es un problema de paso ni de
+amortiguacion -- ni N_BASE_MAX, ni MEZCLA_VOLUMEN hasta 0.9, ni rampar el
+espaciado de la estela, ni redondear la base mueven el fallo de sitio, y
+destrabar la malla a posteriori quita el jacobiano negativo pero deja la
+ortogonalidad en 1.4 grados, porque en una esquina de 90 grados **no existe**
+primera celda buena.
+
+La base se cierra entonces con una cuna recta desde las dos esquinas reales
+hasta una punta situada `COLA_TE * gap` aguas abajo del punto medio. La punta
+es un borde de salida afilado normal, con el corte de estela saliendo colineal:
+angulo incluido 2*atan(1/(2*COLA_TE)) = 14 grados con el defecto.
+
+**No mueve ni un punto del perfil: solo anade.** Afilar al punto medio, que es
+la alternativa, desplaza las dos esquinas reales gap/2 aguas arriba.
+
+Medido sobre los perfiles del repo (`--perfil`): los seis con TE afilado
+(`gap = 0`) salen identicos, porque esta rama no se toca. Los tres de base roma
+pasan de NO VALIDA a BUENA: AG24 (gap 9.7e-4) J<=0 6 -> 0 y ortogonalidad
+26 -> 83 grados, y **NACA_0012 (gap 2.4e-3), que tampoco mallaba**, 2 -> 0 y
+22 -> 82. Afilar arregla AG24 pero NO arregla NACA_0012 (se queda en 10 celdas
+plegadas). Sobre 400 perfiles del historial del GA: 0.0 % validas -> 24.5 %.
+
+La ventana util es ancha y tiene los dos lados: 1.5 deja la punta demasiado
+roma (J<=0 104) y 10 la deja demasiado afilada en bases gruesas (J<=0 44). De
+2.5 a 6 todos los perfiles del repo salen BUENA; 4 es el centro.
+
+La cola es geometria inventada. `info["cola_rel"]` lleva su longitud en cuerdas
+y `calidad()` avisa cuando pasa de AVISOS["cola_rel"], porque una base gruesa
+compra la malla a cambio de un cuerpo falso (gap 1.1e-2 -> cola de 4.4 % de
+cuerda) y eso hay que verlo, no descubrirlo en las fuerzas.
+"""
 
 # --- Marcha hiperbolica  (avanzado: tocar solo si la malla se pliega) --------
 
@@ -380,7 +420,8 @@ def _arco_del_morro(x, s):
 
 def redistribuir_superficie(px, py, n_sup=N_SUPERFICIE, razon_le=RAZON_LE,
                             razon_te=RAZON_TE, ancho_le=ANCHO_LE, ancho_te=ANCHO_TE,
-                            dn_pared=DN_PARED, n_base_max=N_BASE_MAX, tol_gap=TOL_GAP):
+                            dn_pared=DN_PARED, n_base_max=N_BASE_MAX, tol_gap=TOL_GAP,
+                            cola_te=COLA_TE):
     """Reparametriza el contorno por longitud de arco, agrupando en LE y TE.
 
     Entrada en orden Selig (TE extrados -> LE -> TE intrados). Salida en el
@@ -393,19 +434,21 @@ def redistribuir_superficie(px, py, n_sup=N_SUPERFICIE, razon_le=RAZON_LE,
       lazo entero redondea las esquinas reales: el pico del borde de salida
       afilado y la nariz en cuna a la que tiende el GA. Partiendo en LE y en las
       esquinas de la base, cada esquina queda exacta.
-    - **Con borde de salida romo el corte arranca del punto medio de la base**,
-      no de una esquina. El 100 % del historial del GA tiene base finita
-      (`te_gap`), y colgar el corte de un solo punto mete celdas cruzadas en las
-      dos uniones TE-estela. El numero de puntos de la base se deduce de
+    - **Con borde de salida romo la base se cierra con una cola afilada** y el
+      corte de estela cuelga de su punta, colineal con ella. El 100 % del
+      historial del GA tiene base finita (`te_gap`), y colgar el corte del punto
+      medio de una base plana deja un nodo de 90 grados que la marcha no puede
+      abanicar: ver COLA_TE. El numero de puntos de la cola se deduce de
       `dn_pared`: **una base mas fina que el espaciado de pared no se puede
       resolver**, asi que por debajo de medio paso se afila al punto medio y se
       deja constancia en `info["te_afilado"]`. Afilar es una decision explicita,
       no un accidente: el desplazamiento es de gap/2, sub-celda por definicion.
 
-    La distribucion es simetrica en el parametro, asi que un perfil simetrico da
-    una malla simetrica y el test de Cl = 0 a alpha = 0 es exacto.
+    La distribucion es simetrica en el parametro, y la cola es simetrica
+    respecto de la base, asi que un perfil simetrico sigue dando una malla
+    simetrica y el test de Cl = 0 a alpha = 0 es exacto.
 
-    Devuelve (X, Y, info) con info = {n_base, gap, i_le, ds_te}.
+    Devuelve (X, Y, info) con info = {n_base, gap, i_le, ds_te, cola_rel}.
     """
     p = np.column_stack([np.asarray(px, float), np.asarray(py, float)])
     # El gap del borde de salida se mide ANTES de quitar el cierre duplicado:
@@ -447,15 +490,19 @@ def redistribuir_superficie(px, py, n_sup=N_SUPERFICIE, razon_le=RAZON_LE,
         media = 0.5 * (perfil[0] + perfil[-1])
         perfil[0] = perfil[-1] = media
         return perfil[:, 0], perfil[:, 1], dict(
-            n_base=0, gap=gap, te_afilado=bool(romo), i_le=n_sup // 2, ds_te=ds_te)
+            n_base=0, gap=gap, te_afilado=bool(romo), i_le=n_sup // 2, ds_te=ds_te,
+            cola_rel=0.0)
 
-    media = 0.5 * (perfil[0] + perfil[-1])
+    # Punta de la cola: aguas abajo del punto medio, alineada con el corte de
+    # estela, que sale de ella colineal. Ver COLA_TE.
+    punta = 0.5 * (perfil[0] + perfil[-1]) + np.array([cola_te * gap, 0.0])
     w = np.linspace(0.0, 1.0, n_base + 1)[:-1, None]
-    base_inf = media + w * (perfil[0] - media)  # medio -> esquina intrados (sin ella)
-    base_sup = np.vstack([(perfil[-1] + w[1:] * (media - perfil[-1])), media])
-    perfil = np.vstack([base_inf, perfil, base_sup])
+    cola_inf = punta + w * (perfil[0] - punta)  # punta -> esquina intrados (sin ella)
+    cola_sup = np.vstack([(perfil[-1] + w[1:] * (punta - perfil[-1])), punta])
+    perfil = np.vstack([cola_inf, perfil, cola_sup])
     return perfil[:, 0], perfil[:, 1], dict(n_base=n_base, gap=gap, te_afilado=False,
-                                            i_le=n_base + n_sup // 2, ds_te=ds_te)
+                                            i_le=n_base + n_sup // 2, ds_te=ds_te,
+                                            cola_rel=cola_te * gap / cuerda)
 
 
 def _razon_geometrica(ds0, L, n, q_max=CRECIMIENTO_ESTELA_MAX):
@@ -493,7 +540,8 @@ def _puntos_estela(x_te, x_out, n, ds_te, crecimiento_max=CRECIMIENTO_ESTELA_MAX
 
 
 def curva_inicial(px, py, n_sup=N_SUPERFICIE, n_estela=N_ESTELA, x_out=X_SALIDA,
-                  razon_le=RAZON_LE, razon_te=RAZON_TE, dn_pared=DN_PARED):
+                  razon_le=RAZON_LE, razon_te=RAZON_TE, ancho_le=ANCHO_LE,
+                  ancho_te=ANCHO_TE, dn_pared=DN_PARED, cola_te=COLA_TE):
     """Contorno interior completo de la malla C (j=0), como (N,2).
 
     Orden: corte inferior (x_out -> TE) + perfil (TE -> LE -> TE) + corte
@@ -501,7 +549,9 @@ def curva_inicial(px, py, n_sup=N_SUPERFICIE, n_estela=N_ESTELA, x_out=X_SALIDA,
     que el emparejamiento `i <-> N-1-i` de la estela es exacto.
     """
     sx, sy, sinfo = redistribuir_superficie(px, py, n_sup, razon_le=razon_le,
-                                            razon_te=razon_te, dn_pared=dn_pared)
+                                            razon_te=razon_te, ancho_le=ancho_le,
+                                            ancho_te=ancho_te, dn_pared=dn_pared,
+                                            cola_te=cola_te)
     perfil = np.column_stack([sx, sy])          # ya cerrado: perfil[0] == perfil[-1]
     n_per = len(perfil)
 
@@ -521,6 +571,7 @@ def curva_inicial(px, py, n_sup=N_SUPERFICIE, n_estela=N_ESTELA, x_out=X_SALIDA,
         "gap_te": sinfo["gap"],
         "n_base": sinfo["n_base"],
         "te_afilado": sinfo["te_afilado"],
+        "cola_rel": sinfo["cola_rel"],
     }
     return curva, rangos
 
@@ -741,8 +792,13 @@ def generar_c(px, py, dn_pared=DN_PARED, crecimiento=CRECIMIENTO,
     """
     razon_le = kw.pop("razon_le", RAZON_LE)
     razon_te = kw.pop("razon_te", RAZON_TE)
+    ancho_le = kw.pop("ancho_le", ANCHO_LE)
+    ancho_te = kw.pop("ancho_te", ANCHO_TE)
+    cola_te = kw.pop("cola_te", COLA_TE)
     curva, rangos = curva_inicial(px, py, n_sup=n_sup, n_estela=n_estela, x_out=x_out,
-                                  razon_le=razon_le, razon_te=razon_te, dn_pared=dn_pared)
+                                  razon_le=razon_le, razon_te=razon_te,
+                                  ancho_le=ancho_le, ancho_te=ancho_te,
+                                  dn_pared=dn_pared, cola_te=cola_te)
     if ajustar_dn_pared > 0.0:
         i0, i1 = rangos["perfil"]
         nuevo = min(dn_pared, ajustar_dn_pared * _radio_min_curva(curva[i0:i1]))
@@ -750,7 +806,9 @@ def generar_c(px, py, dn_pared=DN_PARED, crecimiento=CRECIMIENTO,
             dn_pared = nuevo
             curva, rangos = curva_inicial(px, py, n_sup=n_sup, n_estela=n_estela,
                                           x_out=x_out, razon_le=razon_le,
-                                          razon_te=razon_te, dn_pared=dn_pared)
+                                          razon_te=razon_te, ancho_le=ancho_le,
+                                          ancho_te=ancho_te, dn_pared=dn_pared,
+                                          cola_te=cola_te)
     ds = np.hypot(*_derivada_xi(curva).T)
     pasos = pasos_por_columna(ds, dn_pared, crecimiento, distancia_lejos, dn_max,
                               n_capas_pared, crecimiento_pared, aspecto_max)
@@ -827,6 +885,9 @@ AVISOS = dict(
     aspecto_max=20000.0,
     oblicuidad_p99_max=0.30,
     dn_sobre_radio_le_max=0.5,      # el paso de pared debe caber en el morro
+    # La cola de cierre del TE romo es cuerpo inventado: a partir de aqui pesa
+    # lo bastante como para que haya que justificarla en las fuerzas. Ver COLA_TE.
+    cola_rel_max=0.01,              # longitud de la cola, en cuerdas
 )
 
 
@@ -914,6 +975,7 @@ def calidad(X, Y, limites=None, perfil=None):
         dn_sobre_radio_le=float(l_eta[0, i0:i1].max() / max(radio_le, 1e-30)),
         div_uinf=float(div),
         div_uinf_rel=float(div_rel),
+        cola_rel=float(perfil.get("cola_rel", 0.0)) if isinstance(perfil, dict) else 0.0,
     )
 
     fallos = []
@@ -941,6 +1003,8 @@ def calidad(X, Y, limites=None, perfil=None):
         avisos.append(f"oblicuidad p99 {r['oblicuidad_p99']:.2f}")
     if r["dn_sobre_radio_le"] > avi["dn_sobre_radio_le_max"]:
         avisos.append(f"paso de pared {r['dn_sobre_radio_le']:.2f}x el radio del morro")
+    if r["cola_rel"] > avi["cola_rel_max"]:
+        avisos.append(f"cola de cierre del TE {100 * r['cola_rel']:.1f} % de cuerda")
 
     r["fallos"] = fallos
     r["avisos"] = avisos
@@ -1074,6 +1138,9 @@ def _main(argv=None):
                     help=f"agrupamiento en el borde de ataque (defecto {RAZON_LE})")
     ap.add_argument("--razon-te", type=float, default=RAZON_TE,
                     help=f"agrupamiento en el borde de salida (defecto {RAZON_TE})")
+    ap.add_argument("--cola-te", type=float, default=COLA_TE,
+                    help=f"longitud de la cola de cierre del TE romo, en gaps "
+                         f"(defecto {COLA_TE})")
     ap.add_argument("--dn-max", type=float, default=DN_MAX,
                     help="tope del espaciado normal (defecto: sin tope)")
     ap.add_argument("--n-capas-pared", type=int, default=N_CAPAS_PARED,
@@ -1092,6 +1159,7 @@ def _main(argv=None):
     kw = dict(dn_pared=a.dn_pared, crecimiento=a.crecimiento,
               distancia_lejos=a.distancia_lejos, n_sup=a.n_sup, n_estela=a.n_estela,
               x_out=a.x_salida, razon_le=a.razon_le, razon_te=a.razon_te,
+              cola_te=a.cola_te,
               ajustar_dn_pared=a.ajustar_dn_pared, dn_max=a.dn_max,
               n_capas_pared=a.n_capas_pared, crecimiento_pared=a.crecimiento_pared,
               aspecto_max=a.aspecto_max)

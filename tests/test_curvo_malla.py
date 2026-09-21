@@ -14,10 +14,11 @@ from curvo import malla as M
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PERFILES = ["NACA_0012_sharp", "s1014.dat", "E387.dat", "SD7037.dat", "SG6043.dat",
-            "GM15"]
+            "GM15", "AG24", "NACA_0012", "MH32.dat"]
 
-# AG24 no se malla con el paso de pared de etapa 2 (ver el test del final).
-PERFILES_ETAPA_1 = ["AG24"]
+# Los tres de base roma del repo, que solo se mallan con la cola de cierre
+# (COLA_TE). AG24 gap 9.7e-4 c, NACA_0012 gap 2.4e-3 c, MH32 gap 0.
+PERFILES_ROMOS = ["AG24", "NACA_0012"]
 
 
 def _perfil(nombre):
@@ -74,28 +75,60 @@ def test_perfiles_reales_dan_malla_utilizable(nombre):
     assert q["valida"], q["fallos"]
 
 
-@pytest.mark.parametrize("nombre", PERFILES_ETAPA_1)
-def test_perfiles_que_solo_se_mallan_en_etapa_1(nombre):
-    """Perfiles que necesitan el paso de pared de etapa 1, y por que.
+@pytest.mark.parametrize("nombre", PERFILES_ROMOS)
+def test_base_roma_sin_cola_no_se_malla(nombre):
+    """La cola de cierre es lo que hace mallable un borde de salida romo.
 
-    Con `DN_PARED = 1.9e-4` (y+ ~ 1, el defecto) la marcha se pliega en el morro
-    de AG24: 2 celdas cruzadas y la ortogonalidad de pared cae a 22.5 grados.
-    Con 2e-3 sale limpio, 0 cruzadas y 79.9 grados. **Lo que lo rompe es el paso
-    de pared, no las capas**: `n_capas_pared = 0` con 1.9e-4 falla igual, y 15
-    capas con 2e-3 salen bien. Mas disipacion lo empeora (6 cruzadas).
+    Colgar el corte de estela del punto medio de la base plana (`cola_te = 0`)
+    deja un nodo de 90 grados que la marcha no puede abanicar, y el jacobiano
+    sale negativo en las dos uniones base-estela. Con la cola, cero celdas
+    cruzadas. Ver `malla.COLA_TE`.
 
-    Es limitacion del generador en etapa 2, no del cambio de defectos; el cambio
-    solo la destapa. Este test falla si alguien la arregla, que es lo que se
-    quiere: entonces AG24 vuelve a PERFILES.
+    El test fija el mecanismo, no solo el sintoma: comprueba que las celdas
+    cruzadas de `cola_te = 0` estan **en el borde de salida**, no en el morro.
     """
     px, py = _perfil(nombre)
-    X, Y, _ = M.generar_c(px, py)
-    assert M.calidad(X, Y)["j_negativos"] > 0
+    X, Y, info = M.generar_c(px, py, cola_te=0.0)
+    J = M.metricas(X, Y)["J"]
+    malas = np.argwhere(J <= 0.0)
+    assert len(malas), "sin cola la base plana tiene que plegar la marcha"
+    i0, i1 = info["perfil"]
+    assert all(abs(i - i0) < 16 or abs(i - (i1 - 1)) < 16 for _, i in malas), malas
 
-    X, Y, _ = M.generar_c(px, py, dn_pared=2.0e-3)
+    X, Y, _ = M.generar_c(px, py)
     q = M.calidad(X, Y)
     assert q["j_negativos"] == 0, q["fallos"]
     assert q["valida"], q["fallos"]
+
+
+@pytest.mark.parametrize("nombre", PERFILES_ROMOS)
+def test_cola_no_mueve_ningun_punto_del_perfil(nombre):
+    """La cola solo anade: las dos esquinas reales del TE siguen donde estaban.
+
+    Es la diferencia con afilar al punto medio, que las desplaza gap/2 aguas
+    arriba. Lo que se compara es el contorno con y sin cola quitando los puntos
+    de la cola: tienen que ser el mismo punto a punto.
+    """
+    px, py = _perfil(nombre)
+    sx, sy, info = M.redistribuir_superficie(px, py)
+    sx0, sy0, info0 = M.redistribuir_superficie(px, py, cola_te=0.0)
+    nb = info["n_base"]
+    assert nb == info0["n_base"] and nb > 0
+    assert np.allclose(sx[nb:-nb], sx0[nb:-nb], atol=0, rtol=0)
+    assert np.allclose(sy[nb:-nb], sy0[nb:-nb], atol=0, rtol=0)
+
+
+def test_te_afilado_no_pasa_por_la_cola():
+    """Un perfil de TE afilado sale identico con cualquier `cola_te`.
+
+    La rama de base roma no se toca cuando `gap = 0`, asi que el cambio no
+    puede haber tocado los seis perfiles que ya mallaban.
+    """
+    px, py = _perfil("NACA_0012_sharp")
+    X0, Y0, i0 = M.generar_c(px, py, cola_te=0.0)
+    X1, Y1, i1 = M.generar_c(px, py, cola_te=8.0)
+    assert i0["n_base"] == 0 and i1["cola_rel"] == 0.0
+    assert np.array_equal(X0, X1) and np.array_equal(Y0, Y1)
 
 
 def test_paso_de_pared_es_el_pedido(malla_naca):
