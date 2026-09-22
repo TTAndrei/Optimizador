@@ -167,6 +167,11 @@ PESTANAS = [
             ("cada_campo", "Muestreo de campos", "i",
              "Cada cuantos pasos se manda un campo completo a la vista.\n"
              "Bajarlo mucho cuesta: volcar y dibujar bloquea la GPU."),
+            ("tol_fuerzas", "Parada por fuerzas", "f",
+             "Para la corrida cuando Cl y Cd dejan de moverse por encima de\n"
+             "esta tolerancia absoluta (5e-4 = media unidad del tercer decimal).\n"
+             "En 0 se corren los pasos pedidos, que es lo que hay que hacer en\n"
+             "un estudio de malla."),
         ]),
         ("Backend", [
             ("backend", "Backend", "c",

@@ -27,6 +27,7 @@ from curvo import conveccion as cv                              # noqa: E402
 from curvo import operadores as op                              # noqa: E402
 from curvo import proyeccion as pr                              # noqa: E402
 from curvo.metrica import Metrica                               # noqa: E402
+from curvo import multigrid as mg                               # noqa: E402
 from curvo.multigrid import ciclo_v, jerarquia, resolver_pcg    # noqa: E402
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -147,6 +148,44 @@ def test_el_suavizador_de_dos_campos_coincide(par, tipo):
     x = rng.standard_normal(rhs.shape)
     assert maxabs(b.aplicar(cp.asarray(x)) - cp.asarray(a.aplicar(x))) \
         / maxabs(a.aplicar(x)) < 1e-12
+
+
+@pytest.mark.parametrize("tipo", ["presion", "conveccion"])
+@pytest.mark.parametrize("campos", [1, 2])
+def test_la_reduccion_ciclica_da_lo_mismo_que_thomas(par, tipo, campos):
+    """Los kernels PCR contra los de Thomas, sobre la misma matriz.
+
+    Son dos algoritmos distintos para la misma tridiagonal: Thomas la recorre en
+    serie con un hilo y la reduccion ciclica la resuelve con un bloque entero en
+    log2(n) pasos. En float64 tienen que coincidir salvo redondeo; en el float32
+    del solver la diferencia sube a ~5e-5, que es redondeo tambien y no mueve el
+    factor del PCG (0.0223 con PCR, 0.0280 con Thomas).
+
+    Es un test aparte del de CPU contra GPU porque el umbral `PCR_MINIMO` decide
+    por longitud de linea: en los niveles gruesos de la jerarquia se sigue yendo
+    por Thomas, y este test fija justo el camino que el otro no distingue.
+    """
+    _, b = sistemas(par, tipo)
+    assert mg._pcr(b.nx) and mg._pcr(b.ny), "la malla C tiene que entrar en PCR"
+    rng = np.random.default_rng(3)
+    forma = ((campos,) if campos > 1 else ()) + b.aP.shape
+    b.b = cp.asarray(rng.standard_normal(forma))
+    phi0 = cp.asarray(rng.standard_normal(forma))
+
+    minimo = mg.PCR_MINIMO
+    try:
+        for paridad in (0, 1):
+            for barrido in ("_lineas_eta", "_lineas_xi"):
+                if barrido == "_lineas_xi" and campos == 2:
+                    continue            # la conveccion no barre xi con 2 campos
+                pcr, thomas = phi0.copy(), phi0.copy()
+                mg.PCR_MINIMO = minimo
+                getattr(b, barrido)(pcr, paridad)
+                mg.PCR_MINIMO = 10 ** 9
+                getattr(b, barrido)(thomas, paridad)
+                assert maxabs(pcr - thomas) / maxabs(thomas) < 1e-12
+    finally:
+        mg.PCR_MINIMO = minimo
 
 
 def test_dos_campos_dan_lo_mismo_que_dos_llamadas(par):

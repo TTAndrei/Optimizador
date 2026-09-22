@@ -52,6 +52,13 @@ __all__ = [
     "masa",
 ]
 
+# Barridos de pre y post suavizado del ciclo V de la conveccion. Son tres, no
+# dos, porque el suavizador va solo con lineas eta: medido sobre las matrices
+# reales del caso v3, dos ciclos con tres barridos dejan el residuo del momento
+# en 3.8e-5 frente a 1.2e-4 del ADI de dos barridos, y cuestan 2.90 ms por ciclo
+# frente a 4.57. Mas exacto y 1.58 veces mas barato.
+BARRIDOS = 3
+
 # Aire seco a 15 C y 101325 Pa (atmosfera estandar ISA a nivel del mar).
 AIRE = {
     "rho": 1.225,        # kg/m3
@@ -153,8 +160,19 @@ def _difusiones(met, nu, bc, corte):
 
 
 def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False,
-            sumidero=None):
+            sumidero=None, activo=None, xi=True):
     """Matriz de 5 puntos del operador implicito. Devuelve (Sistema, b_frontera).
+
+    `xi = False` deja el suavizador con lineas eta solas, que es lo que le
+    conviene al **transporte** (ver `multigrid.Sistema.suavizar`). Esta funcion la
+    usa tambien `proyeccion.sistema_presion` para montar el Poisson, y ese
+    necesita las dos direcciones: de ahi que el defecto sea `True` y sean los
+    dos sitios que transportan los que lo apagan.
+
+    `activo` es la mascara del corte **en la CPU**. Sin ella, `Sistema` la deduce
+    de `corte`, que vive en la GPU, y eso es una sincronizacion bloqueante por
+    matriz construida: con la del momento y la de SA rehechas cada paso, dos por
+    paso de tiempo. Es geometria fija, asi que el que la tiene es `Solver`.
 
     `sumidero` es un coeficiente positivo `c` que anade `c*J` a la diagonal, es
     decir, un termino `-c*phi` en la ecuacion tratado de forma **implicita por
@@ -260,7 +278,8 @@ def sistema(met, m_xi, m_eta, nu=0.0, dt=None, bc=None, corte=None, bdf2=False,
     if dt is not None:
         aP += (1.5 if bdf2 else 1.0) * met.J / dt
     return Sistema(aP, aW, aE, aS, aN, xp.zeros((ny, nx), dtype=tipo), aC,
-                   activo=corte), (bs if varios else bs[0])
+                   activo=corte if activo is None else activo, xi=xi), \
+        (bs if varios else bs[0])
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +433,7 @@ def masa(met, phi):
 
 def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
             fuente=None, correcciones=2, tol=None, ciclos=60, sis=None,
-            phi_ant=None, sumidero=None):
+            phi_ant=None, sumidero=None, fijos=None, activo=None):
     """Un paso implicito, o el estacionario si `dt is None`.
 
     Con `phi_ant` (el nivel n-1) el paso es **BDF2**, de 2.º orden en el tiempo;
@@ -443,10 +462,16 @@ def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
     parte que depende de los valores de frontera. No se acoplan entre si -- la
     aritmetica de cada uno es la misma que en serie, solo intercalada -- pero
     paran juntos, cuando todos cumplen su propio criterio de residuo.
+
+    `fijos` es una lista de `correcciones + 1` conteos de ciclos V, uno por
+    iteracion externa: con ella no se mira el residuo (ver `multigrid.resolver`).
+    `info["vciclos"]` devuelve los conteos gastados, que es lo que `Solver` usa
+    para recalibrar.
     """
     bdf2 = phi_ant is not None
     A, b_bc = (sis if sis is not None else
-               sistema(met, m_xi, m_eta, nu, dt, bc, corte, bdf2, sumidero))
+               sistema(met, m_xi, m_eta, nu, dt, bc, corte, bdf2, sumidero,
+                       activo, xi=False))
     if not hasattr(A, "_niveles"):          # se reutiliza si se reutiliza `sis`
         A._niveles = jerarquia(A)
     niveles = A._niveles
@@ -458,8 +483,12 @@ def avanzar(met, phi, m_xi, m_eta, dt=None, nu=0.0, bc=None, corte=None,
         b0 += met.J * fuente
 
     x = phi.copy()
-    info = {}
-    for _ in range(correcciones + 1):
+    info, gastados = {}, []
+    for q in range(correcciones + 1):
         A.b = b0 + fuente_diferida(met, x, m_xi, m_eta, nu, bc, corte)
-        x, info = resolver(A, x, tol=tol, ciclos=ciclos, niveles=niveles)
+        x, info = resolver(A, x, tol=tol, ciclos=ciclos, niveles=niveles,
+                           pre=BARRIDOS, post=BARRIDOS,
+                           fijos=None if fijos is None else fijos[q])
+        gastados.append(info["vciclos"])
+    info["vciclos"] = gastados
     return x, info

@@ -18,16 +18,22 @@ import time
 import numpy as np
 import cupy as cp
 
-from curvo import malla as M, fuerzas as fz
+from curvo import convergencia as cvg, malla as M, fuerzas as fz
 from curvo.solver import Solver
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 
 # La malla ya no pasa `dn_pared`, `n_capas_pared` ni `crecimiento_pared`: desde la
 # validacion 1 son los defectos de `curvo.malla`.
+# `tol_fuerzas` > 0 para en cuanto Cl y Cd dejan de moverse por encima de esa
+# tolerancia (ver `curvo.convergencia`); `t_final` pasa a ser el tope. En 0 se
+# corre el presupuesto entero, que es lo que hay que hacer en estudios de malla:
+# si cada malla para en un tiempo distinto, el orden observado mide eso y no la
+# discretizacion.
 CASO = dict(perfil="NACA_0012_sharp", alfa=5.0, re=1.0e5, u_inf=1.0,
             distancia_lejos=None, x_salida=None,
-            dt=2.5e-3, t_final=20.0, cada_historia=20, cada_campo=40)
+            dt=2.5e-3, t_final=20.0, cada_historia=20, cada_campo=40,
+            tol_fuerzas=0.0)
 BC = dict(oeste=None, este=None)
 
 
@@ -91,6 +97,9 @@ def main(carpeta=None, **cambios):
     pasos = int(round(c["t_final"] / c["dt"]))
     hist, t0, marco = [], time.time(), 0
     t_prev, k_prev, ciclos = t0, 0, 0
+    parada = (cvg.ParadaFuerzas(tol=c["tol_fuerzas"])
+              if c["tol_fuerzas"] > 0 else None)
+    k_final = pasos
 
     for k in range(pasos + 1):
         if k % c["cada_historia"] == 0:
@@ -109,6 +118,23 @@ def main(carpeta=None, **cambios):
                          e["gamma_dispersion"], float(s.nu_t.max()) / nu,
                          s.divergencia(), it_s, ahora - t0, ciclos]
                         + [e["gamma"][r] for r in sorted(e["gamma"])])
+            if parada is not None and parada.anotar(k * c["dt"],
+                                                    e["superficie"],
+                                                    f["Cd"])["ok"]:
+                r = parada.resumen()
+                print("  fuerzas asentadas en t=%.2f: Cl %.4f (cola %.1e, "
+                      "banda %.1e)  Cd %.5f (cola %.1e, banda %.1e)"
+                      % (r["t"], r["Cl"], r["cola"]["Cl"], r["banda"]["Cl"],
+                         r["Cd"], r["cola"]["Cd"], r["banda"]["Cd"]), flush=True)
+                # El marco del instante en que se para, que si no se pierde: el
+                # `break` salta el bloque de campos.
+                np.savez_compressed(
+                    os.path.join(AQUI, "campos", "campo_%04d.npz" % marco),
+                    t=k * c["dt"], u=cp.asnumpy(s.u), v=cp.asnumpy(s.v),
+                    p=cp.asnumpy(s.p), nu_t=cp.asnumpy(s.nu_t))
+                marco += 1
+                k_final = k
+                break
         if k % c["cada_campo"] == 0:
             np.savez_compressed(
                 os.path.join(AQUI, "campos", "campo_%04d.npz" % marco),
@@ -129,6 +155,10 @@ def main(carpeta=None, **cambios):
                         datos=np.array(hist), columnas=np.array(cols))
     c["dominio"] = [float(X.max() - X.min()), float(Y.max() - Y.min())]
     c["celdas"] = int(cal["n_celdas"])
+    c["t_corrido"] = k_final * c["dt"]
+    if parada is not None:
+        json.dump(parada.resumen(),
+                  open(os.path.join(AQUI, "convergencia.json"), "w"), indent=1)
     json.dump(c, open(os.path.join(AQUI, "caso.json"), "w"), indent=1)
     json.dump(s.reparto(), open(os.path.join(AQUI, "reparto.json"), "w"), indent=1)
     for n, d in s.reparto().items():

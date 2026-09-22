@@ -11,6 +11,7 @@ Modulo aparte: `Simulador2D.py` (cartesiano + IBM) no se toca.
     turbulencia  Spalart-Allmaras
     solver       Navier-Stokes incompresible por paso fraccionado
     fuerzas      Cl, Cd, Cm y Cp integrados sobre la linea j=0
+    convergencia parada por fuerzas: hasta que Cl y Cd fijan el tercer decimal
 
 Todo funciona igual con numpy y con cupy: los modulos usan el `xp` del array que
 reciben. En GPU conviene float32 (ver `multigrid.tolerancia`).

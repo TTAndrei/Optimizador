@@ -42,12 +42,20 @@ import time
 import numpy as np
 
 from . import conveccion as cv
+from . import fuerzas as fz
 from . import operadores as op
 from . import proyeccion as pr
 from . import turbulencia as tu
 from .metrica import Metrica
 
 __all__ = ["Solver"]
+
+# Cada cuantos pasos se resuelve comprobando el residuo para recalibrar los
+# conteos fijos de ciclos, y cuantos pasos del arranque van siempre comprobados.
+# El transitorio si mueve los conteos; el regimen asentado no (medido: momento
+# 2 ciclos, `nu_tilde` 2 y PCG 2-3 durante 800 pasos seguidos).
+RECALIBRAR = 50
+ARRANQUE = 200
 
 
 class Solver:
@@ -88,12 +96,17 @@ class Solver:
     def __init__(self, X, Y, info, nu=None, u_inf=1.0, alfa=0.0, dt=2e-3,
                  xp=np, dtype=np.float64, bdf2=False, correcciones=1,
                  correcciones_p=1, turbulento=False, nu_tilde_inf=3.0,
-                 cronometro=False):
+                 cronometro=False, recalibrar=RECALIBRAR):
         self.xp = xp
         self.dtype = np.dtype(dtype)
         self.met = Metrica(xp.asarray(X, dtype=dtype), xp.asarray(Y, dtype=dtype))
         self.info = info
         self.corte = cv.corte_de_estela(info, self.met.nx, xp=xp)
+        # La misma mascara en la CPU: es geometria fija, y pasarsela a `sistema`
+        # evita que `Sistema` la deduzca de la version que vive en la GPU, que
+        # cuesta una sincronizacion bloqueante por matriz construida.
+        self.corte_cpu = np.asarray(
+            self.corte.get() if xp is not np else self.corte, dtype=bool)
         self.nu = cv.AIRE["nu"] if nu is None else nu
         self.u_inf = float(u_inf)
         self.alfa = float(alfa)
@@ -104,6 +117,10 @@ class Solver:
         self.paso_n = 0
         self.cronometro = cronometro
         self.tiempos = {}
+        # Conteos de ciclos por etapa, uno por iteracion externa. `None` = se
+        # comprueba el residuo. Los rellena el primer paso comprobado.
+        self.recalibrar = recalibrar
+        self.fijos = {"momento": None, "presion": None, "sa": None}
 
         a = np.radians(self.alfa)
         self.U = self.u_inf * float(np.cos(a))
@@ -170,8 +187,19 @@ class Solver:
         return t
 
     def paso(self):
-        """Un paso de tiempo. Devuelve el diccionario de info del Poisson."""
+        """Un paso de tiempo. Devuelve el diccionario de info del Poisson.
+
+        Los tres sistemas se resuelven a **cuenta fija de ciclos**, sin bajar el
+        residuo a la CPU: cada bajada drena la tuberia de lanzamientos y son 14
+        por paso. El conteo lo fija un paso comprobado, en el arranque y cada
+        `recalibrar` pasos; entre medias se reutiliza. Si el paso comprobado
+        necesita mas ciclos que el conteo guardado, el conteo sube y manda el
+        nuevo. La columna `ciclos_poisson` de la historia delata cualquier
+        deriva.
+        """
         met = self.met
+        comprobar = self.paso_n < ARRANQUE or self.paso_n % self.recalibrar == 0
+        fijos = {k: (None if comprobar else v) for k, v in self.fijos.items()}
         reloj = time.perf_counter() if self.cronometro else None
         gx, gy = op.gradiente(met, self.p, corte=self.corte, **self.bc_p)
 
@@ -183,14 +211,18 @@ class Solver:
         # los lee una vez y arrastra las dos recursiones de Thomas.
         xp = self.xp
         A, b_uv = cv.sistema(met, self.m_xi, self.m_eta, nu_ef, self.dt,
-                             [self.bc_u, self.bc_v], self.corte, bdf2)
-        uv, _ = cv.avanzar(met, xp.stack([self.u, self.v]), self.m_xi, self.m_eta,
-                           bc=[self.bc_u, self.bc_v],
-                           fuente=-xp.stack([gx, gy]),
-                           phi_ant=(xp.stack([self.u_ant, self.v_ant])
-                                    if bdf2 else None),
-                           sis=(A, b_uv), dt=self.dt, nu=nu_ef, corte=self.corte,
-                           correcciones=self.correcciones)
+                             [self.bc_u, self.bc_v], self.corte, bdf2,
+                             activo=self.corte_cpu, xi=False)
+        uv, info_m = cv.avanzar(met, xp.stack([self.u, self.v]),
+                                self.m_xi, self.m_eta,
+                                bc=[self.bc_u, self.bc_v],
+                                fuente=-xp.stack([gx, gy]),
+                                phi_ant=(xp.stack([self.u_ant, self.v_ant])
+                                         if bdf2 else None),
+                                sis=(A, b_uv), dt=self.dt, nu=nu_ef,
+                                corte=self.corte,
+                                correcciones=self.correcciones,
+                                fijos=fijos["momento"])
         ue, ve = uv[0], uv[1]
         if reloj is not None:
             reloj = self._marca("momento", reloj)
@@ -198,7 +230,8 @@ class Solver:
         mx, me = pr.flujos_de_velocidad(met, ue, ve, self.bc_vel, self.corte)
         self.m_xi, self.m_eta, phi, info = pr.proyectar(
             met, mx, me, dt=self.dt, bc=self.bc_p, corte=self.corte,
-            correcciones=self.correcciones_p, sis=self.sis_p)
+            correcciones=self.correcciones_p, sis=self.sis_p,
+            fijos=fijos["presion"])
 
         self.u_ant, self.v_ant = self.u, self.v
         self.u, self.v = pr.corregir_velocidad(met, ue, ve, phi, self.dt,
@@ -210,12 +243,25 @@ class Solver:
         if self.turbulento:
             # Euler atras siempre: `nu_tilde` tiene que ser positiva y ningun
             # metodo multipaso de orden > 1 es incondicionalmente monotono.
-            self.nu_tilde, self.nu_t = tu.avanzar_sa(
+            self.nu_tilde, self.nu_t, info_sa = tu.avanzar_sa(
                 met, self.nu_tilde, self.u, self.v, self.m_xi, self.m_eta,
                 self.d_pared, self.nu, self.dt, self.bc_u, self.bc_v,
-                self.bc_sa, self.corte)
+                self.bc_sa, self.corte, fijos=fijos["sa"],
+                activo=self.corte_cpu)
             if reloj is not None:
                 reloj = self._marca("turbulencia", reloj)
+
+        if comprobar:
+            # Manda lo medido **ahora**, no el maximo historico: el transitorio
+            # de arranque gasta mas ciclos que el regimen asentado, y quedarse
+            # con su conteo seria pagarlo los 8 000 pasos siguientes. Si el
+            # regimen cambia y hace falta mas, el siguiente paso comprobado lo
+            # sube; entre medias el sistema se queda con un residuo algo mas
+            # alto, que es lo mismo que aflojar `tol` durante 50 pasos.
+            self.fijos["momento"] = info_m["vciclos"]
+            self.fijos["presion"] = info["vciclos"]
+            if self.turbulento:
+                self.fijos["sa"] = info_sa["vciclos"]
 
         self.paso_n += 1
         return info
@@ -228,12 +274,34 @@ class Solver:
                 for n, t in sorted(self.tiempos.items(), key=lambda x: -x[1])}
 
     # ------------------------------------------------------------------
-    def correr(self, pasos, parada=None, cada=25, traza=None):
-        """Avanza `pasos` pasos. Con `parada` se para si el cambio baja de ahi.
+    def coeficientes(self):
+        """`(Cl, Cd)` del perfil ahora mismo.
 
-        El cambio se mide como `max|u^{n+1} - u^n| / (u_inf * dt)`, es decir, la
-        derivada temporal en unidades de la corriente libre: asi el criterio no
-        depende de `dt` ni de la escala de velocidad.
+        Baja la pared a la CPU, asi que sincroniza la GPU: se llama cada N pasos,
+        no cada paso.
+        """
+        f = fz.fuerzas(self.met, self.u, self.v, self.p, self.info, self.nu,
+                       self.u_inf, self.alfa, bc=self.bc_u)
+        return f["Cl"], f["Cd"]
+
+    def correr(self, pasos, parada=None, cada=25, traza=None,
+               parada_fuerzas=None):
+        """Avanza `pasos` pasos, con dos criterios de parada posibles.
+
+        `parada` mira el campo: se para si `max|u^{n+1} - u^n| / (u_inf * dt)`
+        baja de ahi, o sea la derivada temporal en unidades de la corriente
+        libre, que no depende de `dt` ni de la escala de velocidad.
+
+        `parada_fuerzas` es un `convergencia.ParadaFuerzas` y mira **el numero
+        que se publica**: se para cuando Cl y Cd dejan de moverse en el tercer
+        decimal. Es el que hay que usar para una polar o un caso suelto; el del
+        campo se queda corto porque la estela lejana sigue moviendose mucho
+        despues de que la fuerza se haya asentado, y largo porque un residuo
+        pequeno no acota lo que a la fuerza le queda por recorrer.
+
+        Los dos se muestrean cada `cada` pasos. Devuelve la historia
+        `(paso, cambio)`; lo de las fuerzas se queda en el propio
+        `parada_fuerzas` (`resumen()`).
         """
         xp = self.xp
         historia = []
@@ -249,6 +317,10 @@ class Solver:
                     traza(self, cambio)
                 if parada is not None and cambio < parada:
                     break
+                if parada_fuerzas is not None:
+                    cl, cd = self.coeficientes()
+                    if parada_fuerzas.anotar(self.paso_n * self.dt, cl, cd)["ok"]:
+                        break
         return historia
 
     # ------------------------------------------------------------------

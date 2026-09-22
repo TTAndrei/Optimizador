@@ -196,8 +196,12 @@ def _vorticidad(met, u, v, bc_u, bc_v, corte=None):
 
 
 def avanzar_sa(met, nu_tilde, u, v, m_xi, m_eta, d, nu, dt, bc_u, bc_v,
-               bc_sa=None, corte=None, correcciones=0):
-    """Un paso de `nu_tilde`. Devuelve `(nu_tilde, nu_t)`.
+               bc_sa=None, corte=None, correcciones=0, fijos=None,
+               activo=None):
+    """Un paso de `nu_tilde`. Devuelve `(nu_tilde, nu_t, info)`.
+
+    `fijos` va tal cual a `conveccion.avanzar`: conteo fijo de ciclos V sin
+    comprobar el residuo. `info["vciclos"]` es lo gastado.
 
     `d` es la distancia a pared de `distancia_a_pared` (fija, se pasa hecha).
     `bc_sa` sigue el convenio de siempre: `sur = 0.0` en la pared (no
@@ -228,6 +232,7 @@ def avanzar_sa(met, nu_tilde, u, v, m_xi, m_eta, d, nu, dt, bc_u, bc_v,
 
     nuevo, info = cv.avanzar(met, nt, m_xi, m_eta, dt=dt,
                              nu=(nu + nt) / c["sigma"], bc=bc_sa, corte=corte,
-                             fuente=fuente, correcciones=correcciones)
+                             fuente=fuente, correcciones=correcciones,
+                             fijos=fijos, activo=activo)
     nuevo = xp.maximum(nuevo, 0.0)
-    return nuevo, viscosidad_turbulenta(nuevo, nu, xp)
+    return nuevo, viscosidad_turbulenta(nuevo, nu, xp), info

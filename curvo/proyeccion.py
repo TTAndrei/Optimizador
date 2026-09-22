@@ -122,7 +122,7 @@ def flujos_de_presion(met, p, bc=None, corte=None):
 # Proyeccion
 # ---------------------------------------------------------------------------
 def proyectar(met, m_xi, m_eta, dt=1.0, bc=None, corte=None, correcciones=2,
-              tol=None, ciclos=80, p=None, sis=None):
+              tol=None, ciclos=80, p=None, sis=None, fijos=None):
     """Hace solenoidales los flujos de cara. Devuelve `(m_xi, m_eta, p, info)`.
 
     `correcciones` son las iteraciones externas de los terminos cruzados; con 0
@@ -136,6 +136,11 @@ def proyectar(met, m_xi, m_eta, dt=1.0, bc=None, corte=None, correcciones=2,
     con el ciclo solo: el ciclo topa en factor 0.50 (el techo de la aglomeracion
     sin suavizar) y F4 pide < 0.3. Con PCG el factor baja a 0.03-0.06 y es
     independiente de la malla.
+
+    `fijos` es una lista de `correcciones + 1` conteos de iteraciones del PCG,
+    una por correccion cruzada, y con ella no se mira el residuo (ver
+    `multigrid.resolver_pcg`). En regimen asentado la segunda correccion arranca
+    ya convergida y su conteo es 0, o sea no se resuelve nada.
     """
     bcn = _bc(bc, met.xp)
     A, b_bc = sis if sis is not None else sistema_presion(met, bc, corte)
@@ -145,11 +150,14 @@ def proyectar(met, m_xi, m_eta, dt=1.0, bc=None, corte=None, correcciones=2,
 
     b0 = b_bc - op.divergencia(m_xi, m_eta) / dt
     p = met.xp.zeros_like(met.J) if p is None else p.copy()
-    info = {}
-    for _ in range(correcciones + 1):
+    info, gastados = {}, []
+    for q in range(correcciones + 1):
         _, _, x_xi, x_eta = _partes(met, p, bcn, corte)
         A.b = b0 + op.divergencia(x_xi, x_eta)
-        p, info = resolver_pcg(A, p, tol=tol, ciclos=ciclos, niveles=niveles)
+        p, info = resolver_pcg(A, p, tol=tol, ciclos=ciclos, niveles=niveles,
+                               fijos=None if fijos is None else fijos[q])
+        gastados.append(info["vciclos"])
+    info["vciclos"] = gastados
 
     F_xi, F_eta = flujos_de_presion(met, p, bc, corte)
     return m_xi - dt * F_xi, m_eta - dt * F_eta, p, info

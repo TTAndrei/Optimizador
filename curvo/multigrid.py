@@ -257,6 +257,261 @@ void zebra_xi({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
 }
 
 
+// -- reduccion ciclica paralela ---------------------------------------------
+// `n` incognitas en memoria compartida con doble buffer. Los hilos con `i >= n`
+// **no se pueden ir**: tienen que llegar a los `__syncthreads()` igual que los
+// demas, asi que participan en las barreras y se callan en los accesos.
+__device__ __forceinline__ void pcr1({T}* sa, {T}* sb, {T}* sc, {T}* sd,
+                                     {T}* ta, {T}* tb, {T}* tc, {T}* td,
+                                     const int n, const int i)
+{
+    for (int p = 1; p < n; p <<= 1) {
+        if (i < n) {
+            int i0 = i - p, i1 = i + p;
+            {T} alfa = (i0 >= 0) ? -sa[i] / sb[i0] : ({T})0;
+            {T} beta = (i1 < n) ? -sc[i] / sb[i1] : ({T})0;
+            {T} nb = sb[i], nd = sd[i], na = 0, nc = 0;
+            if (i0 >= 0) { nb += alfa * sc[i0]; nd += alfa * sd[i0]; na = alfa * sa[i0]; }
+            if (i1 < n)  { nb += beta * sa[i1]; nd += beta * sd[i1]; nc = beta * sc[i1]; }
+            ta[i] = na; tb[i] = nb; tc[i] = nc; td[i] = nd;
+        }
+        __syncthreads();
+        if (i < n) { sa[i] = ta[i]; sb[i] = tb[i]; sc[i] = tc[i]; sd[i] = td[i]; }
+        __syncthreads();
+    }
+}
+
+// Igual, con dos terminos independientes que comparten matriz: los factores
+// `alfa` y `beta` salen de los coeficientes, asi que se calculan una vez.
+__device__ __forceinline__ void pcr2({T}* sa, {T}* sb, {T}* sc,
+                                     {T}* sd0, {T}* sd1,
+                                     {T}* ta, {T}* tb, {T}* tc,
+                                     {T}* td0, {T}* td1,
+                                     const int n, const int i)
+{
+    for (int p = 1; p < n; p <<= 1) {
+        if (i < n) {
+            int i0 = i - p, i1 = i + p;
+            {T} alfa = (i0 >= 0) ? -sa[i] / sb[i0] : ({T})0;
+            {T} beta = (i1 < n) ? -sc[i] / sb[i1] : ({T})0;
+            {T} nb = sb[i], nd0 = sd0[i], nd1 = sd1[i], na = 0, nc = 0;
+            if (i0 >= 0) {
+                nb += alfa * sc[i0]; na = alfa * sa[i0];
+                nd0 += alfa * sd0[i0]; nd1 += alfa * sd1[i0];
+            }
+            if (i1 < n) {
+                nb += beta * sa[i1]; nc = beta * sc[i1];
+                nd0 += beta * sd0[i1]; nd1 += beta * sd1[i1];
+            }
+            ta[i] = na; tb[i] = nb; tc[i] = nc; td0[i] = nd0; td1[i] = nd1;
+        }
+        __syncthreads();
+        if (i < n) {
+            sa[i] = ta[i]; sb[i] = tb[i]; sc[i] = tc[i];
+            sd0[i] = td0[i]; sd1[i] = td1[i];
+        }
+        __syncthreads();
+    }
+}
+
+
+// -- lineas xi por reduccion ciclica paralela -------------------------------
+// Un hilo por linea deja el nivel fino con 49 hilos trabajando de los 6144
+// nucleos, cada uno arrastrando una recursion de 384 pasos en serie: medido con
+// nsys, 143 us por barrido cuando un recorrido completo de la malla (el producto
+// matriz-vector `aplicar`) cuesta 1.45 us. Aqui va **un bloque por linea** y un
+// hilo por incognita, con reduccion ciclica paralela: log2(n) pasos en los que
+// todos los hilos trabajan.
+//
+// PCR es estable sin pivoteo en matrices con diagonal dominante, que es lo que
+// la construccion garantiza (M-matriz: upwind de 1.er orden mas la parte
+// ortogonal de la difusion). Resuelve **la misma** tridiagonal que Thomas: lo
+// unico que cambia es el orden de las operaciones, y con el float32 del solver
+// eso son diferencias de redondeo.
+//
+// Los coeficientes van en memoria compartida con doble buffer (8 arrays de
+// `n` flotantes = 12 KB con n = 384, de los 48 KB por bloque).
+extern "C" __global__
+void zebra_xi_pcr({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+                  const {T}* aS, const {T}* aN, const {T}* aC, const {T}* b,
+                  const int* filas, const int ny, const int nx,
+                  const int hay_corte)
+{
+    extern __shared__ char bruto[];
+    {T}* sa = ({T}*)bruto;
+    {T}* sb = sa + nx;  {T}* sc = sb + nx;  {T}* sd = sc + nx;
+    {T}* ta = sd + nx;
+    {T}* tb = ta + nx;  {T}* tc = tb + nx;  {T}* td = tc + nx;
+
+    int i = threadIdx.x;
+    int f = filas[blockIdx.x];
+    if (i < nx) {
+        int o = f * nx + i;
+        // El termino retrasado se lee ANTES de tocar `phi`, igual que en la
+        // version de Thomas: en la fila del corte la celda espejo esta en esta
+        // misma linea.
+        {T} r = b[o];
+        if (f > 0)      r += aS[o] * phi[o - nx];
+        if (f < ny - 1) r += aN[o] * phi[o + nx];
+        if (hay_corte && f == 0) r += aC[i] * phi[nx - 1 - i];
+        sa[i] = -aW[o];  sb[i] = aP[o];  sc[i] = -aE[o];  sd[i] = r;
+    }
+    __syncthreads();
+    pcr1(sa, sb, sc, sd, ta, tb, tc, td, nx, i);
+    if (i < nx) phi[f * nx + i] = sd[i] / sb[i];
+}
+
+
+// Lineas eta: la linea es la columna `i`, con paso `nx` entre incognitas.
+extern "C" __global__
+void zebra_eta_pcr({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+                   const {T}* aS, const {T}* aN, const {T}* b,
+                   const int* cols, const int ny, const int nx)
+{
+    extern __shared__ char bruto[];
+    {T}* sa = ({T}*)bruto;
+    {T}* sb = sa + ny;  {T}* sc = sb + ny;  {T}* sd = sc + ny;
+    {T}* ta = sd + ny;
+    {T}* tb = ta + ny;  {T}* tc = tb + ny;  {T}* td = tc + ny;
+
+    int k = threadIdx.x;
+    int i = cols[blockIdx.x];
+    if (k < ny) {
+        int o = k * nx + i;
+        {T} r = b[o];
+        if (i > 0)      r += aW[o] * phi[o - 1];
+        if (i < nx - 1) r += aE[o] * phi[o + 1];
+        sa[k] = -aS[o];  sb[k] = aP[o];  sc[k] = -aN[o];  sd[k] = r;
+    }
+    __syncthreads();
+    pcr1(sa, sb, sc, sd, ta, tb, tc, td, ny, k);
+    if (k < ny) phi[k * nx + i] = sd[k] / sb[k];
+}
+
+
+// Lineas eta emparejadas por el corte de estela: baja por la columna `ia` y
+// sube por su espejo `ib`, una tridiagonal de longitud `2*ny`. Mismo recorrido
+// que `zebra_eta_par`.
+extern "C" __global__
+void zebra_eta_par_pcr({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+                       const {T}* aS, const {T}* aN, const {T}* aC,
+                       const {T}* b, const int* cols,
+                       const int ny, const int nx)
+{
+    extern __shared__ char bruto[];
+    int n = 2 * ny;
+    {T}* sa = ({T}*)bruto;
+    {T}* sb = sa + n;  {T}* sc = sb + n;  {T}* sd = sc + n;
+    {T}* ta = sd + n;
+    {T}* tb = ta + n;  {T}* tc = tb + n;  {T}* td = tc + n;
+
+    int k = threadIdx.x;
+    int ia = cols[blockIdx.x];
+    int ib = nx - 1 - ia;
+    int fila = 0, i = 0, o = 0;
+    if (k < n) {
+        fila = (k < ny) ? (ny - 1 - k) : (k - ny);
+        i    = (k < ny) ? ia : ib;
+        o    = fila * nx + i;
+        {T} sub, sup;
+        if (k < ny) {
+            sub = -aN[o];
+            sup = (k == ny - 1) ? -aC[ia] : -aS[o];
+        } else {
+            sub = (fila == 0) ? -aC[ib] : -aS[o];
+            sup = -aN[o];
+        }
+        {T} r = b[o];
+        if (i > 0)      r += aW[o] * phi[o - 1];
+        if (i < nx - 1) r += aE[o] * phi[o + 1];
+        sa[k] = sub;  sb[k] = aP[o];  sc[k] = sup;  sd[k] = r;
+    }
+    __syncthreads();
+    pcr1(sa, sb, sc, sd, ta, tb, tc, td, n, k);
+    if (k < n) phi[o] = sd[k] / sb[k];
+}
+
+
+// Los dos gemelos de dos campos, para el momento.
+extern "C" __global__
+void zebra_eta_pcr2({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+                    const {T}* aS, const {T}* aN, const {T}* b,
+                    const int* cols, const int ny, const int nx)
+{
+    extern __shared__ char bruto[];
+    {T}* sa = ({T}*)bruto;
+    {T}* sb = sa + ny;   {T}* sc = sb + ny;
+    {T}* sd0 = sc + ny;  {T}* sd1 = sd0 + ny;
+    {T}* ta = sd1 + ny;
+    {T}* tb = ta + ny;   {T}* tc = tb + ny;
+    {T}* td0 = tc + ny;  {T}* td1 = td0 + ny;
+
+    int k = threadIdx.x;
+    int i = cols[blockIdx.x];
+    int N = ny * nx;
+    if (k < ny) {
+        int o = k * nx + i;
+        {T} r0 = b[o], r1 = b[N + o];
+        if (i > 0)      { r0 += aW[o] * phi[o - 1];      r1 += aW[o] * phi[N + o - 1]; }
+        if (i < nx - 1) { r0 += aE[o] * phi[o + 1];      r1 += aE[o] * phi[N + o + 1]; }
+        sa[k] = -aS[o];  sb[k] = aP[o];  sc[k] = -aN[o];
+        sd0[k] = r0;     sd1[k] = r1;
+    }
+    __syncthreads();
+    pcr2(sa, sb, sc, sd0, sd1, ta, tb, tc, td0, td1, ny, k);
+    if (k < ny) {
+        int o = k * nx + i;
+        phi[o] = sd0[k] / sb[k];
+        phi[N + o] = sd1[k] / sb[k];
+    }
+}
+
+extern "C" __global__
+void zebra_eta_par_pcr2({T}* phi, const {T}* aP, const {T}* aW, const {T}* aE,
+                        const {T}* aS, const {T}* aN, const {T}* aC,
+                        const {T}* b, const int* cols,
+                        const int ny, const int nx)
+{
+    extern __shared__ char bruto[];
+    int n = 2 * ny;
+    {T}* sa = ({T}*)bruto;
+    {T}* sb = sa + n;    {T}* sc = sb + n;
+    {T}* sd0 = sc + n;   {T}* sd1 = sd0 + n;
+    {T}* ta = sd1 + n;
+    {T}* tb = ta + n;    {T}* tc = tb + n;
+    {T}* td0 = tc + n;   {T}* td1 = td0 + n;
+
+    int k = threadIdx.x;
+    int ia = cols[blockIdx.x];
+    int ib = nx - 1 - ia;
+    int N = ny * nx;
+    int fila = 0, i = 0, o = 0;
+    if (k < n) {
+        fila = (k < ny) ? (ny - 1 - k) : (k - ny);
+        i    = (k < ny) ? ia : ib;
+        o    = fila * nx + i;
+        {T} sub, sup;
+        if (k < ny) {
+            sub = -aN[o];
+            sup = (k == ny - 1) ? -aC[ia] : -aS[o];
+        } else {
+            sub = (fila == 0) ? -aC[ib] : -aS[o];
+            sup = -aN[o];
+        }
+        {T} r0 = b[o], r1 = b[N + o];
+        if (i > 0)      { r0 += aW[o] * phi[o - 1];  r1 += aW[o] * phi[N + o - 1]; }
+        if (i < nx - 1) { r0 += aE[o] * phi[o + 1];  r1 += aE[o] * phi[N + o + 1]; }
+        sa[k] = sub;  sb[k] = aP[o];  sc[k] = sup;  sd0[k] = r0;  sd1[k] = r1;
+    }
+    __syncthreads();
+    pcr2(sa, sb, sc, sd0, sd1, ta, tb, tc, td0, td1, n, k);
+    if (k < n) {
+        phi[o] = sd0[k] / sb[k];
+        phi[N + o] = sd1[k] / sb[k];
+    }
+}
+
+
 // -- gemelos de dos campos --------------------------------------------------
 // `phi` y `b` son (2, ny, nx) contiguos; los coeficientes se comparten y se leen
 // una sola vez. Los coeficientes de la recursion (`cp`) no dependen del termino
@@ -546,9 +801,24 @@ def _modulo(dtype):
 
 _HILOS = 64
 
+# Longitud minima de linea a partir de la cual compensa la reduccion ciclica
+# paralela (un bloque por linea) en vez de Thomas (un hilo por linea). Por
+# debajo, la linea es corta, hay muchas y el problema deja de ser de paralelismo.
+PCR_MINIMO = 64
+
 
 def _rejilla(n):
     return ((n + _HILOS - 1) // _HILOS,), (_HILOS,)
+
+
+def _pcr(n):
+    """Si la linea de `n` incognitas va por reduccion ciclica paralela."""
+    return PCR_MINIMO <= n <= 1024
+
+
+def _bloque(n):
+    """Hilos por bloque para una linea de `n`: warps enteros, `n` redondeado."""
+    return int((n + 31) // 32 * 32)
 
 
 class Sistema:
@@ -558,9 +828,10 @@ class Sistema:
     Los coeficientes de vecino valen cero donde no hay vecino.
     """
 
-    def __init__(self, aP, aW, aE, aS, aN, b, aC=None, activo=None):
+    def __init__(self, aP, aW, aE, aS, aN, b, aC=None, activo=None, xi=True):
         self.aP, self.aW, self.aE, self.aS, self.aN, self.b = aP, aW, aE, aS, aN, b
         self.aC = aC
+        self.xi = xi
         self.ny, self.nx = aP.shape
         self.xp = xp_de(aP)
         self.gpu = self.xp is not np
@@ -570,6 +841,11 @@ class Sistema:
             self._k_eta = mod.get_function("zebra_eta")
             self._k_par = mod.get_function("zebra_eta_par")
             self._k_xi = mod.get_function("zebra_xi")
+            self._k_xi_pcr = mod.get_function("zebra_xi_pcr")
+            self._k_eta_pcr = mod.get_function("zebra_eta_pcr")
+            self._k_par_pcr = mod.get_function("zebra_eta_par_pcr")
+            self._k_eta_pcr2 = mod.get_function("zebra_eta_pcr2")
+            self._k_par_pcr2 = mod.get_function("zebra_eta_par_pcr2")
             self._k_apl = mod.get_function("aplicar")
             self._k_eta2 = mod.get_function("zebra_eta2")
             self._k_par2 = mod.get_function("zebra_eta_par2")
@@ -577,6 +853,22 @@ class Sistema:
             self._k_apl2 = mod.get_function("aplicar2")
             self._cero = self.xp.zeros(self.nx, dtype=aP.dtype)
             self._rasca = {}
+            # Argumentos constantes del lanzamiento, ya convertidos. Construir
+            # los `np.int32` y calcular bloques y memoria compartida en cada
+            # barrido es trabajo de CPU en el camino caliente, y con ~2400
+            # lanzamientos por paso de tiempo el cuello es justo ese.
+            self._i_ny = np.int32(self.ny)
+            self._i_nx = np.int32(self.nx)
+            self._i_corte = np.int32(self.aC is not None)
+            self._aC_o_cero = self._cero if self.aC is None else self.aC
+            octetos = aP.dtype.itemsize
+            self._pcr_eta = (_pcr(self.ny), (_bloque(self.ny),),
+                             8 * self.ny * octetos, 10 * self.ny * octetos)
+            n2 = 2 * self.ny
+            self._pcr_par = (_pcr(n2), (_bloque(n2),),
+                             8 * n2 * octetos, 10 * n2 * octetos)
+            self._pcr_xi = (_pcr(self.nx), (_bloque(self.nx),),
+                            8 * self.nx * octetos, 10 * self.nx * octetos)
 
     def _indices(self, activo=None):
         """Indices de los barridos cebra, precalculados.
@@ -611,6 +903,10 @@ class Sistema:
         self._par = [xp.asarray(pares[pares % 2 == k], dtype=tipo) for k in (0, 1)]
         self._par_espejo = [self.nx - 1 - c for c in self._par]
         self._fil = [xp.asarray(np.arange(k, self.ny, 2), dtype=tipo) for k in (0, 1)]
+        # Rejillas de "un bloque por linea" (columnas sueltas, pares del corte y
+        # filas), una por paridad.
+        self._rej = [((self._col[k].size,), (self._par[k].size,),
+                      (self._fil[k].size,)) for k in (0, 1)]
 
     def _scratch(self, n, L, nc=1):
         """`(cp, dp)` de la recursion. `cp` es comun a los campos, `dp` no.
@@ -692,18 +988,33 @@ class Sistema:
             nc = phi.shape[0] if phi.ndim == 3 else 1
             c = self._col[paridad]
             if c.size:
-                cp_, dp = self._scratch(self.ny, c.size, nc)
-                (self._k_eta2 if nc == 2 else self._k_eta)(*_rejilla(c.size), (
-                    phi, self.aP, self.aW, self.aE, self.aS, self.aN, self.b,
-                    c, cp_, dp, np.int32(c.size), np.int32(self.ny),
-                    np.int32(self.nx)))
+                usa_pcr, bloque, sh1, sh2 = self._pcr_eta
+                if usa_pcr:
+                    kern = self._k_eta_pcr2 if nc == 2 else self._k_eta_pcr
+                    kern(self._rej[paridad][0], bloque, (
+                        phi, self.aP, self.aW, self.aE, self.aS, self.aN,
+                        self.b, c, self._i_ny, self._i_nx),
+                        shared_mem=sh2 if nc == 2 else sh1)
+                else:
+                    cp_, dp = self._scratch(self.ny, c.size, nc)
+                    (self._k_eta2 if nc == 2 else self._k_eta)(*_rejilla(c.size), (
+                        phi, self.aP, self.aW, self.aE, self.aS, self.aN, self.b,
+                        c, cp_, dp, np.int32(c.size), self._i_ny, self._i_nx))
             a = self._par[paridad]
             if a.size:
-                cp_, dp = self._scratch(2 * self.ny, a.size, nc)
-                (self._k_par2 if nc == 2 else self._k_par)(*_rejilla(a.size), (
-                    phi, self.aP, self.aW, self.aE, self.aS, self.aN,
-                    self.aC, self.b, a, cp_, dp, np.int32(a.size),
-                    np.int32(self.ny), np.int32(self.nx)))
+                usa_pcr, bloque, sh1, sh2 = self._pcr_par
+                if usa_pcr:
+                    kern = self._k_par_pcr2 if nc == 2 else self._k_par_pcr
+                    kern(self._rej[paridad][1], bloque, (
+                        phi, self.aP, self.aW, self.aE, self.aS, self.aN,
+                        self.aC, self.b, a, self._i_ny, self._i_nx),
+                        shared_mem=sh2 if nc == 2 else sh1)
+                else:
+                    cp_, dp = self._scratch(2 * self.ny, a.size, nc)
+                    (self._k_par2 if nc == 2 else self._k_par)(*_rejilla(a.size), (
+                        phi, self.aP, self.aW, self.aE, self.aS, self.aN,
+                        self.aC, self.b, a, cp_, dp, np.int32(a.size),
+                        self._i_ny, self._i_nx))
             return
 
         if phi.ndim == 3:                   # en CPU los campos van en bucle
@@ -747,12 +1058,20 @@ class Sistema:
             return
         if self.gpu:
             nc = phi.shape[0] if phi.ndim == 3 else 1
+            usa_pcr, bloque, sh1, _ = self._pcr_xi
+            if nc == 1 and usa_pcr:
+                # Un bloque por linea, un hilo por incognita. La memoria
+                # compartida son los ocho arrays del doble buffer de la PCR.
+                self._k_xi_pcr(self._rej[paridad][2], bloque, (
+                    phi, self.aP, self.aW, self.aE, self.aS, self.aN,
+                    self._aC_o_cero, self.b, f, self._i_ny, self._i_nx,
+                    self._i_corte), shared_mem=sh1)
+                return
             cp_, dp = self._scratch(self.nx, f.size, nc)
             (self._k_xi2 if nc == 2 else self._k_xi)(*_rejilla(f.size), (
                 phi, self.aP, self.aW, self.aE, self.aS, self.aN,
-                self._cero if self.aC is None else self.aC, self.b,
-                f, cp_, dp, np.int32(f.size), np.int32(self.ny),
-                np.int32(self.nx), np.int32(self.aC is not None)))
+                self._aC_o_cero, self.b, f, cp_, dp, np.int32(f.size),
+                self._i_ny, self._i_nx, self._i_corte))
             return
         if phi.ndim == 3:
             b_todo = self.b
@@ -766,14 +1085,26 @@ class Sistema:
                             -self.aE[f, :].T, d).T
 
     def suavizar(self, phi, veces=1, invertido=False):
-        """`invertido` recorre los cuatro barridos al reves.
+        """`invertido` recorre los barridos al reves.
 
         Hace falta para que el ciclo V sea un operador **simetrico**, que es lo
         que el PCG exige del precondicionador: pre-suavizado en un orden y
-        post-suavizado en el contrario.
+        post-suavizado en el contrario. Con `xi = False` son dos barridos en vez
+        de cuatro, y la simetria se conserva igual.
+
+        **`xi = False` solo vale para la conveccion.** Medido sobre las matrices
+        reales del caso v3 con termino independiente aleatorio: con lineas eta
+        solas y tres barridos, el momento deja el residuo en 3.8e-5 tras dos
+        ciclos frente a 1.2e-4 del ADI, y cuesta 2.90 ms por ciclo en vez de
+        4.57 -- mejor y 1.58 veces mas barato, porque una linea xi son 384
+        incognitas en serie por hilo y solo hay 49 lineas por paridad. En el
+        Poisson de presion es al reves y por goleada: el factor del PCG pasa de
+        **0.031 a 0.93** (la puerta de F4 es 0.3), que es lo que cabe esperar de
+        un operador isotropo en el campo lejano.
         """
-        orden = [(self._lineas_eta, 0), (self._lineas_eta, 1),
-                 (self._lineas_xi, 0), (self._lineas_xi, 1)]
+        orden = [(self._lineas_eta, 0), (self._lineas_eta, 1)]
+        if self.xi:
+            orden += [(self._lineas_xi, 0), (self._lineas_xi, 1)]
         if invertido:
             orden.reverse()
         for _ in range(veces):
@@ -842,8 +1173,14 @@ def _engrosar_gpu(sis, ncy, ncx, bloq):
         *bloq, np.int32(ncy), np.int32(ncx), np.int32(sis.nx),
         np.int32(sis.aC is not None)))
     aP, aW, aE, aS, aN = salida
+    # `activo` vacio a proposito: quien sabe que columnas gruesas tienen corte es
+    # `jerarquia`, que lo deduce del mapa y llama a `_indices` acto seguido. Sin
+    # esto, el constructor lo deduciria de `aC`, y eso es **bajar `aC` a la CPU**:
+    # medido con nsys, 14 sincronizaciones bloqueantes por paso de tiempo (una
+    # por nivel y matriz) de las 16 que quedaban.
     return Sistema(aP, aW, aE, aS, aN, xp.zeros(forma, dtype=tipo),
-                   aCc if sis.aC is not None else None)
+                   aCc if sis.aC is not None else None,
+                   activo=np.zeros(ncx, bool), xi=sis.xi)
 
 
 def _engrosar(sis, kj, ncy, ki, ncx):
@@ -880,11 +1217,44 @@ def _engrosar(sis, kj, ncy, ki, ncx):
             dentro = xp.asarray(propio)
             aP[0] -= _sumar(xp, kis[dentro], sis.aC[dentro], (1, ncx)).reshape(ncx)
     return Sistema(aP, aW, aE, aS, aN, xp.zeros(forma, dtype=aP.dtype), aC,
-                   activo=activo)
+                   activo=activo, xi=sis.xi)
 
 
-def jerarquia(sis, minimo=9):
-    """Lista [(sistema, kj, ki)] de fino a grueso. Los mapas son los del nivel."""
+# La jerarquia se para cuando el nivel baja de `1/RAZON_GRUESA` de las celdas
+# finas, no en un numero absoluto de celdas: lo que fija el factor de
+# convergencia es la **razon** entre el nivel mas grueso y el fino, asi que un
+# numero fijo daria factores distintos segun la malla.
+#
+# Recortar niveles es tentador desde que el suavizador va por reduccion ciclica:
+# cada nivel cuesta una tanda de lanzamientos y el cuello es ese. Pero se paga
+# en escalabilidad. Medido sobre el cuadrado distorsionado de los tests (factor
+# del ciclo V de conveccion / factor del PCG de presion):
+#
+#     razon      n=64           n=128          n=256
+#     1/16       0.477 / 0.263  0.636 / 0.499  1.033 / 0.721
+#     1/64       0.474 / 0.096  0.494 / 0.310  0.641 / 0.589
+#     1/256      0.474 / 0.055  0.494 / 0.099  0.499 / 0.248
+#     1/1024     0.474 / 0.045  0.494 / 0.073  0.499 / 0.117
+#     completa   0.474 / 0.045  0.494 / 0.045  0.499 / 0.066
+#
+# Las puertas son 0.65 para el ciclo V (`test_el_multigrid_no_se_degrada_al_refinar`)
+# y 0.3 para el PCG (`test_el_pcg_no_se_degrada_al_refinar`). Con 1/64 las dos se
+# salen a n=256; con 1/256 pasan pero el PCG se queda a un 17 % de la puerta y
+# empeora claramente al refinar, que es justo la propiedad que el multigrid
+# aporta. 1/1024 se queda a un tercio de la puerta y sobre la malla C de
+# produccion son 7 niveles en vez de 8: 56.4 -> 54.1 ms/paso. La parada
+# siguiente, 1/256, daria 46.6 ms y es una decision de riesgo, no de codigo.
+RAZON_GRUESA = 1024
+
+
+def jerarquia(sis, minimo=None):
+    """Lista [(sistema, kj, ki)] de fino a grueso. Los mapas son los del nivel.
+
+    `minimo` es el tamano por debajo del cual se deja de engrosar; por defecto,
+    `celdas_finas / RAZON_GRUESA`.
+    """
+    if minimo is None:
+        minimo = max(9, sis.aP.size // RAZON_GRUESA)
     xp = sis.xp
     niveles = [(sis, None, None)]
     while sis.aP.size > minimo:
@@ -1003,13 +1373,30 @@ def ciclo_v(niveles, phi, nivel=0, pre=2, post=2, grueso=4, w=None):
     return phi
 
 
-def resolver(sis, phi=None, tol=None, ciclos=60, pre=2, post=2, niveles=None):
-    """Resuelve A phi = b. Devuelve (phi, info) con el historial de residuos."""
+def resolver(sis, phi=None, tol=None, ciclos=60, pre=2, post=2, niveles=None,
+             fijos=None):
+    """Resuelve A phi = b. Devuelve (phi, info) con el historial de residuos.
+
+    Con `fijos` se hacen **esos ciclos V y no se mira el residuo**. Comprobarlo
+    obliga a bajar un escalar del dispositivo, y cada bajada drena la tuberia:
+    medido con nsys, 14 sincronizaciones por paso de tiempo y 16.6 ms de espera
+    en la API de memcpy. En regimen asentado el criterio no decide nada -- el
+    momento siempre gasta 2 ciclos y `nu_tilde` 2 --, asi que quien decide es
+    `Solver`, que recalibra el numero cada 50 pasos con un paso comprobado.
+
+    `info["vciclos"]` es el numero de ciclos V gastados. No es `info["ciclos"]`:
+    ese cuenta **comprobaciones**, y en GPU cada una cubre dos ciclos.
+    """
     xp = sis.xp
     if phi is None:
         phi = xp.zeros_like(sis.aP)
     niveles = niveles if niveles is not None else jerarquia(sis)
     tol = tolerancia(sis.aP.dtype, tol)
+    if fijos is not None:
+        for _ in range(fijos):
+            ciclo_v(niveles, phi, pre=pre, post=post)
+        return phi, {"residuos": [], "ciclos": fijos, "vciclos": fijos,
+                     "factor": 0.0}
     # Con varios campos cada uno se normaliza por **su** termino independiente y
     # se para cuando todos cumplen su propio criterio. Normalizar los dos por el
     # maximo comun relajaria al pequeño: a alfa = 5 grados el termino de `v` es
@@ -1020,6 +1407,7 @@ def resolver(sis, phi=None, tol=None, ciclos=60, pre=2, post=2, niveles=None):
         return float((xp.abs(sis.residuo(phi)).max(axis=ejes) / escala).max())
     hist = [resid()]
     cada = 1 if xp is np else 2
+    k = -1
     for k in range(ciclos):
         ciclo_v(niveles, phi, pre=pre, post=post)
         if k % cada == cada - 1 or k == ciclos - 1:
@@ -1027,7 +1415,7 @@ def resolver(sis, phi=None, tol=None, ciclos=60, pre=2, post=2, niveles=None):
             if hist[-1] <= tol:
                 break
     utiles = [b / a for a, b in zip(hist[:-1], hist[1:]) if a > 0.0]
-    return phi, {"residuos": hist, "ciclos": len(hist) - 1,
+    return phi, {"residuos": hist, "ciclos": len(hist) - 1, "vciclos": k + 1,
                  "factor": float(np.median(utiles)) if utiles else 0.0}
 
 
@@ -1042,7 +1430,7 @@ def _precondicionar(niveles, r, pre, post, w):
 
 
 def resolver_pcg(sis, phi=None, tol=None, ciclos=60, pre=2, post=2,
-                 niveles=None, w=2.0):
+                 niveles=None, w=2.0, fijos=None):
     """Gradiente conjugado precondicionado con el ciclo V. Solo para A simetrica.
 
     El Poisson de presion lo es (`aE[i] = aW[i+1] = a_cara`, y sobre el corte
@@ -1051,22 +1439,33 @@ def resolver_pcg(sis, phi=None, tol=None, ciclos=60, pre=2, post=2,
     cara gruesa sale x2 y el cociente de Rayleigh recupera la mitad, pero no el
     ancho de banda -- y F4 pide < 0.3. El PCG se come el resto: el ciclo V es un
     precondicionador bueno aunque no sea un solver bueno.
+
+    `fijos` son iteraciones a cuenta fija, sin mirar el residuo: ver `resolver`.
+    Con `fijos = 0` no se hace nada, que es lo que pasa en la segunda correccion
+    cruzada de cada paso -- el incremento de presion ya viene convergido.
     """
     xp = sis.xp
     niveles = niveles if niveles is not None else jerarquia(sis)
     if phi is None:
         phi = xp.zeros_like(sis.aP)
     tol = tolerancia(sis.aP.dtype, tol)
-    escala = max(float(xp.abs(sis.b).max()), 1e-300)
+    if fijos == 0:
+        return phi, {"residuos": [], "ciclos": 0, "vciclos": 0, "factor": 0.0}
+    comprobar = fijos is None
+    tope = ciclos if comprobar else fijos
+    hist = []
+    if comprobar:
+        escala = max(float(xp.abs(sis.b).max()), 1e-300)
     r = sis.residuo(phi)
-    hist = [float(xp.abs(r).max()) / escala]
-    if hist[0] <= tol:
+    if comprobar:
+        hist.append(float(xp.abs(r).max()) / escala)
+    if comprobar and hist[0] <= tol:
         # Sin esto, un termino independiente nulo -- un campo que ya es
         # solenoidal, que es justo el arranque del solver -- da `rz = 0` y el
         # `beta = rz_nuevo/rz` de mas abajo sale 0/0. En CPU no aparecia porque
         # se comprueba la convergencia en cada iteracion y se sale antes; en GPU
         # se comprueba cada dos.
-        return phi, {"residuos": hist, "ciclos": 0, "factor": 0.0}
+        return phi, {"residuos": hist, "ciclos": 0, "vciclos": 0, "factor": 0.0}
     z = _precondicionar(niveles, r, pre, post, w)
     d = z.copy()
     rz = (r * z).sum()
@@ -1074,20 +1473,25 @@ def resolver_pcg(sis, phi=None, tol=None, ciclos=60, pre=2, post=2,
     # la norma del residuo, y solo cada `cada` iteraciones. Con una sincronizacion
     # por iteracion el PCG sobre la malla C tarda el doble.
     cada = 1 if xp is np else 2
-    for k in range(ciclos):
+    v = 1                                       # ciclos V gastados, el de `z`
+    for k in range(tope):
         Ad = sis.aplicar(d)
         den = (d * Ad).sum()
         alfa = rz / xp.where(xp.abs(den) > 1e-30, den, 1e-30)
         phi += alfa * d
         r -= alfa * Ad
-        if k % cada == cada - 1 or k == ciclos - 1:
+        if comprobar and (k % cada == cada - 1 or k == tope - 1):
             hist.append(float(xp.abs(r).max()) / escala)
             if hist[-1] <= tol:
                 break
+        if not comprobar and k == tope - 1:
+            break                               # la ultima direccion no se usa
         z = _precondicionar(niveles, r, pre, post, w)
         rz_nuevo = (r * z).sum()
         d = z + (rz_nuevo / xp.where(xp.abs(rz) > 1e-30, rz, 1e-30)) * d
         rz = rz_nuevo
+        v += 1
     utiles = [b / a for a, b in zip(hist[:-1], hist[1:]) if a > 0.0]
-    return phi, {"residuos": hist, "ciclos": len(hist) - 1,
+    return phi, {"residuos": hist, "ciclos": len(hist) - 1 if comprobar else tope,
+                 "vciclos": v,
                  "factor": float(np.median(utiles)) if utiles else 0.0}

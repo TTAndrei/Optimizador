@@ -9,6 +9,7 @@ import time
 
 import numpy as np
 
+from curvo import convergencia as cvg
 from curvo import fuerzas
 from curvo import malla
 from curvo.solver import Solver
@@ -52,6 +53,8 @@ def run(caso: Caso, raiz: str | Path | None = None) -> Path:
     cada_historia = int(caso.ejecucion["cada_historia"])
     cada_campo = int(caso.ejecucion["cada_campo"])
     pasos = int(caso.ejecucion["pasos"])
+    tol_fuerzas = float(caso.ejecucion.get("tol_fuerzas", 0.0))
+    parada = cvg.ParadaFuerzas(tol=tol_fuerzas) if tol_fuerzas > 0 else None
     historia = []
     marco = 0
     inicio = time.perf_counter()
@@ -62,6 +65,16 @@ def run(caso: Caso, raiz: str | Path | None = None) -> Path:
             if paso % cada_historia == 0:
                 historia.append(metricas)
                 _publicar(salida, writer, solver, metricas, Xpub, Ypub, paso)
+                if parada is not None and parada.anotar(
+                        metricas["t"], metricas["Cl"], metricas["Cd"])["ok"]:
+                    r = parada.resumen()
+                    (salida / "convergencia.json").write_text(
+                        json.dumps(_jsonable(r), indent=2), encoding="utf-8")
+                    print("[solver] fuerzas asentadas en t=%.2f: Cl=%+.5f "
+                          "Cd=%+.5f (cola %.1e / %.1e)"
+                          % (r["t"], r["Cl"], r["Cd"], r["cola"]["Cl"],
+                             r["cola"]["Cd"]), flush=True)
+                    break
             if paso % cada_campo == 0:
                 _guardar_campo(salida, solver, paso, caso.solver["dt"])
                 marco += 1

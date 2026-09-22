@@ -45,7 +45,8 @@ Plan completo en `~/.claude/plans/swift-soaring-seahorse.md`.
 | F5 | `solver.py`, `fuerzas.py`, `turbulencia.py` — NS completo, fuerzas y SA a Re=1e5 | ✅ los 5 criterios pasan (ver tabla) |
 | F6 | etapa y⁺≈1, validación externa | y⁺<1 (v3) y dominio (v2) cerrados; **cilindro y transición pendientes** |
 | opt 1 | reducir las 11 resoluciones de multigrid por paso | ⏳ pasos 1–4 de 5 hechos (`8e0e112`, `6a0f886`, `b2c9fe0`, `1918c80`), **167 → ~116 ms (−30 %)**; queda el paso 5, que es solo confirmación |
-| opt 2 | latencia de lanzamiento: nivel grueso + fusión de kernels `u`/`v` | ⏳ paso 1 hecho (`ecb8dc0`), **115.64 → 103.81 ms (×1.11)**; quedan los kernels gemelos |
+| opt 2 | latencia de lanzamiento: nivel grueso + fusión de kernels `u`/`v` | ✅ cerrada (`ecb8dc0`, `6e3aa65`, `63e1d13`), **115.64 → 85.79 ms** |
+| opt 3 | el suavizador: sincronizaciones, líneas η y reducción cíclica paralela | ✅ **86.8 → 54.7 ms/paso, 11.5 → 18.3 it/s** (×1.59); confirmado a 8 000 pasos en `validacion/v5_suavizador_pcr` |
 
 **F4 en una línea**: el operador del multigrid **es** `D·G` (2e-16, no 1e-6),
 la divergencia residual en modo par-impar baja del 46.2 % del cartesiano a 1e-9,
@@ -71,10 +72,10 @@ malla de 21 065 celdas. Dos cosas que costaron encontrar:
   GPU solo gana ×4.
 
 ```bash
-.venv/bin/python -m pytest tests/ -q          # 129 tests, 4–6 min (15 piden GPU)
+.venv/bin/python -m pytest tests/ -q          # 171 tests, 6–7 min (15 piden GPU)
 ```
 
-**128/129 pasan.** El que falla es `test_curvo_gpu.py::test_float32_da_la_misma_respuesta`,
+**170/171 pasan.** El que falla es `test_curvo_gpu.py::test_float32_da_la_misma_respuesta`,
 `assert 3.3180796687645364e-09 < 1e-09` (`tests/test_curvo_gpu.py:251`): la
 divergencia del camino float64 se queda 3.3× por encima de una tolerancia que es
 estricta de más. **Verificado que es pre-existente en HEAD** (se comprobó guardando
@@ -248,7 +249,7 @@ pestañas, siempre visibles** y a dos columnas: son el resultado de tocar los
 parámetros. El primer bloque de cada pestaña abre por defecto; los cerrados se
 encogen al título.
 
-**Tooltip en los 34 parámetros y en las 10 métricas de calidad.** Los textos
+**Tooltip en los 35 parámetros y en las 10 métricas de calidad.** Los textos
 están **resumidos de los docstrings de `curvo/malla.py`**, o sea de lo medido, no
 inventados. Si cambia un defecto o una medida, hay que tocar los dos sitios.
 
@@ -435,6 +436,92 @@ larga. Medir la **mediana**, no el máximo, y si sube de verdad medir el modo
 par-impar antes de llamarlo degradación. **Ahora conviene hacerlo ya con
 `ecb8dc0` dentro**, para no pagar dos corridas largas.
 
+### Fase 3 de optimización — el suavizador: 86.8 → 54.7 ms/paso (×1.59)
+
+**11.5 → 18.3 it/s**, con las fuerzas dentro del 0.01 %. A/B de 800 pasos contra
+`dab73d1` (worktree, medidas seguidas) y confirmación de 8 000 pasos en
+`validacion/v5_suavizador_pcr/`. La herramienta del A/B, que antes no existía, es
+`scripts/ab_curvo.py` (`--correr` / `--comparar`).
+
+**El diagnóstico, con nsys**: el paso gastaba 55.5 ms de GPU de 82 de pared, con
+4654 lanzamientos y el **94 % del tiempo de GPU en el suavizador de líneas**, que
+corría con **64–128 hilos de los 6144 núcleos**. Referencia de techo: el producto
+matriz-vector sobre las 37 534 celdas cuesta **1.45 µs** y un barrido de líneas ξ
+del nivel fino costaba **143 µs**. El problema no era ancho de banda: era una
+línea por hilo con una recursión secuencial de 384 pasos.
+
+**Paso 1 — las sincronizaciones (`fijos` + `activo` en la CPU)**. `resolver` y
+`resolver_pcg` aceptan una cuenta fija de ciclos y no miran el residuo; `Solver`
+la recalibra en el arranque y cada 50 pasos con un paso comprobado. Pero las
+sincronizaciones caras **no eran esas**: eran 16 `aC.get()` por paso escondidas en
+`Sistema._indices`, una por nivel de la jerarquía y por matriz construida, que
+valían **13.46 ms de espera**. Se quitan pasando la máscara del corte ya en la
+CPU (`Solver.corte_cpu`, `activo=` en `cv.sistema`). Verificado con un espía sobre
+`cupy.ndarray.get`: **0 sincronizaciones por paso**. 85.9 → 67.8 ms (×1.27).
+
+**Paso 2 — la convección solo relaja líneas η** (`Sistema.xi`, `BARRIDOS = 3`).
+Medido sobre las matrices reales: el momento con η y tres barridos deja el
+residuo en 3.8e-5 tras dos ciclos frente a 1.2e-4 del ADI, y cuesta 2.90 ms por
+ciclo frente a 4.57 — más exacto y 1.58 veces más barato. **En el Poisson de
+presión es al revés y por goleada**: el factor del PCG se va de 0.031 a 0.93. Por
+eso `xi` es de la matriz y no del solver, y el defecto es `True`: el Poisson se
+monta llamando a `conveccion.sistema` (`proyeccion.py:44`), y apagarlo ahí dentro
+mandó el paso a **286 ms** con 81 iteraciones de PCG. 86.6 → 58.0 ms (×1.49).
+
+**Paso 3 — reducción cíclica paralela**. Un bloque por línea y un hilo por
+incógnita, en memoria compartida con doble buffer: `zebra_xi_pcr`,
+`zebra_eta_pcr`, `zebra_eta_par_pcr` y los gemelos de dos campos, todos sobre
+`pcr1`/`pcr2`. **Barrido de líneas ξ del nivel fino: 141.2 → 7.8 µs (×18)**;
+suavizador completo ×12.3 en presión y ×7.3 en momento. Resuelve la misma
+tridiagonal: en float64 coincide con Thomas en **1.2e-13**, y el 4.6e-5 de float32
+es redondeo (factor del PCG 0.0223 con PCR frente a 0.0280 con Thomas).
+
+**Dos cosas que costaron encontrar**:
+
+- **`cronometro=True` falsea el A/B.** `_marca` sincroniza tres veces por paso y
+  eso drena la tubería, que es justo lo que se optimiza: la mejora de la fase 1
+  se veía como ×1.03 con cronómetro y era ×1.27 sin él. El `ms/paso` que se cita
+  sale de 60 pasos con el cronómetro apagado; el reparto por etapas sigue
+  valiendo para ver **dónde** se va el tiempo, pero su total no.
+- **Con la GPU ya rápida, el cuello se mueve a la CPU.** La PCR salió *más lenta*
+  de pared en el primer intento (59.8 frente a 58.0) porque el despacho construía
+  `np.int32` y calculaba bloques y memoria compartida en cada uno de los ~2400
+  lanzamientos por paso. Precalculado en el constructor: 55.1 ms.
+
+**La jerarquía se para por razón, no por número de celdas** (`RAZON_GRUESA = 1024`):
+lo que fija el factor es la razón entre el nivel más grueso y el fino. Recortar
+niveles es tentador porque cada uno cuesta una tanda de lanzamientos, pero se
+paga en escalabilidad, y eso sí se midió: con 1/64 el factor del ciclo V a n=256
+se va a 0.641 (puerta 0.65) y el del PCG a 0.589 (puerta 0.3); con 1/256 pasan
+pero el PCG queda a un 17 % de su puerta y empeorando al refinar. **1/1024 se
+queda a un tercio de la puerta** y da 7 niveles en vez de 8 sobre la malla C. La
+parada siguiente (1/256) daría 46.6 ms y es una decisión de riesgo, no de código.
+
+**Confirmación larga** (8 000 pasos, t\*=20, `validacion/v5_suavizador_pcr`),
+contra la misma corrida con `dab73d1`:
+
+| magnitud | base | fase 3 | Δ % |
+|---|---|---|---|
+| Cl_sup | 0.498499936 | 0.498445969 | −0.0108 |
+| Cl_circ | 0.487670134 | 0.487476501 | −0.0397 |
+| Cd | 0.0193136418 | 0.0193119156 | −0.0089 |
+| Cd_p | 0.00756678721 | 0.00756661707 | −0.0022 |
+| Cd_v | 0.0117468545 | 0.0117452986 | −0.0132 |
+| Cm | −0.00791676517 | −0.00791747149 | +0.0089 |
+| ΔCp_TE | −0.027857814 | −0.0278565176 | −0.0047 |
+| mediana de `div` | 7.446e-06 | 7.607e-06 | +2.15 |
+| tablero en `p` | 1.3355e-04 | 1.3461e-04 | **+0.79** |
+| ms/paso | 79.98 | **51.38** | ×1.557 |
+
+El tablero merece la nota: en el A/B corto subía un 3 %, y en la corrida larga se
+queda en +0.79 %. Era transitorio, no deriva. La suite: **151 pasan**, y el único
+fallo sigue siendo el pre-existente `test_float32_da_la_misma_respuesta`.
+
+**CUDA Graphs, descartado con dato**: la matriz del momento y la de SA se
+reconstruyen en cada paso, así que los punteros que capturaría el grafo mueren
+con ellas. Capturar exigiría escribir matrices y jerarquía in-place; el hueco de
+lanzamiento se atacó por las otras dos vías.
+
 ### Fase 2 de optimización — latencia de lanzamiento: nivel grueso y kernels gemelos `u`/`v`
 
 La fase 1 dejó el solver sin resoluciones de multigrid sobrantes. Lo que queda
@@ -574,6 +661,69 @@ como desviación de exactitud.
   validación.
 - **La presión es ahora la etapa más cara** (34.58 ms, 41.2 %). Un solo campo, no
   hay nada que fundir; el margen está en el número de iteraciones del PCG.
+
+## Parada por fuerzas: hasta que Cl y Cd fijan el tercer decimal (2026-09-22)
+
+`curvo/convergencia.py` (nuevo). El criterio que había en el curvo era
+`Solver.correr(parada=...)`, que mide el **campo**
+(`max|u^{n+1}-u^n|/(u_inf·dt)`), y `t_final=20` a pelo en los scripts de
+validación. Ninguno de los dos dice nada sobre **el número que se publica**.
+Ahora `ParadaFuerzas` para cuando Cl y Cd dejan de moverse por encima de una
+tolerancia **absoluta** (5e-4 por defecto = media unidad del tercer decimal).
+
+Dos condiciones, las dos necesarias, sobre una ventana que **se dobla sola**:
+
+| magnitud | qué mide | cómo |
+|---|---|---|
+| `banda` | la media está mal determinada porque la señal oscila | medias de 8 bloques: `1.96·s(medias)/√8` |
+| `cola` | la media está bien determinada pero **sigue derivando** | `d1·r/(1−r)` con `r = d1/d0`, diferencias de tres bloques |
+
+Dos decisiones que no son cosméticas:
+
+- **La cola, no la pendiente**. Estas series son `A − B·exp(−t/τ)` limpias con
+  **τ ≈ 2.9** tiempos convectivos (ajustado sobre v1, v2 y v3). Una pendiente
+  pequeña multiplicada por una τ larga sigue siendo un cambio grande, así que lo
+  que se compara con el umbral es **lo que le queda por recorrer**, estimado por
+  decaimiento geométrico de las medias de bloque. Si `r ≥ 1` la serie no decae y
+  no se para nunca; si la diferencia de bloque a bloque cae por debajo de la
+  banda, no hay deriva que medir.
+- **Medias de bloque, no `σ/√N_ef`**. El cartesiano corrige `N` por
+  autocorrelación integrada (`_n_efectivo`), y eso **se pasa de conservador en el
+  caso limpio**: sobre un seno de amplitud 1e-2 con 133 ciclos da una banda de
+  6.8e-4 cuando el error real de la media es ~1e-5, o sea con umbral 5e-4 no
+  abriría nunca. La media de un bloque de varios periodos sí promedia la
+  oscilación.
+
+**Medido sobre las cuatro validaciones cerradas** (401 muestras de t=0 a 20,
+referencia = asíntota del ajuste exponencial de la propia serie):
+
+| tol | dónde para | error de Cl al parar |
+|---|---|---|
+| 1e-3 | t = 14.6–18.6 (73–93 % del presupuesto) | 4.8e-4 a 1.1e-3 |
+| 5e-4 | v2 en t=16.9, v5 en t=19.7; v1 y v3 **no llegan** dentro de t=20 | 1.8e-4 a 4.9e-4 |
+
+O sea: **el error al parar sale del orden de la tolerancia pedida, y con
+`t_final=20` el tercer decimal del Cl todavía no está fijado** — a t=20 a v1 le
+quedan 7.9e-4 de cola (a v3 5.4e-4), ~1.3 tiempos convectivos más. El Cd sí:
+su cola a t=20 es 3–5e-5. El ahorro es pequeño porque el caso de referencia está
+dimensionado justo; lo que aporta el criterio es que el tiempo lo fija la señal y
+no un número escrito a mano, que es lo que hace falta al barrer una polar.
+
+`resumen()` guarda también `extrapolado = media + cola`, el valor de meseta, que
+apunta 2–6 veces mejor que la media de la ventana (error 1e-4 a 4.6e-4 con
+tol=1e-3). Se guarda como diagnóstico: **lo que se publica es la media**, que es
+lo que se ha medido de verdad.
+
+Enganches: `Solver.correr(..., parada_fuerzas=ParadaFuerzas())` y
+`Solver.coeficientes()` (Cl, Cd ahora mismo; sincroniza la GPU, se llama cada N
+pasos), `tol_fuerzas` en `validacion/v1.../correr.py` (0 = presupuesto entero) y
+`ejecucion.tol_fuerzas` en la GUI, que vuelca `convergencia.json` al parar.
+`tests/test_curvo_convergencia.py` (15 tests, 77 s) cubre los tres modos que
+mataron a las versiones 1–3 del criterio del cartesiano: deriva lenta monótona,
+rampa que no decae y oscilación permanente sobre media fija.
+
+**En estudios de malla, dejarlo en 0**: si cada malla para en un tiempo físico
+distinto, el orden observado mide esa diferencia y no la discretización.
 
 ## Validación 1: NACA 0012, α=5°, Re=1e5, contra XFOIL
 

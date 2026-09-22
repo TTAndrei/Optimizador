@@ -56,6 +56,7 @@ class Caso:
         "pasos": 1000,
         "cada_historia": 20,
         "cada_campo": 40,
+        "tol_fuerzas": 0.0,
         "backend": "cupy",
         "dtype": "float32",
         "salida": "monitor",
@@ -96,6 +97,9 @@ class Caso:
             valor = self.ejecucion.get(nombre)
             if valor is None or int(valor) != valor or valor <= 0:
                 errores.append(f"ejecucion.{nombre} debe ser un entero positivo")
+        tol_f = self.ejecucion.get("tol_fuerzas")
+        if tol_f is None or tol_f < 0:
+            errores.append("ejecucion.tol_fuerzas debe ser mayor o igual que cero")
         for nombre in ("n_sup", "n_estela", "n_capas_pared"):
             valor = self.malla.get(nombre)
             if valor is None or int(valor) != valor or valor <= 0:
